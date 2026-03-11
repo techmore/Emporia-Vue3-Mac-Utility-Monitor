@@ -26,6 +26,10 @@ DerivedData/
 *.o
 *.d
 
+# Compiled Swift binaries (build from source with swiftc or xcodegen)
+EnergyMonitorApp/EnergyMonitorApp
+EnergyMonitorApp/EnergyMonitorApp.app/Contents/MacOS/EnergyMonitorApp
+
 # macOS
 .DS_Store
 .AppleDouble
