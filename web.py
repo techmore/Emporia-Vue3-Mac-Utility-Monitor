@@ -11,6 +11,8 @@ import energy
 
 app = Flask(__name__)
 
+VERSION = "1.4.0"
+
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
 
@@ -374,7 +376,8 @@ NAV_HTML = """
       <a href="/import" class="{{ 'active' if active_page == 'import' else '' }}">Import</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>
-    <div style="font-size:0.8rem; color: var(--olive-300); display:flex; align-items:center; gap:6px;">
+    <div style="font-size:0.8rem; color: var(--olive-300); display:flex; align-items:center; gap:10px;">
+      <span style="font-size:0.65rem; color:var(--olive-600); font-variant-numeric:tabular-nums;">v{{ version }}</span>
       <span class="status-dot {{ status_cls }}"></span>
       {{ status_label }}
     </div>
@@ -1193,7 +1196,7 @@ def _common():
     latest = energy.get_latest()
     last   = latest[0]["timestamp"] if latest else "N/A"
     cls, label, _ = _status(last)
-    return {"last_updated": last, "status_cls": cls, "status_label": label}
+    return {"last_updated": last, "status_cls": cls, "status_label": label, "version": VERSION}
 
 
 @app.route("/")
