@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -1199,6 +1199,10 @@ def _common():
     return {"last_updated": last, "status_cls": cls, "status_label": label, "version": VERSION}
 
 
+_MAINS_NAMES = {"Mains_A", "Mains_B", "Mains_C", "Main"}
+_SKIP_NAMES  = {"Balance"}
+
+
 @app.route("/")
 def index():
     com = _common()
@@ -1214,7 +1218,7 @@ def index():
     top_circuits = []
     for c in ctx["circuits"]:
         name = c["channel_name"]
-        if name in ("Main", "Balance"):
+        if name in _MAINS_NAMES or name in ("Balance",) or str(name).isdigit():
             continue
         watts_now = _watts_estimate(latest_map.get(name, 0))
         top_circuits.append({**c, "watts": watts_now,
@@ -1227,7 +1231,8 @@ def index():
     total_24h  = next((r for r in summary_24 if r["channel_name"] == "Main"),
                       {"total_kwh": sum(r["total_kwh"] for r in summary_24),
                        "total_cents": sum(r["total_cents"] for r in summary_24)})
-    circuits_24 = [r for r in summary_24 if r["channel_name"] not in ("Main","Balance")]
+    circuits_24 = [r for r in summary_24 if r["channel_name"] not in _MAINS_NAMES
+                   and r["channel_name"] != "Balance" and not str(r["channel_name"]).isdigit()]
     total_kwh_24 = total_24h["total_kwh"] or 1
     for r in circuits_24:
         r["pct"] = r["total_kwh"] / total_kwh_24 * 100
@@ -1276,9 +1281,6 @@ def index():
         **com,
     )
 
-
-_MAINS_NAMES  = {"Mains_A", "Mains_B", "Mains_C", "Main"}
-_SKIP_NAMES   = {"Balance"}
 
 @app.route("/circuits")
 def circuits_page():
