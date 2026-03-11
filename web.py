@@ -243,6 +243,84 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
 }
 .pill.projection { background: oklch(68% 0.15 75 / 0.15); color: oklch(42% 0.12 75); }
+
+/* ── Breaker panel ── */
+.panel-wrap {
+  background: var(--olive-950);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+}
+.panel-label {
+  font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--olive-400); margin-bottom: 1rem;
+  text-align: center;
+}
+.panel-mains {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin-bottom: 1.25rem;
+}
+.mains-card {
+  background: var(--olive-800);
+  border-radius: 10px; padding: 1rem 1.25rem;
+}
+.mains-card .mc-leg  { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--olive-400); margin-bottom: 4px; }
+.mains-card .mc-w    { font-family: 'Instrument Serif', serif; font-size: 2rem; line-height: 1; color: var(--olive-50); }
+.mains-card .mc-kwh  { font-size: 0.78rem; color: var(--olive-300); margin-top: 4px; }
+.panel-bus {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;
+}
+.panel-bus-line {
+  flex: 1; height: 2px; background: var(--olive-700);
+}
+.panel-bus-label {
+  font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--olive-500);
+}
+.panel-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+}
+.breaker {
+  background: var(--olive-900);
+  border: 1px solid var(--olive-700);
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+  display: flex; align-items: center; gap: 8px;
+  text-decoration: none; color: inherit;
+  transition: background 0.15s, border-color 0.15s;
+  min-width: 0;
+}
+.breaker:hover { background: var(--olive-700); border-color: var(--olive-500); }
+.breaker.active-high { border-color: var(--amber); }
+.breaker.active-heat { border-color: var(--red); }
+.breaker-num {
+  font-size: 0.6rem; color: var(--olive-500);
+  width: 1.4rem; flex-shrink: 0; text-align: right;
+}
+.breaker-body { flex: 1; min-width: 0; }
+.breaker-name {
+  font-size: 0.78rem; font-weight: 500; color: var(--olive-100);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.breaker-watts {
+  font-size: 0.7rem; color: var(--olive-400); margin-top: 2px;
+}
+.breaker-bar-wrap {
+  width: 36px; flex-shrink: 0;
+  background: var(--olive-800); border-radius: 3px; height: 32px;
+  display: flex; align-items: flex-end; overflow: hidden;
+}
+.breaker-bar {
+  width: 100%; background: var(--olive-500); border-radius: 3px;
+  transition: height 0.4s;
+}
+.breaker.active-high .breaker-bar { background: var(--amber); }
+.breaker.active-heat .breaker-bar { background: var(--red); }
+
+/* ── Usage spreadsheet ── */
+.usage-pct-bar {
+  display: inline-block; height: 6px; border-radius: 3px;
+  background: var(--olive-400); vertical-align: middle; margin-right: 6px;
+}
 """
 
 NAV_HTML = """
@@ -603,56 +681,110 @@ setTimeout(() => location.reload(), 60000);
 
 CIRCUITS_HTML = """
 <div class="page">
-  <div class="section-head" style="margin-top:1.5rem;">
-    <h2>All Circuits</h2>
-    <span class="section-sub">Last 24 hours &bull; click a circuit to drill down</span>
+
+  <!-- ── Panel totals ──────────────────────────────────────────────────── -->
+  <div class="panel-wrap">
+    <div class="panel-label">Barn Service Panel</div>
+    <div class="panel-mains">
+      {% for m in mains %}
+      <div class="mains-card">
+        <div class="mc-leg">{{ m.label }}</div>
+        <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="panel-bus">
+      <div class="panel-bus-line"></div>
+      <div class="panel-bus-label">Bus bar</div>
+      <div class="panel-bus-line"></div>
+    </div>
+
+    <!-- Two-column breaker grid — odd slots left, even slots right -->
+    <div class="panel-grid">
+      {% for b in breakers %}
+      <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
+        <div class="breaker-num">{{ b.slot }}</div>
+        <div class="breaker-body">
+          <div class="breaker-name">{{ b.channel_name }}</div>
+          <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W</div>
+        </div>
+        <div class="breaker-bar-wrap">
+          <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
   </div>
-  <div class="card">
-    <table class="data-table" id="cktTable">
+
+  <!-- ── Usage spreadsheet ─────────────────────────────────────────────── -->
+  <div class="section-head section" style="margin-top:2rem;">
+    <h2>Usage by Period</h2>
+    <span class="section-sub">Click any column header to sort</span>
+  </div>
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table class="data-table" id="usageTable">
       <thead>
         <tr>
           <th data-col="0">Circuit</th>
-          <th data-col="1">kWh</th>
-          <th data-col="2">Cost</th>
-          <th data-col="3">% of Total</th>
-          <th data-col="4">Est. Watts (now)</th>
+          <th data-col="1" class="sort-desc">Today kWh</th>
+          <th data-col="2">Today $</th>
+          <th data-col="3">Week kWh</th>
+          <th data-col="4">Week $</th>
+          <th data-col="5">Month kWh</th>
+          <th data-col="6">Month $</th>
         </tr>
       </thead>
       <tbody>
-        {% for r in circuits %}
+        {% for r in usage_rows %}
         <tr>
           <td><a href="/circuit/{{ r.channel_name|urlencode }}">{{ r.channel_name|e }}</a></td>
-          <td>{{ "%.3f"|format(r.total_kwh) }}</td>
-          <td>${{ "%.2f"|format(r.total_cents/100) }}</td>
-          <td>{{ "%.1f"|format(r.pct) }}%</td>
-          <td>{{ "%.0f"|format(r.watts_now) }} W</td>
+          <td>
+            <span class="usage-pct-bar" style="width:{{ r.day_bar }}px"></span>{{ "%.2f"|format(r.day_kwh) }}
+          </td>
+          <td>${{ "%.2f"|format(r.day_cost) }}</td>
+          <td>
+            <span class="usage-pct-bar" style="width:{{ r.week_bar }}px"></span>{{ "%.2f"|format(r.week_kwh) }}
+          </td>
+          <td>${{ "%.2f"|format(r.week_cost) }}</td>
+          <td>
+            <span class="usage-pct-bar" style="width:{{ r.month_bar }}px"></span>{{ "%.2f"|format(r.month_kwh) }}
+          </td>
+          <td>${{ "%.2f"|format(r.month_cost) }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
 <script>
 (function(){
-  const t = document.getElementById('cktTable');
+  const t = document.getElementById('usageTable');
   if(!t) return;
-  let col=-1, asc=true;
+  let col=1, asc=false;
+  function applySort(c, a) {
+    t.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+    t.querySelectorAll('th')[c].classList.add(a?'sort-asc':'sort-desc');
+    const tb = t.tBodies[0];
+    Array.from(tb.rows).sort((ra,rb) => {
+      const av = ra.cells[c].textContent.replace(/[$\u2007 ]/g,'').trim();
+      const bv = rb.cells[c].textContent.replace(/[$\u2007 ]/g,'').trim();
+      const an = parseFloat(av), bn = parseFloat(bv);
+      const cmp = isNaN(an) ? av.localeCompare(bv) : an-bn;
+      return a ? cmp : -cmp;
+    }).forEach(r => tb.appendChild(r));
+  }
   t.querySelectorAll('th[data-col]').forEach(th => {
+    th.style.cursor='pointer';
     th.addEventListener('click', () => {
       const c = parseInt(th.dataset.col);
-      asc = (col===c) ? !asc : true; col=c;
-      t.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
-      th.classList.add(asc?'sort-asc':'sort-desc');
-      const tb = t.tBodies[0];
-      Array.from(tb.rows).sort((a,b) => {
-        const av = a.cells[c].textContent.replace(/[$%W]/g,'').trim();
-        const bv = b.cells[c].textContent.replace(/[$%W]/g,'').trim();
-        const an = parseFloat(av), bn = parseFloat(bv);
-        const cmp = isNaN(an) ? av.localeCompare(bv) : an-bn;
-        return asc ? cmp : -cmp;
-      }).forEach(r => tb.appendChild(r));
+      asc = (col===c) ? !asc : false; col=c;
+      applySort(c, asc);
     });
   });
+  applySort(col, asc);
 })();
 </script>
 """
@@ -1082,22 +1214,87 @@ def index():
     )
 
 
+_MAINS_NAMES  = {"Mains_A", "Mains_B", "Mains_C", "Main"}
+_SKIP_NAMES   = {"Balance"}
+
 @app.route("/circuits")
 def circuits_page():
     com = _common()
-    summary = energy.get_summary(24)
     latest_map = {r["channel_name"]: r["usage_kwh"] for r in energy.get_latest()}
-    total_kwh = sum(r["total_kwh"] for r in summary if r["channel_name"] not in ("Main","Balance")) or 1
-    circuits = []
-    for r in summary:
-        if r["channel_name"] in ("Main", "Balance"):
+
+    # Per-period summaries
+    sum_24h  = {r["channel_name"]: r for r in energy.get_summary(24)}
+    sum_week = {r["channel_name"]: r for r in energy.get_summary(24 * 7)}
+    sum_mon  = {r["channel_name"]: r for r in energy.get_summary(24 * 30)}
+
+    # ── Mains cards ───────────────────────────────────────────────────────
+    leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C", "Main": "Total"}
+    mains = []
+    for name in ("Mains_A", "Mains_B", "Mains_C", "Main"):
+        if name not in sum_24h:
             continue
-        circuits.append({
-            **r,
-            "pct":       r["total_kwh"] / total_kwh * 100,
-            "watts_now": _watts_estimate(latest_map.get(r["channel_name"], 0)),
+        r = sum_24h[name]
+        mains.append({
+            "label":   leg_labels[name],
+            "watts":   _watts_estimate(latest_map.get(name, 0)),
+            "kwh_24h": r["total_kwh"],
+            "cost_24h": r["total_cents"] / 100,
         })
-    return _render(CIRCUITS_HTML, active_page="circuits", circuits=circuits, **com)
+
+    # ── Circuit slots ─────────────────────────────────────────────────────
+    # Sort: named (no underscore/digit) first, then numbered; alpha within each group
+    all_circuits = [
+        n for n in sum_24h
+        if n not in _MAINS_NAMES and n not in _SKIP_NAMES
+           and not str(n).isdigit()   # skip raw channel-number rows
+    ]
+    named   = sorted([n for n in all_circuits if not n.startswith("Circuit_")])
+    numbered = sorted([n for n in all_circuits if n.startswith("Circuit_")])
+    ordered  = named + numbered
+
+    # Interleave left (odd) / right (even) slots visually like a real panel:
+    # slot 1 = ordered[0], slot 2 = ordered[1], slot 3 = ordered[2], …
+    max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in ordered), default=1) or 1
+    breakers = []
+    for i, name in enumerate(ordered):
+        watts = _watts_estimate(latest_map.get(name, 0))
+        bar   = min(100, watts / max_w * 100)
+        cls   = "active-heat" if bar > 75 else "active-high" if bar > 40 else ""
+        breakers.append({
+            "slot":         i + 1,
+            "channel_name": name,
+            "watts":        watts,
+            "bar_pct":      bar,
+            "cls":          cls,
+        })
+
+    # ── Usage table rows ──────────────────────────────────────────────────
+    max_day   = max((sum_24h.get(n,  {}).get("total_kwh", 0) for n in ordered), default=1) or 1
+    max_week  = max((sum_week.get(n, {}).get("total_kwh", 0) for n in ordered), default=1) or 1
+    max_month = max((sum_mon.get(n,  {}).get("total_kwh", 0) for n in ordered), default=1) or 1
+
+    usage_rows = []
+    for name in ordered:
+        d  = sum_24h.get(name,  {})
+        w  = sum_week.get(name, {})
+        m  = sum_mon.get(name,  {})
+        dk  = d.get("total_kwh", 0);  dc = d.get("total_cents", 0)
+        wk  = w.get("total_kwh", 0);  wc = w.get("total_cents", 0)
+        mk  = m.get("total_kwh", 0);  mc = m.get("total_cents", 0)
+        usage_rows.append({
+            "channel_name": name,
+            "day_kwh":   dk, "day_cost":   dc / 100,
+            "week_kwh":  wk, "week_cost":  wc / 100,
+            "month_kwh": mk, "month_cost": mc / 100,
+            "day_bar":   int(dk / max_day   * 48),
+            "week_bar":  int(wk / max_week  * 48),
+            "month_bar": int(mk / max_month * 48),
+        })
+    # Default sort: today kWh descending
+    usage_rows.sort(key=lambda r: r["day_kwh"], reverse=True)
+
+    return _render(CIRCUITS_HTML, active_page="circuits",
+                   mains=mains, breakers=breakers, usage_rows=usage_rows, **com)
 
 
 @app.route("/circuit/<path:circuit_name>")
