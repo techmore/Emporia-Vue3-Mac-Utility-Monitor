@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -527,13 +527,22 @@ DASH_HTML = """
     </div>
   </div>
 
-  <!-- ── Top Circuits live bar ─────────────────────────────────────────── -->
+  <!-- ── Active Circuits (multi-view) ─────────────────────────────────── -->
   <div class="section">
     <div class="section-head">
       <h2>Active Circuits</h2>
-      <span class="section-sub">Last {{ ctx.window_minutes }} min &bull; click for history</span>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span class="section-sub">Last {{ ctx.window_minutes }} min</span>
+        <div class="view-toggle" id="viewToggle">
+          <button class="vt-btn active" data-view="bars" title="Bar list">≡</button>
+          <button class="vt-btn" data-view="panel" title="Breaker panel">⊞</button>
+          <button class="vt-btn" data-view="grid" title="Card grid">▦</button>
+        </div>
+      </div>
     </div>
-    <div class="card">
+
+    <!-- Bars view -->
+    <div id="view-bars" class="card">
       <div class="circuit-bars">
         {% for c in top_circuits %}
         {% set bar_cls = 'heat' if c.pct > 40 else ('hot' if c.pct > 20 else '') %}
@@ -547,7 +556,103 @@ DASH_HTML = """
         {% endfor %}
       </div>
     </div>
+
+    <!-- Panel view -->
+    <div id="view-panel" class="panel-wrap" style="display:none;">
+      {% if dash_mains %}
+      <div class="panel-label">Service Panel — Live</div>
+      {% for m in dash_mains %}
+      {% if m.is_total %}
+      <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
+        <div class="mc-leg">{{ m.label }}</div>
+        <div class="mc-w" style="font-size:2.5rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-300)">W</span>
+          <span style="font-size:0.9rem; color:var(--olive-300); margin-left:12px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1) * 1) }} /kWh</span>
+        </div>
+        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
+      </div>
+      <div class="panel-mains" style="margin-bottom:10px;">
+      {% elif loop.last %}
+        <div class="mains-card">
+          <div class="mc-leg">{{ m.label }}</div>
+          <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+          <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+        </div>
+      </div>
+      {% else %}
+        <div class="mains-card">
+          <div class="mc-leg">{{ m.label }}</div>
+          <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+          <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+        </div>
+      {% endif %}
+      {% endfor %}
+      <div class="panel-bus"><div class="panel-bus-line"></div><div class="panel-bus-label">Bus bar</div><div class="panel-bus-line"></div></div>
+      {% endif %}
+      <div class="panel-grid">
+        {% for b in dash_breakers %}
+        {% if b.channel_name %}
+        <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
+          <div class="breaker-num">{{ b.slot }}</div>
+          <div class="breaker-body">
+            <div class="breaker-name">{{ b.label }}</div>
+            <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W</div>
+          </div>
+          <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
+          {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
+        </a>
+        {% else %}
+        <div class="breaker empty">
+          <div class="breaker-num">{{ b.slot }}</div>
+          <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Grid view -->
+    <div id="view-grid" style="display:none;">
+      <div class="grid-3">
+        {% for c in top_circuits %}
+        <a href="/circuit/{{ c.channel_name|urlencode }}" style="text-decoration:none;">
+          <div class="card" style="display:flex; flex-direction:column; gap:4px;">
+            <div class="card-label">{{ c.channel_name }}</div>
+            <div class="card-value" style="font-size:1.5rem;">{{ "%.0f"|format(c.watts) }}<span class="unit">W</span></div>
+            <div class="card-meta">{{ "%.1f"|format(c.pct) }}% of load</div>
+          </div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
   </div>
+
+  <style>
+  .view-toggle { display:flex; gap:3px; background:var(--surface2); border-radius:8px; padding:3px; }
+  .vt-btn {
+    background:none; border:none; cursor:pointer; padding:4px 9px;
+    border-radius:6px; font-size:1rem; color:var(--text-light);
+    transition: background 0.15s, color 0.15s;
+  }
+  .vt-btn.active { background:var(--olive-800); color:var(--olive-50); }
+  .vt-btn:hover:not(.active) { background:var(--border); }
+  </style>
+  <script>
+  (function(){
+    const views = ['bars','panel','grid'];
+    const saved = localStorage.getItem('circuitView') || 'bars';
+    function show(v) {
+      views.forEach(n => {
+        document.getElementById('view-'+n).style.display = n===v ? '' : 'none';
+        document.querySelector('[data-view="'+n+'"]').classList.toggle('active', n===v);
+      });
+      localStorage.setItem('circuitView', v);
+    }
+    document.querySelectorAll('.vt-btn').forEach(btn => {
+      btn.addEventListener('click', () => show(btn.dataset.view));
+    });
+    show(saved);
+  })();
+  </script>
 
   <!-- ── KPI row ────────────────────────────────────────────────────────── -->
   <div class="section">
@@ -729,15 +834,31 @@ CIRCUITS_HTML = """
   <!-- ── Panel totals ──────────────────────────────────────────────────── -->
   <div class="panel-wrap">
     <div class="panel-label">Barn Service Panel</div>
-    <div class="panel-mains">
-      {% for m in mains %}
+    {% for m in mains %}
+    {% if m.is_total %}
+    <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
+      <div class="mc-leg">{{ m.label }}</div>
+      <div class="mc-w" style="font-size:2.5rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-300)">W</span>
+        <span style="font-size:0.9rem; color:var(--olive-300); margin-left:12px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1)) }}/kWh</span>
+      </div>
+      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
+    </div>
+    <div class="panel-mains" style="margin-bottom:10px;">
+    {% elif loop.last %}
       <div class="mains-card">
         <div class="mc-leg">{{ m.label }}</div>
         <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
         <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
       </div>
-      {% endfor %}
     </div>
+    {% else %}
+      <div class="mains-card">
+        <div class="mc-leg">{{ m.label }}</div>
+        <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+      </div>
+    {% endif %}
+    {% endfor %}
 
     <div class="panel-bus">
       <div class="panel-bus-line"></div>
@@ -1243,6 +1364,59 @@ def index():
     monthly_projected = (total_24h["total_kwh"] or 0) * 30 * RATE
     budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
 
+    # Mains cards + breaker panel for dashboard panel view
+    sum_24h_map = {r["channel_name"]: r for r in summary_24}
+    # Mains: Total first (from live Main channel), then Leg A / Leg B
+    leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
+    dash_mains = []
+    # Total row — prefer live Main channel for watts, sum legs for kWh
+    leg_kwh   = sum(sum_24h_map[n]["total_kwh"]   for n in ("Mains_A","Mains_B") if n in sum_24h_map)
+    leg_cents = sum(sum_24h_map[n]["total_cents"]  for n in ("Mains_A","Mains_B") if n in sum_24h_map)
+    total_watts = _watts_estimate(latest_map.get("Main", 0)) or (
+        sum(_watts_estimate(latest_map.get(n, 0)) for n in ("Mains_A","Mains_B")))
+    dash_mains.append({
+        "label": "Total", "is_total": True,
+        "watts": total_watts,
+        "kwh_24h": leg_kwh or sum_24h_map.get("Main", {}).get("total_kwh", 0),
+        "cost_24h": (leg_cents or sum_24h_map.get("Main", {}).get("total_cents", 0)) / 100,
+    })
+    for name in ("Mains_A", "Mains_B", "Mains_C"):
+        if name not in sum_24h_map:
+            continue
+        r = sum_24h_map[name]
+        dash_mains.append({
+            "label":    leg_labels[name],
+            "is_total": False,
+            "watts":    _watts_estimate(latest_map.get(name, 0)),
+            "kwh_24h":  r["total_kwh"],
+            "cost_24h": r["total_cents"] / 100,
+        })
+
+    layout   = {row["slot"]: row for row in energy.get_panel_layout()}
+    ordered  = sorted(
+        [n for n in sum_24h_map if n not in _MAINS_NAMES and n not in _SKIP_NAMES
+         and not str(n).isdigit()],
+        key=lambda n: (n.startswith("Circuit_"), n)
+    )
+    if not layout:
+        for i, name in enumerate(ordered):
+            layout[i + 1] = {"slot": i+1, "channel_name": name,
+                             "label": None, "note": None, "amps": None}
+    max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in ordered), default=1) or 1
+    dash_breakers = []
+    for slot in range(1, max(len(ordered) + 1, max(layout.keys(), default=0) + 1)):
+        row   = layout.get(slot, {})
+        name  = row.get("channel_name")
+        watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
+        bar   = min(100, watts / max_w * 100)
+        cls   = "active-heat" if bar > 75 else "active-high" if bar > 40 else ""
+        dash_breakers.append({
+            "slot": slot, "channel_name": name,
+            "label": row.get("label") or name or "—",
+            "note": row.get("note"), "amps": row.get("amps"),
+            "watts": watts, "bar_pct": bar, "cls": cls,
+        })
+
     peak_usage = energy.get_peak_usage()
     for h in peak_usage["peak_hours"]:
         h["hour_label"] = _format_hour(h["hour"])
@@ -1273,6 +1447,8 @@ def index():
         hourly_json=energy.get_hourly_data(7),
         month_comparison={"this_month": mc["this_month"], "last_month": mc["last_month"]},
         peak_usage=peak_usage,
+        dash_mains=dash_mains,
+        dash_breakers=dash_breakers,
         trend=trend,
         delta_yd=_delta_badge(ctx["vs_yesterday_pct"],  "yesterday", invert=True),
         delta_wk=_delta_badge(ctx["vs_last_week_pct"],  "last week",  invert=True),
@@ -1292,17 +1468,26 @@ def circuits_page():
     sum_week = {r["channel_name"]: r for r in energy.get_summary(24 * 7)}
     sum_mon  = {r["channel_name"]: r for r in energy.get_summary(24 * 30)}
 
-    # ── Mains cards ───────────────────────────────────────────────────────
-    leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C", "Main": "Total"}
-    mains = []
-    for name in ("Mains_A", "Mains_B", "Mains_C", "Main"):
+    # ── Mains cards — Total first, then Leg A / Leg B ─────────────────────
+    leg_labels  = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
+    leg_kwh     = sum(sum_24h[n]["total_kwh"]   for n in ("Mains_A","Mains_B") if n in sum_24h)
+    leg_cents   = sum(sum_24h[n]["total_cents"]  for n in ("Mains_A","Mains_B") if n in sum_24h)
+    total_watts = _watts_estimate(latest_map.get("Main", 0)) or \
+                  sum(_watts_estimate(latest_map.get(n, 0)) for n in ("Mains_A","Mains_B"))
+    mains = [{
+        "label": "Total", "is_total": True,
+        "watts": total_watts,
+        "kwh_24h":  leg_kwh  or sum_24h.get("Main", {}).get("total_kwh", 0),
+        "cost_24h": (leg_cents or sum_24h.get("Main", {}).get("total_cents", 0)) / 100,
+    }]
+    for name in ("Mains_A", "Mains_B", "Mains_C"):
         if name not in sum_24h:
             continue
         r = sum_24h[name]
         mains.append({
-            "label":   leg_labels[name],
-            "watts":   _watts_estimate(latest_map.get(name, 0)),
-            "kwh_24h": r["total_kwh"],
+            "label": leg_labels[name], "is_total": False,
+            "watts":    _watts_estimate(latest_map.get(name, 0)),
+            "kwh_24h":  r["total_kwh"],
             "cost_24h": r["total_cents"] / 100,
         })
 
