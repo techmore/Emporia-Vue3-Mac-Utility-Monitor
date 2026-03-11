@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import WebKit
+import Darwin
 
 // ── Project root resolution ───────────────────────────────────────────────────
 //
@@ -33,10 +34,35 @@ private let projectRoot  = resolveProjectRoot()
 private let venvPython   = projectRoot.appendingPathComponent("venv/bin/python3").path
 private let flaskScript  = projectRoot.appendingPathComponent("web.py").path
 
+// ── Local IP helper ───────────────────────────────────────────────────────────
+
+private func localNetworkIP() -> String? {
+    var ifaddr: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&ifaddr) == 0 else { return nil }
+    defer { freeifaddrs(ifaddr) }
+    var ptr = ifaddr
+    while let current = ptr {
+        let ifa = current.pointee
+        if ifa.ifa_addr.pointee.sa_family == UInt8(AF_INET) {
+            let name = String(cString: ifa.ifa_name)
+            if name.hasPrefix("en") {
+                var addr = ifa.ifa_addr.pointee
+                var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                inet_ntop(AF_INET, &addr.sa_data.2, &buf, socklen_t(INET_ADDRSTRLEN))
+                let ip = String(cString: buf)
+                if ip != "0.0.0.0" { return ip }
+            }
+        }
+        ptr = current.pointee.ifa_next
+    }
+    return nil
+}
+
 // ── ContentView ───────────────────────────────────────────────────────────────
 
 struct ContentView: View {
     @State private var isLoading = true
+    @State private var copied = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,6 +75,22 @@ struct ContentView: View {
                     ProgressView()
                         .scaleEffect(0.8)
                 }
+                // Share / copy local URL button
+                Button {
+                    let ip = localNetworkIP() ?? "localhost"
+                    let url = "http://\(ip):5001"
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url, forType: .string)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copied = false }
+                } label: {
+                    Label(copied ? "Copied!" : "Share",
+                          systemImage: copied ? "checkmark" : "square.and.arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy local URL to open on iPhone")
+                .foregroundColor(copied ? .green : .primary)
+
                 Button {
                     NotificationCenter.default.post(
                         name: .reloadWebView, object: nil)
