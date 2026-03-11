@@ -171,9 +171,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Energy Monitor",
-                                action: #selector(toggleWindow),
-                                keyEquivalent: ""))
+        let showHideItem = NSMenuItem(title: "Show Energy Monitor",
+                                      action: #selector(toggleWindow),
+                                      keyEquivalent: "")
+        showHideItem.target = self
+        menu.addItem(showHideItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Energy Monitor",
                                 action: #selector(NSApplication.terminate(_:)),
