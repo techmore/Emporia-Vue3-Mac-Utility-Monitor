@@ -315,6 +315,46 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 .breaker.active-high .breaker-bar { background: var(--amber); }
 .breaker.active-heat .breaker-bar { background: var(--red); }
+.breaker.empty { opacity: 0.35; cursor: default; pointer-events: none; }
+.breaker-note-tip {
+  position: absolute; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%);
+  background: var(--olive-950); color: var(--olive-100);
+  font-size: 0.72rem; padding: 5px 10px; border-radius: 6px;
+  white-space: nowrap; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  opacity: 0; transition: opacity 0.15s;
+  z-index: 10;
+}
+.breaker-note-tip::after {
+  content: ''; position: absolute; top: 100%; left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: var(--olive-950);
+}
+.breaker:hover .breaker-note-tip { opacity: 1; }
+.breaker { position: relative; }
+.breaker-amps { font-size: 0.6rem; color: var(--olive-500); margin-top: 1px; }
+
+/* ── Panel edit page ── */
+.panel-edit-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  margin-top: 1rem;
+}
+.slot-row {
+  display: flex; gap: 8px; align-items: center;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px;
+}
+.slot-num { width: 2rem; font-size: 0.75rem; color: var(--text-light); flex-shrink: 0; font-weight: 600; }
+.slot-row input, .slot-row select {
+  font-size: 0.8rem; padding: 4px 6px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text); font-family: inherit;
+}
+.slot-row input.inp-label { width: 110px; }
+.slot-row select { flex: 1; }
+.slot-row input.inp-amps { width: 44px; }
+.slot-row input.inp-note { flex: 1; }
 
 /* ── Usage spreadsheet ── */
 .usage-pct-bar {
@@ -332,6 +372,7 @@ NAV_HTML = """
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/log" class="{{ 'active' if active_page == 'log' else '' }}">Log</a>
       <a href="/import" class="{{ 'active' if active_page == 'import' else '' }}">Import</a>
+      <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>
     <div style="font-size:0.8rem; color: var(--olive-300); display:flex; align-items:center; gap:6px;">
       <span class="status-dot {{ status_cls }}"></span>
@@ -697,24 +738,43 @@ CIRCUITS_HTML = """
 
     <div class="panel-bus">
       <div class="panel-bus-line"></div>
-      <div class="panel-bus-label">Bus bar</div>
+      <div class="panel-bus-label">Bus bar &bull; {{ panel_slots }} slots</div>
       <div class="panel-bus-line"></div>
     </div>
 
-    <!-- Two-column breaker grid — odd slots left, even slots right -->
+    <!-- Two-column breaker grid — slot 1 top-left, slot 2 top-right, etc. -->
     <div class="panel-grid">
       {% for b in breakers %}
+      {% if b.channel_name %}
       <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
         <div class="breaker-num">{{ b.slot }}</div>
         <div class="breaker-body">
-          <div class="breaker-name">{{ b.channel_name }}</div>
-          <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W</div>
+          <div class="breaker-name">{{ b.label }}</div>
+          <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W{% if b.amps %} &bull; {{ b.amps }}A{% endif %}</div>
+          {% if b.amps %}<div class="breaker-amps"></div>{% endif %}
         </div>
         <div class="breaker-bar-wrap">
           <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
         </div>
+        {% if b.note %}
+        <div class="breaker-note-tip">{{ b.note }}</div>
+        {% endif %}
       </a>
+      {% else %}
+      <div class="breaker empty">
+        <div class="breaker-num">{{ b.slot }}</div>
+        <div class="breaker-body">
+          <div class="breaker-name" style="color:var(--olive-700)">—</div>
+        </div>
+      </div>
+      {% endif %}
       {% endfor %}
+    </div>
+
+    <div style="text-align:right; margin-top:0.75rem;">
+      <a href="/panel" style="font-size:0.75rem; color:var(--olive-400); text-decoration:none;">
+        ✏️ Edit panel layout
+      </a>
     </div>
   </div>
 
@@ -739,7 +799,7 @@ CIRCUITS_HTML = """
       <tbody>
         {% for r in usage_rows %}
         <tr>
-          <td><a href="/circuit/{{ r.channel_name|urlencode }}">{{ r.channel_name|e }}</a></td>
+          <td><a href="/circuit/{{ r.channel_name|urlencode }}">{{ r.display_name|e }}</a></td>
           <td>
             <span class="usage-pct-bar" style="width:{{ r.day_bar }}px"></span>{{ "%.2f"|format(r.day_kwh) }}
           </td>
@@ -1241,48 +1301,65 @@ def circuits_page():
             "cost_24h": r["total_cents"] / 100,
         })
 
-    # ── Circuit slots ─────────────────────────────────────────────────────
-    # Sort: named (no underscore/digit) first, then numbered; alpha within each group
-    all_circuits = [
+    # ── Circuit slots — use saved panel layout if present ─────────────────
+    layout = {row["slot"]: row for row in energy.get_panel_layout()}
+
+    # Determine panel size: largest saved slot rounded up to next 20, min 20
+    max_saved = max(layout.keys(), default=0)
+    panel_slots = max(20, ((max_saved + 19) // 20) * 20)
+
+    # All known circuit names for fallback auto-population
+    all_circuits = sorted([
         n for n in sum_24h
         if n not in _MAINS_NAMES and n not in _SKIP_NAMES
-           and not str(n).isdigit()   # skip raw channel-number rows
-    ]
-    named   = sorted([n for n in all_circuits if not n.startswith("Circuit_")])
-    numbered = sorted([n for n in all_circuits if n.startswith("Circuit_")])
-    ordered  = named + numbered
+           and not str(n).isdigit()
+    ], key=lambda n: (n.startswith("Circuit_"), n))
 
-    # Interleave left (odd) / right (even) slots visually like a real panel:
-    # slot 1 = ordered[0], slot 2 = ordered[1], slot 3 = ordered[2], …
-    max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in ordered), default=1) or 1
+    # If no layout saved yet, auto-assign circuits to slots in order
+    if not layout:
+        for i, name in enumerate(all_circuits):
+            layout[i + 1] = {"slot": i + 1, "channel_name": name,
+                              "label": None, "note": None, "amps": None}
+
+    max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in all_circuits), default=1) or 1
+
     breakers = []
-    for i, name in enumerate(ordered):
-        watts = _watts_estimate(latest_map.get(name, 0))
+    for slot in range(1, panel_slots + 1):
+        row = layout.get(slot, {})
+        name  = row.get("channel_name")
+        watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
         bar   = min(100, watts / max_w * 100)
         cls   = "active-heat" if bar > 75 else "active-high" if bar > 40 else ""
         breakers.append({
-            "slot":         i + 1,
+            "slot":         slot,
             "channel_name": name,
+            "label":        row.get("label") or name or "—",
+            "note":         row.get("note"),
+            "amps":         row.get("amps"),
             "watts":        watts,
             "bar_pct":      bar,
             "cls":          cls,
         })
 
     # ── Usage table rows ──────────────────────────────────────────────────
-    max_day   = max((sum_24h.get(n,  {}).get("total_kwh", 0) for n in ordered), default=1) or 1
-    max_week  = max((sum_week.get(n, {}).get("total_kwh", 0) for n in ordered), default=1) or 1
-    max_month = max((sum_mon.get(n,  {}).get("total_kwh", 0) for n in ordered), default=1) or 1
+    max_day   = max((sum_24h.get(n,  {}).get("total_kwh", 0) for n in all_circuits), default=1) or 1
+    max_week  = max((sum_week.get(n, {}).get("total_kwh", 0) for n in all_circuits), default=1) or 1
+    max_month = max((sum_mon.get(n,  {}).get("total_kwh", 0) for n in all_circuits), default=1) or 1
 
     usage_rows = []
-    for name in ordered:
+    for name in all_circuits:
         d  = sum_24h.get(name,  {})
         w  = sum_week.get(name, {})
         m  = sum_mon.get(name,  {})
         dk  = d.get("total_kwh", 0);  dc = d.get("total_cents", 0)
         wk  = w.get("total_kwh", 0);  wc = w.get("total_cents", 0)
         mk  = m.get("total_kwh", 0);  mc = m.get("total_cents", 0)
+        # Find saved label for this circuit
+        saved_label = next((r.get("label") for r in layout.values()
+                            if r.get("channel_name") == name and r.get("label")), None)
         usage_rows.append({
             "channel_name": name,
+            "display_name": saved_label or name,
             "day_kwh":   dk, "day_cost":   dc / 100,
             "week_kwh":  wk, "week_cost":  wc / 100,
             "month_kwh": mk, "month_cost": mc / 100,
@@ -1290,11 +1367,11 @@ def circuits_page():
             "week_bar":  int(wk / max_week  * 48),
             "month_bar": int(mk / max_month * 48),
         })
-    # Default sort: today kWh descending
     usage_rows.sort(key=lambda r: r["day_kwh"], reverse=True)
 
     return _render(CIRCUITS_HTML, active_page="circuits",
-                   mains=mains, breakers=breakers, usage_rows=usage_rows, **com)
+                   mains=mains, breakers=breakers, usage_rows=usage_rows,
+                   panel_slots=panel_slots, **com)
 
 
 @app.route("/circuit/<path:circuit_name>")
@@ -1416,6 +1493,293 @@ def api_peak_usage():
 def api_circuit(circuit_name, period="day"):
     from urllib.parse import unquote
     return jsonify(energy.get_circuit_data(unquote(circuit_name), period))
+
+
+PANEL_EDIT_HTML = """
+<div class="page">
+  <div class="section-head" style="margin-top:1.5rem;">
+    <h2>Panel Layout Editor</h2>
+    <span class="section-sub">Assign circuits to physical breaker slots, add labels &amp; notes</span>
+  </div>
+  <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
+    Slot numbers mirror the physical breaker positions (1 = top-left, 2 = top-right, alternating down).
+    Leave <em>Circuit</em> blank for a spare/empty slot.
+  </p>
+
+  <div style="display:flex; gap:12px; margin-bottom:1rem; flex-wrap:wrap; align-items:center;">
+    <label style="font-size:0.82rem; color:var(--text-light);">
+      Panel size:
+      <select id="panelSize" style="margin-left:6px; font-size:0.82rem; padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--bg); color:var(--text);">
+        <option value="20" {{ 'selected' if panel_slots==20 else '' }}>20 slots</option>
+        <option value="40" {{ 'selected' if panel_slots==40 else '' }}>40 slots</option>
+      </select>
+    </label>
+    <button onclick="saveLayout()" style="padding:8px 20px; background:var(--olive-800); color:var(--olive-50); border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+      Save Layout
+    </button>
+    <span id="saveMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
+  </div>
+
+  <div class="panel-edit-grid" id="editGrid">
+    {% for b in breakers %}
+    <div class="slot-row" data-slot="{{ b.slot }}">
+      <div class="slot-num">{{ b.slot }}</div>
+      <select class="sel-circuit" title="Circuit channel">
+        <option value="">— empty —</option>
+        {% for ch in all_channels %}
+        <option value="{{ ch }}" {{ 'selected' if b.channel_name == ch else '' }}>{{ ch }}</option>
+        {% endfor %}
+      </select>
+      <input class="inp-label" type="text" placeholder="Label" value="{{ b.label if b.label and b.label != b.channel_name else '' }}" title="Display label override">
+      <input class="inp-note" type="text" placeholder="Note (e.g. Bedroom outlets, 20A)" value="{{ b.note or '' }}" title="Hover note">
+      <input class="inp-amps" type="number" placeholder="A" value="{{ b.amps or '' }}" min="1" max="200" title="Breaker amps">
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<script>
+function saveLayout() {
+  const rows = document.querySelectorAll('.slot-row');
+  const slots = Array.from(rows).map(row => ({
+    slot:         parseInt(row.dataset.slot),
+    channel_name: row.querySelector('.sel-circuit').value || null,
+    label:        row.querySelector('.inp-label').value.trim() || null,
+    note:         row.querySelector('.inp-note').value.trim() || null,
+    amps:         parseInt(row.querySelector('.inp-amps').value) || null,
+  }));
+  fetch('/api/panel-layout', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({slots})
+  }).then(r => r.json()).then(() => {
+    const m = document.getElementById('saveMsg');
+    m.style.display = 'inline';
+    setTimeout(() => m.style.display = 'none', 2500);
+  });
+}
+// Show/hide slots based on panel size selector
+document.getElementById('panelSize').addEventListener('change', function() {
+  const n = parseInt(this.value);
+  document.querySelectorAll('.slot-row').forEach(r => {
+    r.style.display = parseInt(r.dataset.slot) <= n ? '' : 'none';
+  });
+});
+</script>
+"""
+
+SETTINGS_HTML = """
+<div class="page">
+  <div class="section-head" style="margin-top:1.5rem;">
+    <h2>Settings</h2>
+    <span class="section-sub">Emporia credentials &amp; app configuration</span>
+  </div>
+
+  <!-- Credentials -->
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Emporia Account</h3>
+    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
+      {% if has_tokens %}
+      <span style="color:var(--green);">&#10003; Authenticated</span> — tokens cached in <code>keys.json</code>.
+      Re-enter credentials only if you change your password or tokens expire.
+      {% else %}
+      No tokens found. Enter your Emporia email &amp; password to start live polling.
+      {% endif %}
+    </p>
+    <form id="credForm" style="display:flex; flex-direction:column; gap:10px; max-width:420px;">
+      <label style="font-size:0.82rem; font-weight:600;">
+        Email
+        <input type="email" id="credEmail" value="{{ saved_email }}"
+               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                      border:1px solid var(--border); background:var(--bg); color:var(--text);
+                      font-size:0.9rem; font-family:inherit;">
+      </label>
+      <label style="font-size:0.82rem; font-weight:600;">
+        Password
+        <input type="password" id="credPwd" placeholder="••••••••"
+               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                      border:1px solid var(--border); background:var(--bg); color:var(--text);
+                      font-size:0.9rem; font-family:inherit;">
+      </label>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button type="button" onclick="saveCreds()"
+                style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                       border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+          Save &amp; Authenticate
+        </button>
+        <span id="credMsg" style="font-size:0.82rem; display:none;"></span>
+      </div>
+    </form>
+    <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.75rem;">
+      Credentials are stored locally in <code>settings.json</code>. The live poller must be restarted after changes.
+    </p>
+  </div>
+
+  <!-- Rate & Budget -->
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Rate &amp; Budget</h3>
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:0.75rem;">
+      <label style="font-size:0.82rem; font-weight:600;">
+        Electricity rate (¢/kWh)
+        <input type="number" id="cfgRate" step="0.01" value="{{ rate_cents }}"
+               style="display:block; width:120px; margin-top:4px; padding:8px 10px; border-radius:8px;
+                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
+      </label>
+      <label style="font-size:0.82rem; font-weight:600;">
+        Monthly budget ($)
+        <input type="number" id="cfgBudget" step="1" value="{{ monthly_budget }}"
+               style="display:block; width:120px; margin-top:4px; padding:8px 10px; border-radius:8px;
+                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
+      </label>
+    </div>
+    <button type="button" onclick="saveConfig()" style="margin-top:0.85rem; padding:9px 22px;
+            background:var(--olive-800); color:var(--olive-50); border:none; border-radius:8px;
+            font-size:0.85rem; cursor:pointer; font-family:inherit;">
+      Save Rate &amp; Budget
+    </button>
+    <span id="cfgMsg" style="font-size:0.82rem; color:var(--green); margin-left:10px; display:none;">Saved ✓</span>
+    <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.5rem;">Restart Flask for changes to take effect.</p>
+  </div>
+
+  <!-- Panel layout link -->
+  <div class="card">
+    <h3 style="font-size:1.1rem; margin-bottom:0.4rem;">Panel Layout</h3>
+    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:0.75rem;">
+      Assign circuits to physical breaker slots, add custom labels and hover notes.
+    </p>
+    <a href="/panel" style="display:inline-block; padding:9px 22px; background:var(--olive-800);
+       color:var(--olive-50); border-radius:8px; font-size:0.85rem; text-decoration:none;">
+      Edit Panel Layout →
+    </a>
+  </div>
+</div>
+<script>
+function saveCreds() {
+  const email = document.getElementById('credEmail').value.trim();
+  const pwd   = document.getElementById('credPwd').value;
+  const msg   = document.getElementById('credMsg');
+  if (!email) { msg.textContent='Email required'; msg.style.color='var(--red)'; msg.style.display='inline'; return; }
+  fetch('/api/settings/credentials', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email, password: pwd})
+  }).then(r=>r.json()).then(d => {
+    msg.textContent = d.ok ? 'Saved — restart the poller to apply' : ('Error: ' + d.error);
+    msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+    msg.style.display = 'inline';
+  });
+}
+function saveConfig() {
+  const rate   = parseFloat(document.getElementById('cfgRate').value);
+  const budget = parseFloat(document.getElementById('cfgBudget').value);
+  fetch('/api/settings/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({rate_cents: rate, monthly_budget: budget})
+  }).then(r=>r.json()).then(() => {
+    const m = document.getElementById('cfgMsg');
+    m.style.display='inline'; setTimeout(()=>m.style.display='none', 2500);
+  });
+}
+</script>
+"""
+
+@app.route("/panel")
+def panel_edit_page():
+    com = _common()
+    layout = {row["slot"]: row for row in energy.get_panel_layout()}
+    max_saved = max(layout.keys(), default=0)
+    panel_slots = max(20, ((max_saved + 19) // 20) * 20)
+    all_channels = sorted([
+        r["channel_name"] for r in energy.get_summary(24 * 30)
+        if r["channel_name"] not in _MAINS_NAMES and r["channel_name"] not in _SKIP_NAMES
+           and not str(r["channel_name"]).isdigit()
+    ])
+    breakers = []
+    for slot in range(1, panel_slots + 1):
+        row = layout.get(slot, {})
+        name = row.get("channel_name")
+        breakers.append({
+            "slot":         slot,
+            "channel_name": name or "",
+            "label":        row.get("label") or "",
+            "note":         row.get("note") or "",
+            "amps":         row.get("amps") or "",
+        })
+    return _render(PANEL_EDIT_HTML, active_page="settings",
+                   breakers=breakers, all_channels=all_channels,
+                   panel_slots=panel_slots, **com)
+
+
+@app.route("/api/panel-layout", methods=["POST"])
+def api_panel_layout():
+    data = request.get_json(force=True)
+    for s in data.get("slots", []):
+        energy.save_panel_slot(
+            s["slot"], s.get("channel_name"), s.get("label"),
+            s.get("note"), s.get("amps")
+        )
+    return jsonify({"ok": True})
+
+
+@app.route("/settings")
+def settings_page():
+    import json as _json, os as _os
+    com = _common()
+    cfg = {}
+    try:
+        with open("settings.json") as f:
+            cfg = _json.load(f)
+    except Exception:
+        pass
+    has_tokens = _os.path.exists("keys.json")
+    return _render(SETTINGS_HTML, active_page="settings",
+                   saved_email=cfg.get("emporia_email", ""),
+                   has_tokens=has_tokens,
+                   rate_cents=energy.RATE_CENTS,
+                   monthly_budget=MONTHLY_BUDGET,
+                   **com)
+
+
+@app.route("/api/settings/credentials", methods=["POST"])
+def api_save_credentials():
+    import json as _json, os as _os
+    data = request.get_json(force=True)
+    email = (data.get("email") or "").strip()
+    pwd   = (data.get("password") or "").strip()
+    if not email:
+        return jsonify({"ok": False, "error": "Email required"}), 400
+    cfg = {}
+    try:
+        with open("settings.json") as f:
+            cfg = _json.load(f)
+    except Exception:
+        pass
+    cfg["emporia_email"] = email
+    if pwd:
+        cfg["emporia_password"] = pwd
+        # Delete cached tokens so poller re-authenticates on restart
+        if _os.path.exists("keys.json"):
+            _os.remove("keys.json")
+    with open("settings.json", "w") as f:
+        _json.dump(cfg, f, indent=2)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/settings/config", methods=["POST"])
+def api_save_config():
+    import json as _json
+    data = request.get_json(force=True)
+    cfg = {}
+    try:
+        with open("settings.json") as f:
+            cfg = _json.load(f)
+    except Exception:
+        pass
+    if data.get("rate_cents") is not None:
+        cfg["rate_cents"] = float(data["rate_cents"])
+    if data.get("monthly_budget") is not None:
+        cfg["monthly_budget"] = float(data["monthly_budget"])
+    with open("settings.json", "w") as f:
+        _json.dump(cfg, f, indent=2)
+    return jsonify({"ok": True})
 
 
 @app.route("/import")

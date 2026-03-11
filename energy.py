@@ -9,10 +9,23 @@ import pyemvue
 from pyemvue.enums import Scale, Unit
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
-RATE_CENTS = float(os.environ.get("RATE_CENTS", "11.04"))
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
-# Rows older than this many days are pruned during each poll cycle
 DB_RETENTION_DAYS = int(os.environ.get("DB_RETENTION_DAYS", "365"))
+
+# Rate can come from env, settings.json, or default
+def _read_rate_cents() -> float:
+    if os.environ.get("RATE_CENTS"):
+        return float(os.environ["RATE_CENTS"])
+    try:
+        with open("settings.json") as f:
+            v = json.load(f).get("rate_cents")
+            if v is not None:
+                return float(v)
+    except Exception:
+        pass
+    return 11.04
+
+RATE_CENTS = _read_rate_cents()
 
 
 def _connect() -> sqlite3.Connection:
@@ -42,7 +55,42 @@ def ensure_table():
             ON readings(device_gid, channel_num);
         CREATE INDEX IF NOT EXISTS idx_channel_name
             ON readings(channel_name);
+
+        -- Panel layout: one row per physical breaker slot
+        CREATE TABLE IF NOT EXISTS circuit_labels (
+            slot        INTEGER PRIMARY KEY,  -- 1-based physical slot
+            channel_name TEXT,               -- matches readings.channel_name (nullable = empty slot)
+            label       TEXT,               -- display label override (defaults to channel_name)
+            note        TEXT,               -- freeform note, e.g. "Bedroom outlets, 20A"
+            amps        INTEGER             -- breaker size in amps
+        );
     """)
+    conn.commit()
+    conn.close()
+
+
+def get_panel_layout() -> list[dict]:
+    """Return all circuit_labels rows ordered by slot."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT slot, channel_name, label, note, amps FROM circuit_labels ORDER BY slot"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_panel_slot(slot: int, channel_name: str | None, label: str | None,
+                    note: str | None, amps: int | None):
+    conn = _connect()
+    conn.execute("""
+        INSERT INTO circuit_labels(slot, channel_name, label, note, amps)
+        VALUES(?,?,?,?,?)
+        ON CONFLICT(slot) DO UPDATE SET
+            channel_name=excluded.channel_name,
+            label=excluded.label,
+            note=excluded.note,
+            amps=excluded.amps
+    """, (slot, channel_name or None, label or None, note or None, amps or None))
     conn.commit()
     conn.close()
 
@@ -77,11 +125,20 @@ def migrate_channel_names():
     return len(updates)
 
 
+def _load_settings() -> dict:
+    try:
+        with open("settings.json") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def login_vue():
     vue = pyemvue.PyEmVue()
     token_file = "keys.json"
-    username = os.environ.get("EMPORIA_EMAIL")
-    password = os.environ.get("EMPORIA_PASSWORD")
+    cfg      = _load_settings()
+    username = os.environ.get("EMPORIA_EMAIL")    or cfg.get("emporia_email")
+    password = os.environ.get("EMPORIA_PASSWORD") or cfg.get("emporia_password")
 
     print(f"Attempting login with user: {username}")
 
