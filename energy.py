@@ -51,6 +51,32 @@ def ensure_table():
 ensure_table()
 
 
+def migrate_channel_names():
+    """
+    One-time migration: re-clean any channel_names that still contain
+    '(kWatts)' or look like 'Category-CircuitName' from the original
+    broken import parser. Safe to call repeatedly — no-ops if already clean.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT DISTINCT channel_name FROM readings WHERE channel_name IS NOT NULL"
+    ).fetchall()
+    updates = []
+    for row in rows:
+        old = row["channel_name"]
+        new = _clean_csv_channel_name(old)
+        if new != old:
+            updates.append((new, old))
+    if updates:
+        conn.executemany(
+            "UPDATE readings SET channel_name = ? WHERE channel_name = ?", updates
+        )
+        conn.commit()
+        print(f"[migrate] renamed {len(updates)} channel name(s)")
+    conn.close()
+    return len(updates)
+
+
 def login_vue():
     vue = pyemvue.PyEmVue()
     token_file = "keys.json"
@@ -543,6 +569,35 @@ def get_trend(days_back: int = 14) -> dict:
     }
 
 
+def _clean_csv_channel_name(col: str) -> str:
+    """
+    Normalize an Emporia CSV column header into a clean circuit name.
+
+    Input examples:
+      "Barn-Mains_A (kWatts)"              → "Mains_A"
+      "Barn-Other-Kitchen Outlets (kWatts)" → "Kitchen Outlets"
+      "Barn-Clothes Dryer-Dryer (kWatts)"  → "Dryer"
+      "Barn-Water Heater-Water Heater (kWatts)" → "Water Heater"
+    """
+    name = col.strip()
+    # Strip unit suffix: " (kWatts)", " (kWhs)", " (kW)", etc.
+    for suffix in (" (kWatts)", " (kWhs)", " (kW)"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)].strip()
+            break
+    # Strip device prefix — first hyphen-delimited segment that has no spaces
+    # e.g. "Barn-..." → strips "Barn-"
+    if "-" in name:
+        parts = name.split("-", 1)
+        if " " not in parts[0]:
+            name = parts[1].strip()
+    # Strip category prefix — Emporia groups like "Other-", "Pump-", etc.
+    # These can contain spaces, so strip unconditionally if a hyphen remains.
+    if "-" in name:
+        name = name.split("-", 1)[1].strip()
+    return name
+
+
 def import_emporia_csv(filepath: str, device_gid: str | None = None) -> dict:
     """
     Import an Emporia energy export CSV into the readings table.
@@ -579,15 +634,8 @@ def import_emporia_csv(filepath: str, device_gid: str | None = None) -> dict:
         # Build [(original_col_header, channel_name), …]
         channel_cols = []
         for col in headers[1:]:
-            name = col.strip()
-            if name.endswith("(kWhs)"):
-                name = name[:-6].strip()
-            # Strip leading "DeviceName-" when the first segment has no spaces
-            if "-" in name:
-                parts = name.split("-", 1)
-                if " " not in parts[0]:
-                    name = parts[1].strip()
-            channel_cols.append((col, name))
+            channel_cols.append((col, _clean_csv_channel_name(col)))
+
 
         # Pre-fetch existing (timestamp, device_gid, channel_name) combos
         # scoped to this device so dedup is fast without per-row queries.
