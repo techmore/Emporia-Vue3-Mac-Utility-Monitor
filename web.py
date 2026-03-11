@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -557,56 +557,87 @@ DASH_HTML = """
       </div>
     </div>
 
-    <!-- Panel view -->
-    <div id="view-panel" class="panel-wrap" style="display:none;">
-      {% if dash_mains %}
-      <div class="panel-label">Service Panel — Live</div>
-      {% for m in dash_mains %}
-      {% if m.is_total %}
-      <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
-        <div class="mc-leg">{{ m.label }}</div>
-        <div class="mc-w" style="font-size:2.5rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-300)">W</span>
-          <span style="font-size:0.9rem; color:var(--olive-300); margin-left:12px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1) * 1) }} /kWh</span>
-        </div>
-        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
-      </div>
-      <div class="panel-mains" style="margin-bottom:10px;">
-      {% elif loop.last %}
-        <div class="mains-card">
-          <div class="mc-leg">{{ m.label }}</div>
-          <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-          <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
-        </div>
-      </div>
-      {% else %}
-        <div class="mains-card">
-          <div class="mc-leg">{{ m.label }}</div>
-          <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-          <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
-        </div>
-      {% endif %}
-      {% endfor %}
-      <div class="panel-bus"><div class="panel-bus-line"></div><div class="panel-bus-label">Bus bar</div><div class="panel-bus-line"></div></div>
-      {% endif %}
-      <div class="panel-grid">
-        {% for b in dash_breakers %}
-        {% if b.channel_name %}
-        <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
-          <div class="breaker-num">{{ b.slot }}</div>
-          <div class="breaker-body">
-            <div class="breaker-name">{{ b.label }}</div>
-            <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W</div>
+    <!-- Panel view: 2/3 panel + 1/3 KPI sidebar -->
+    <div id="view-panel" style="display:none;">
+      <div style="display:grid; grid-template-columns: 2fr 1fr; gap:16px; align-items:start;">
+
+        <!-- Left: breaker panel -->
+        <div class="panel-wrap" style="margin-top:0;">
+          {% if dash_mains %}
+          <div class="panel-label">Service Panel — Live</div>
+          {% for m in dash_mains %}
+          {% if m.is_total %}
+          <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
+            <div class="mc-leg">{{ m.label }}</div>
+            <div class="mc-w" style="font-size:2.2rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:0.9rem;color:var(--olive-300)">W</span>
+              <span style="font-size:0.8rem; color:var(--olive-300); margin-left:10px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1)) }}/kWh</span>
+            </div>
+            <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
           </div>
-          <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
-          {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
-        </a>
-        {% else %}
-        <div class="breaker empty">
-          <div class="breaker-num">{{ b.slot }}</div>
-          <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
+          <div class="panel-mains" style="margin-bottom:10px;">
+          {% elif loop.last %}
+            <div class="mains-card">
+              <div class="mc-leg">{{ m.label }}</div>
+              <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+              <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+            </div>
+          </div>
+          {% else %}
+            <div class="mains-card">
+              <div class="mc-leg">{{ m.label }}</div>
+              <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+              <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+            </div>
+          {% endif %}
+          {% endfor %}
+          <div class="panel-bus"><div class="panel-bus-line"></div><div class="panel-bus-label">Bus bar</div><div class="panel-bus-line"></div></div>
+          {% endif %}
+          <div class="panel-grid">
+            {% for b in dash_breakers %}
+            {% if b.channel_name %}
+            <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
+              <div class="breaker-num">{{ b.slot }}</div>
+              <div class="breaker-body">
+                <div class="breaker-name">{{ b.label }}</div>
+                <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W</div>
+              </div>
+              <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
+              {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
+            </a>
+            {% else %}
+            <div class="breaker empty">
+              <div class="breaker-num">{{ b.slot }}</div>
+              <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
+            </div>
+            {% endif %}
+            {% endfor %}
+          </div>
         </div>
-        {% endif %}
-        {% endfor %}
+
+        <!-- Right: 24h KPI cards -->
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          <div class="card">
+            <div class="card-label">24h Usage</div>
+            <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
+            <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
+          </div>
+          <div class="card">
+            <div class="card-label">24h Cost</div>
+            <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
+            <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Biggest Load</div>
+            <div class="card-value" style="font-size:1.2rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
+            <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh · {{ "%.0f"|format(biggest_circuit.pct or 0) }}%</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Month-to-Date</div>
+            <div class="card-value">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) if month_comparison.this_month else '0.00' }}</div>
+            <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) }} kWh {% if month_comparison.last_month %}&bull; {{ delta_month|safe }}{% endif %}</div>
+          </div>
+        </div>
+
       </div>
     </div>
 
