@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- __PROJECT_ROOT__ is replaced by setup_launch.sh at install time -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dolbec.energymonitor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PROJECT_ROOT__/EnergyMonitorApp/EnergyMonitorApp</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if the app crashes -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/energymonitor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/energymonitor.error</string>
+</dict>
+</plist>

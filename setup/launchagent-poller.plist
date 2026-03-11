@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- __PROJECT_ROOT__ is replaced by setup_launch.sh at install time -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dolbec.energymonitor.poller</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PROJECT_ROOT__/venv/bin/python3</string>
+        <string>__PROJECT_ROOT__/energy.py</string>
+    </array>
+
+    <!-- Run from the project directory so relative paths (energy.db) resolve correctly -->
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if the poller crashes -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/energymonitor-poller.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/energymonitor-poller.error</string>
+</dict>
+</plist>
