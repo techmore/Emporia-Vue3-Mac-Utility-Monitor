@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -722,9 +722,9 @@ DASH_HTML = """
       </div>
     </div>
 
-    <!-- Panel view: 2/3 panel + 1/3 KPI sidebar -->
+    <!-- Panel view: 50% panel + 50% metrics sidebar -->
     <div id="view-panel" style="display:none;">
-      <div style="display:grid; grid-template-columns: 2fr 1fr; gap:16px; align-items:start;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; align-items:start;">
 
         <!-- Left: breaker panel -->
         <div class="panel-wrap" style="margin-top:0;">
@@ -779,30 +779,87 @@ DASH_HTML = """
           </div>
         </div>
 
-        <!-- Right: 24h KPI cards -->
+        <!-- Right: 2-column metrics grid -->
         <div style="display:flex; flex-direction:column; gap:10px;">
-          <div class="card">
-            <div class="card-label">24h Usage</div>
-            <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
-            <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
-          </div>
-          <div class="card">
-            <div class="card-label">24h Cost</div>
-            <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
-            <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
-          </div>
-          <div class="card">
-            <div class="card-label">Biggest Load</div>
-            <div class="card-value" style="font-size:1.2rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
-            <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh · {{ "%.0f"|format(biggest_circuit.pct or 0) }}%</div>
-          </div>
-          <div class="card">
-            <div class="card-label">Month-to-Date</div>
-            <div class="card-value">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) if month_comparison.this_month else '0.00' }}</div>
-            <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) }} kWh {% if month_comparison.last_month %}&bull; {{ delta_month|safe }}{% endif %}</div>
-          </div>
-        </div>
 
+          <!-- Row 1: Live + Avg -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div class="card">
+              <div class="card-label">Live</div>
+              <div class="card-value" style="font-size:1.6rem;">{{ "%.0f"|format(current_watts) }}<span class="unit">W</span></div>
+              <div class="card-meta">right now</div>
+            </div>
+            <div class="card">
+              <div class="card-label">24h Avg</div>
+              <div class="card-value" style="font-size:1.6rem;">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }}<span class="unit">W</span></div>
+              <div class="card-meta">{{ "%.2f"|format(total_24h.total_kwh or 0) }} kWh</div>
+            </div>
+          </div>
+
+          <!-- Row 2: 24h Cost + MTD -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div class="card">
+              <div class="card-label">24h Cost</div>
+              <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
+              <div class="card-meta">${{ "%.4f"|format(rate) }}/kWh</div>
+            </div>
+            <div class="card">
+              <div class="card-label">Month-to-Date</div>
+              <div class="card-value">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) if month_comparison.this_month else '0.00' }}</div>
+              <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) if month_comparison.this_month else '0' }} kWh</div>
+            </div>
+          </div>
+
+          <!-- Row 3: Projected + Budget -->
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div class="card">
+              <div class="card-label">Projected Month</div>
+              <div class="card-value">${{ "%.2f"|format(monthly_projected) }}</div>
+              <div class="card-meta">estimated at current rate</div>
+            </div>
+            <div class="card">
+              <div class="card-label">Budget</div>
+              <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(budget_pct) }}<span class="unit">%</span></div>
+              <div style="height:6px; background:var(--surface2); border-radius:3px; margin:4px 0;">
+                <div style="height:6px; border-radius:3px; width:{{ budget_pct }}%;
+                  background:{{ 'var(--red-400,#f87171)' if budget_pct > 90 else ('var(--amber-400,#fbbf24)' if budget_pct > 70 else 'var(--olive-500)') }};"></div>
+              </div>
+              <div class="card-meta">of ${{ budget }} budget</div>
+            </div>
+          </div>
+
+          <!-- Row 4: Biggest Load (full width) -->
+          <div class="card">
+            <div class="card-label">Biggest Load (24h)</div>
+            <div style="display:flex; align-items:baseline; gap:8px;">
+              <div class="card-value" style="font-size:1.3rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
+              <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh &bull; {{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total</div>
+            </div>
+          </div>
+
+          <!-- Row 5: Top active circuits mini-list -->
+          <div class="card">
+            <div class="card-label" style="margin-bottom:8px;">Top Active Circuits</div>
+            {% for c in top_circuits[:5] %}
+            <div style="display:flex; align-items:center; gap:8px; padding:3px 0;
+                        border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+              <div style="flex:1; font-size:0.82rem; font-weight:500; color:var(--text);
+                          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                <a href="/circuit/{{ c.channel_name|urlencode }}" style="color:inherit; text-decoration:none;">{{ c.channel_name }}</a>
+              </div>
+              <div style="font-size:0.82rem; font-weight:700; color:var(--text); min-width:48px; text-align:right;">{{ "%.0f"|format(c.watts) }} W</div>
+              <div style="width:60px; height:5px; background:var(--surface2); border-radius:3px; flex-shrink:0;">
+                <div style="height:5px; border-radius:3px; width:{{ c.pct|round(1) }}%;
+                  background:{{ 'var(--olive-400)' if c.pct < 20 else ('var(--amber-500,#f59e0b)' if c.pct < 40 else 'var(--red-400,#f87171)') }};"></div>
+              </div>
+              <div style="font-size:0.72rem; color:var(--text-light); min-width:32px; text-align:right;">{{ "%.0f"|format(c.pct) }}%</div>
+            </div>
+            {% else %}
+            <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>
+            {% endfor %}
+          </div>
+
+        </div><!-- /right -->
       </div>
     </div>
 
