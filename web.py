@@ -463,8 +463,10 @@ NAV_HTML = """
     </div>
     <div style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
       <span style="font-size:0.65rem; color:var(--stone-400); font-variant-numeric:tabular-nums;">v{{ version }}</span>
-      <span class="status-dot {{ status_cls }}"></span>
-      {{ status_label }}
+      <a href="/log" style="display:flex; align-items:center; gap:6px; text-decoration:none; color:inherit;">
+        <span class="status-dot {{ status_cls }}"></span>
+        {{ status_label }}
+      </a>
     </div>
   </div>
 </nav>
@@ -524,6 +526,27 @@ def _render(template: str, **ctx):
 
 DASH_HTML = """
 <div class="page">
+
+  <!-- ── Offline / Stale sync notice ──────────────────────────────────── -->
+  {% if status_cls in ('stale', 'dead') %}
+  <div style="background:var(--surface2); border:1px solid var(--border); border-radius:10px;
+              padding:10px 14px; margin-bottom:0.75rem; display:flex; align-items:center;
+              justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="status-dot {{ status_cls }}"></span>
+      <span style="font-size:0.82rem; font-weight:600; color:var(--text);">{{ status_label }}</span>
+      {% if recent_log %}
+      <span style="font-size:0.75rem; color:var(--text-light);">
+        — last sync: {{ recent_log[0].timestamp[:19] }}
+        &nbsp;·&nbsp; {{ recent_log[0].channel_count }} channels
+        &nbsp;·&nbsp; {{ "%.4f"|format(recent_log[0].total_kwh or 0) }} kWh
+      </span>
+      {% endif %}
+    </div>
+    <a href="/log" style="font-size:0.75rem; color:var(--olive-600); text-decoration:none;
+                          white-space:nowrap;">View full log →</a>
+  </div>
+  {% endif %}
 
   <!-- ── Weather Strip ─────────────────────────────────────────────────── -->
   <div id="weather-strip" style="display:none; margin-bottom:0.75rem; overflow-x:auto;">
@@ -1634,6 +1657,9 @@ def index():
     else:
         delta_month = _delta_badge(None, "last month")
 
+    # Pass last 3 poll entries to dashboard so offline state can show inline sync info
+    recent_log = energy.get_log_entries(3)
+
     return _render(
         DASH_HTML,
         active_page="dashboard",
@@ -1653,6 +1679,7 @@ def index():
         dash_mains=dash_mains,
         dash_breakers=dash_breakers,
         trend=trend,
+        recent_log=recent_log,
         delta_yd=_delta_badge(ctx["vs_yesterday_pct"],  "yesterday", invert=True),
         delta_wk=_delta_badge(ctx["vs_last_week_pct"],  "last week",  invert=True),
         delta_mo=_delta_badge(ctx["vs_last_month_pct"], "last month", invert=True),
