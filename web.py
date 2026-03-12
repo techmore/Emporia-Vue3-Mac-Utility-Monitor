@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.6.5"
+VERSION = "1.6.6"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -757,8 +757,7 @@ DASH_HTML = """
           {% endfor %}
           <div class="panel-bus"><div class="panel-bus-line"></div><div class="panel-bus-label">Bus bar</div><div class="panel-bus-line"></div></div>
           {% endif %}
-          <div class="panel-grid">
-            {% for b in dash_breakers %}
+          {%- macro render_breaker(b) %}
             {% if b.channel_name %}
             <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
               <div class="breaker-num">{{ b.slot }}</div>
@@ -775,7 +774,14 @@ DASH_HTML = """
               <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
             </div>
             {% endif %}
-            {% endfor %}
+          {%- endmacro %}
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              {% for b in breakers_left %}{{ render_breaker(b) }}{% endfor %}
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              {% for b in breakers_right %}{{ render_breaker(b) }}{% endfor %}
+            </div>
           </div>
         </div>
 
@@ -1271,33 +1277,32 @@ CIRCUITS_HTML = """
       <div class="panel-bus-line"></div>
     </div>
 
-    <!-- Two-column breaker grid — slot 1 top-left, slot 2 top-right, etc. -->
-    <div class="panel-grid">
-      {% for b in breakers %}
+    <!-- Two-column breaker grid — left = odd slots, right = even slots -->
+    {%- macro render_breaker_c(b) %}
       {% if b.channel_name %}
       <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
         <div class="breaker-num">{{ b.slot }}</div>
         <div class="breaker-body">
           <div class="breaker-name">{{ b.label }}</div>
           <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W{% if b.amps %} &bull; {{ b.amps }}A{% endif %}</div>
-          {% if b.amps %}<div class="breaker-amps"></div>{% endif %}
         </div>
-        <div class="breaker-bar-wrap">
-          <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
-        </div>
-        {% if b.note %}
-        <div class="breaker-note-tip">{{ b.note }}</div>
-        {% endif %}
+        <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
+        {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
       </a>
       {% else %}
       <div class="breaker empty">
         <div class="breaker-num">{{ b.slot }}</div>
-        <div class="breaker-body">
-          <div class="breaker-name" style="color:var(--olive-700)">—</div>
-        </div>
+        <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
       </div>
       {% endif %}
-      {% endfor %}
+    {%- endmacro %}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        {% for b in breakers_left %}{{ render_breaker_c(b) }}{% endfor %}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        {% for b in breakers_right %}{{ render_breaker_c(b) }}{% endfor %}
+      </div>
     </div>
 
     <div style="text-align:right; margin-top:0.75rem;">
@@ -1828,6 +1833,22 @@ def index():
             "watts": watts, "bar_pct": bar, "cls": cls,
         })
 
+    # Panel column invert — read from settings.json
+    import json as _json
+    _cfg = {}
+    try:
+        with open("settings.json") as _f:
+            _cfg = _json.load(_f)
+    except Exception:
+        pass
+    _pinv = _cfg.get("panel_display", {})
+    _invert_left  = _pinv.get("invert_left",  False)
+    _invert_right = _pinv.get("invert_right", False)
+    breakers_left  = [b for b in dash_breakers if b["slot"] % 2 == 1]
+    breakers_right = [b for b in dash_breakers if b["slot"] % 2 == 0]
+    if _invert_left:  breakers_left  = list(reversed(breakers_left))
+    if _invert_right: breakers_right = list(reversed(breakers_right))
+
     peak_usage = energy.get_peak_usage()
     for h in peak_usage["peak_hours"]:
         h["hour_label"] = _format_hour(h["hour"])
@@ -1897,6 +1918,10 @@ def index():
         peak_24h=peak_24h,
         dash_mains=dash_mains,
         dash_breakers=dash_breakers,
+        breakers_left=breakers_left,
+        breakers_right=breakers_right,
+        panel_invert_left=_invert_left,
+        panel_invert_right=_invert_right,
         trend=trend,
         standby=standby,
         standby_total_w=standby_total_w,
@@ -2011,8 +2036,24 @@ def circuits_page():
         })
     usage_rows.sort(key=lambda r: r["day_kwh"], reverse=True)
 
+    # Split breakers into left (odd) / right (even) columns with invert support
+    import json as _json2
+    _cfg2 = {}
+    try:
+        with open("settings.json") as _f2:
+            _cfg2 = _json2.load(_f2)
+    except Exception:
+        pass
+    _pinv2 = _cfg2.get("panel_display", {})
+    breakers_left  = [b for b in breakers if b["slot"] % 2 == 1]
+    breakers_right = [b for b in breakers if b["slot"] % 2 == 0]
+    if _pinv2.get("invert_left",  False): breakers_left  = list(reversed(breakers_left))
+    if _pinv2.get("invert_right", False): breakers_right = list(reversed(breakers_right))
+
     return _render(CIRCUITS_HTML, active_page="circuits",
-                   mains=mains, breakers=breakers, usage_rows=usage_rows,
+                   mains=mains, breakers=breakers,
+                   breakers_left=breakers_left, breakers_right=breakers_right,
+                   usage_rows=usage_rows,
                    panel_slots=panel_slots, **com)
 
 
@@ -2418,6 +2459,35 @@ SETTINGS_HTML = """
     </p>
   </div>
 
+  <!-- Panel Display Options -->
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Panel Display</h3>
+    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
+      Residential panels wire odd slots (left column) top-to-bottom, but some installs run
+      even slots (right column) bottom-to-top. Toggle to match your physical wiring.
+    </p>
+    <div style="display:flex; gap:2rem; flex-wrap:wrap; margin-bottom:1rem;">
+      <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
+        <input type="checkbox" id="invertLeft" {% if panel_invert_left %}checked{% endif %}
+               style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
+        Invert left column (odd slots)
+      </label>
+      <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
+        <input type="checkbox" id="invertRight" {% if panel_invert_right %}checked{% endif %}
+               style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
+        Invert right column (even slots)
+      </label>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center;">
+      <button type="button" onclick="savePanelDisplay()"
+              style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                     border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+        Save Display Options
+      </button>
+      <span id="pdMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓ — reload dashboard to see changes</span>
+    </div>
+  </div>
+
   <!-- Panel layout link -->
   <div class="card">
     <h3 style="font-size:1.1rem; margin-bottom:0.4rem;">Panel Layout</h3>
@@ -2467,6 +2537,17 @@ function saveDeviceLabels() {
   }).then(r=>r.json()).then(d => {
     const m = document.getElementById('lblMsg');
     m.style.display='inline'; setTimeout(()=>m.style.display='none', 2500);
+  });
+}
+function savePanelDisplay() {
+  const invertLeft  = document.getElementById('invertLeft').checked;
+  const invertRight = document.getElementById('invertRight').checked;
+  fetch('/api/settings/panel-display', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({invert_left: invertLeft, invert_right: invertRight})
+  }).then(r=>r.json()).then(d => {
+    const m = document.getElementById('pdMsg');
+    m.style.display='inline'; setTimeout(()=>m.style.display='none', 4000);
   });
 }
 function saveAqaraCreds() {
@@ -2650,6 +2731,7 @@ def settings_page():
         pass
     has_tokens = _os.path.exists("keys.json")
     aq = cfg.get("aqara", {})
+    pinv = cfg.get("panel_display", {})
     return _render(SETTINGS_HTML, active_page="settings",
                    saved_email=cfg.get("emporia_email", ""),
                    has_tokens=has_tokens,
@@ -2658,6 +2740,8 @@ def settings_page():
                    known_devices=energy.get_known_devices(),
                    aqara_app_id=aq.get("app_id", ""),
                    aqara_key_id=aq.get("key_id", ""),
+                   panel_invert_left=pinv.get("invert_left", False),
+                   panel_invert_right=pinv.get("invert_right", False),
                    **com)
 
 
@@ -2711,6 +2795,25 @@ def api_save_device_labels():
     if not isinstance(data, dict):
         return jsonify({"ok": False, "error": "Expected object"}), 400
     energy.save_device_labels(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/settings/panel-display", methods=["POST"])
+def api_save_panel_display():
+    import json as _json
+    data = request.get_json(force=True)
+    cfg = {}
+    try:
+        with open("settings.json") as f:
+            cfg = _json.load(f)
+    except Exception:
+        pass
+    cfg["panel_display"] = {
+        "invert_left":  bool(data.get("invert_left",  False)),
+        "invert_right": bool(data.get("invert_right", False)),
+    }
+    with open("settings.json", "w") as f:
+        _json.dump(cfg, f, indent=2)
     return jsonify({"ok": True})
 
 
