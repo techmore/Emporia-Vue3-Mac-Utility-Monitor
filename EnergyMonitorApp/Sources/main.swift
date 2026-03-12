@@ -35,10 +35,11 @@ private func resolveProjectRoot() -> URL {
     let binaryURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
     if binaryURL.pathComponents.contains("Contents") {
         return binaryURL
+            .deletingLastPathComponent() // binary name
             .deletingLastPathComponent() // MacOS/
             .deletingLastPathComponent() // Contents/
             .deletingLastPathComponent() // EnergyMonitorApp.app/
-            .deletingLastPathComponent() // EnergyMonitorApp/
+            .deletingLastPathComponent() // EnergyMonitorApp/ (subdirectory)
     }
     return binaryURL
         .deletingLastPathComponent() // EnergyMonitorApp/
@@ -246,9 +247,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         releaseLock()
     }
 
+    // ── Orphan cleanup ────────────────────────────────────────────────────────
+
+    /// Kill any process on port 5001 that is provably our own Flask (web.py from
+    /// this project's venv). Unrelated Flask apps on port 5001 are left alone.
+    private func killOrphanedFlask() {
+        // Step 1: get PIDs listening on :5001
+        let lsof = Process()
+        let lsofOut = Pipe()
+        lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        lsof.arguments = ["-i", ":5001", "-t"]
+        lsof.standardOutput = lsofOut
+        lsof.standardError  = Pipe()
+        guard (try? lsof.run()) != nil else { return }
+        lsof.waitUntilExit()
+
+        let raw = String(data: lsofOut.fileHandleForReading.readDataToEndOfFile(),
+                         encoding: .utf8) ?? ""
+        let pids = raw.components(separatedBy: .newlines)
+                      .compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
+
+        let venvPrefix = projectRoot.appendingPathComponent("venv").path
+
+        for pid in pids {
+            // Step 2: confirm the process is ours by checking its command line
+            let ps = Process()
+            let psOut = Pipe()
+            ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+            ps.arguments = ["-p", String(pid), "-o", "command="]
+            ps.standardOutput = psOut
+            ps.standardError  = Pipe()
+            guard (try? ps.run()) != nil else { continue }
+            ps.waitUntilExit()
+
+            let cmd = String(data: psOut.fileHandleForReading.readDataToEndOfFile(),
+                             encoding: .utf8) ?? ""
+
+            // Only kill if the command uses our project's venv python AND web.py
+            if cmd.contains(venvPrefix) && cmd.contains("web.py") {
+                kill(pid, SIGTERM)
+                print("Killed orphaned Flask process (PID \(pid))")
+            }
+        }
+
+        // Brief pause to let the port free up
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+
     // ── Flask startup ─────────────────────────────────────────────────────────
 
     private func startFlaskServer() {
+        killOrphanedFlask()
+
         let process = Process()
         let pipe    = Pipe()
 
