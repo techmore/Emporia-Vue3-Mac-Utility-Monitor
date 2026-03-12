@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -45,9 +45,9 @@ BASE_CSS = """
   --stone-800: #292524;
   --stone-900: #1c1917;
 
-  --bg:         var(--stone-50);
-  --surface:    #ffffff;
-  --surface2:   var(--olive-50);
+  --bg:         var(--olive-100);
+  --surface:    var(--olive-50);
+  --surface2:   var(--olive-100);
   --border:     var(--olive-200);
   --text:       var(--stone-800);
   --text-light: var(--stone-500);
@@ -544,23 +544,29 @@ DASH_HTML = """
   </style>
   <script>
   (function(){
+    const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const icons = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',51:'🌦️',53:'🌦️',55:'🌧️',
+      61:'🌧️',63:'🌧️',65:'🌧️',71:'🌨️',73:'🌨️',75:'🌨️',77:'🌨️',80:'🌦️',81:'🌧️',82:'🌧️',
+      85:'🌨️',86:'🌨️',95:'⛈️',96:'⛈️',99:'⛈️'};
     fetch('/api/weather').then(r=>r.json()).then(data=>{
       if(!data.days || !data.days.length) return;
-      const icons = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',51:'🌦️',53:'🌦️',55:'🌧️',
-        61:'🌧️',63:'🌧️',65:'🌧️',71:'🌨️',73:'🌨️',75:'🌨️',77:'🌨️',80:'🌦️',81:'🌧️',82:'🌧️',
-        85:'🌨️',86:'🌨️',95:'⛈️',96:'⛈️',99:'⛈️'};
+      // Use browser's local date so Today/Tomorrow roll over at midnight automatically
+      const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
       const container = document.getElementById('weather-days');
-      data.days.forEach((d,i)=>{
+      data.days.forEach(d=>{
+        const dayDate = new Date(d.date + 'T12:00:00'); // noon to avoid DST edge cases
+        const localStr = dayDate.toLocaleDateString('en-CA');
+        const diff = Math.round((dayDate - new Date(todayStr + 'T12:00:00')) / 86400000);
+        const label = diff === 0 ? 'Today' : (diff === 1 ? 'Tomorrow' : DAYS[dayDate.getDay()]);
+        const isToday = diff === 0;
         const el = document.createElement('div');
-        el.className = 'wx-card' + (i===0?' wx-today':'');
-        const icon = icons[d.weathercode] || '🌡️';
-        const label = i===0 ? 'Today' : (i===1 ? 'Tomorrow' : d.date.slice(5).replace('-','/'));
+        el.className = 'wx-card' + (isToday ? ' wx-today' : '');
         el.innerHTML = `
           <div class="wx-label">${label}</div>
-          <div class="wx-icon">${icon}</div>
+          <div class="wx-icon">${icons[d.weathercode] || '🌡️'}</div>
           <div class="wx-hi">${Math.round(d.temp_max)}°</div>
           <div class="wx-lo">${Math.round(d.temp_min)}°</div>
-          ${i===0 && data.current_temp !== null ? `<div class="wx-now">${Math.round(data.current_temp)}° now</div>` : ''}
+          ${isToday && data.current_temp !== null ? `<div class="wx-now">${Math.round(data.current_temp)}° now</div>` : ''}
         `;
         container.appendChild(el);
       });
