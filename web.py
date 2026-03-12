@@ -1887,6 +1887,10 @@ def api_weather():
         return jsonify({"days": [], "current_temp": None, "error": str(e)})
 
 
+@app.route("/api/version")
+def api_version():
+    return jsonify({"version": VERSION})
+
 @app.route("/api/summary")
 def api_summary():
     return jsonify(energy.get_summary(24))

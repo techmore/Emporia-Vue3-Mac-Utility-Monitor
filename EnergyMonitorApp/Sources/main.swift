@@ -1,11 +1,36 @@
 import AppKit
 import Darwin
 
+// ── Version ───────────────────────────────────────────────────────────────────
+// Version is fetched live from Flask /api/version so menu and web UI always match.
+private let APP_VERSION_FALLBACK = "…"
+
+// ── Single-instance lock ──────────────────────────────────────────────────────
+
+private let kLockFile = "/tmp/com.dolbec.energymonitor.lock"
+
+/// Returns true if we are the only running instance and the lock was acquired.
+private func acquireLock() -> Bool {
+    if let existing = try? String(contentsOfFile: kLockFile, encoding: .utf8)
+                               .trimmingCharacters(in: .whitespacesAndNewlines),
+       let pid = pid_t(existing),
+       kill(pid, 0) == 0 {
+        return false   // another instance is alive
+    }
+    let myPID = String(ProcessInfo.processInfo.processIdentifier)
+    try? myPID.write(toFile: kLockFile, atomically: true, encoding: .utf8)
+    return true
+}
+
+private func releaseLock() {
+    try? FileManager.default.removeItem(atPath: kLockFile)
+}
+
 // ── Project root resolution ───────────────────────────────────────────────────
 //
-// Layout:   <project>/EnergyMonitorApp/EnergyMonitorApp   (binary)
+// Layout:   <project>/EnergyMonitorApp/EnergyMonitorApp   (bare binary)
 //        or <project>/EnergyMonitorApp/EnergyMonitorApp.app/Contents/MacOS/EnergyMonitorApp
-//
+
 private func resolveProjectRoot() -> URL {
     let binaryURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
     if binaryURL.pathComponents.contains("Contents") {
@@ -20,9 +45,9 @@ private func resolveProjectRoot() -> URL {
         .deletingLastPathComponent() // project root
 }
 
-private let projectRoot = resolveProjectRoot()
-private let venvPython  = projectRoot.appendingPathComponent("venv/bin/python3").path
-private let dashboardURL = URL(string: "http://localhost:5001")!
+private let projectRoot   = resolveProjectRoot()
+private let venvPython    = projectRoot.appendingPathComponent("venv/bin/python3").path
+private let dashboardURL  = URL(string: "http://localhost:5001")!
 
 // ── Local IP helper ───────────────────────────────────────────────────────────
 
@@ -57,9 +82,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let probeInterval: TimeInterval = 0.5
     private let probeTimeout:  TimeInterval = 20.0
 
+    // Keep direct references so titles can be updated without fragile index arithmetic.
+    private weak var copyURLMenuItem: NSMenuItem?
+    private weak var headerMenuItem: NSMenuItem?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        print("Energy Monitor started — project root: \(projectRoot.path)")
-        NSApp.setActivationPolicy(.accessory) // no Dock icon; menu bar only
+        guard acquireLock() else {
+            let alert = NSAlert()
+            alert.messageText = "Energy Monitor is already running"
+            alert.informativeText = "Look for the ⚡ icon in the menu bar."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            NSApp.terminate(nil)
+            return
+        }
+
+        print("Energy Monitor — project root: \(projectRoot.path)")
+        NSApp.setActivationPolicy(.accessory)
         startFlaskServer()
         buildStatusItem()
         waitForFlaskThenOpen()
@@ -77,7 +117,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
 
-        let openItem = NSMenuItem(title: "Open Energy Monitor",
+        // ── Header: app name + version (fetched live from Flask) ──
+        let headerItem = NSMenuItem(title: "Energy Monitor  v\(APP_VERSION_FALLBACK)",
+                                    action: nil,
+                                    keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
+        headerMenuItem = headerItem
+
+        menu.addItem(.separator())
+
+        // ── Primary actions ──
+        let openItem = NSMenuItem(title: "Open Dashboard",
                                   action: #selector(openInBrowser),
                                   keyEquivalent: "")
         openItem.target = self
@@ -88,9 +139,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                   keyEquivalent: "")
         copyItem.target = self
         menu.addItem(copyItem)
+        copyURLMenuItem = copyItem
 
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Energy Monitor",
+
+        // ── Uninstall ──
+        let uninstallItem = NSMenuItem(title: "Uninstall Energy Monitor…",
+                                       action: #selector(showUninstall),
+                                       keyEquivalent: "")
+        uninstallItem.target = self
+        menu.addItem(uninstallItem)
+
+        menu.addItem(.separator())
+
+        // ── Quit ──
+        menu.addItem(NSMenuItem(title: "Quit",
                                 action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
 
@@ -107,12 +170,72 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let url = "http://\(ip):5001"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
-        // Flash the menu item title briefly
-        statusItem?.menu?.item(at: 1)?.title = "Copied!"
+        copyURLMenuItem?.title = "Copied!"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.statusItem?.menu?.item(at: 1)?.title = "Copy Local URL"
+            self?.copyURLMenuItem?.title = "Copy Local URL"
         }
     }
+
+    // ── Uninstall ─────────────────────────────────────────────────────────────
+
+    @objc private func showUninstall() {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall Energy Monitor?"
+        alert.informativeText = "The app will be moved to the Trash. Your energy database and project files will not be affected."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        // Identify what to trash: walk up from the binary to find a .app bundle,
+        // otherwise fall back to the bare binary itself.
+        let binary = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        var trashTarget = binary
+        var candidate = binary
+        while candidate.path != "/" {
+            if candidate.pathExtension == "app" {
+                trashTarget = candidate
+                break
+            }
+            candidate = candidate.deletingLastPathComponent()
+        }
+
+        flaskProcess?.terminate()
+        releaseLock()
+
+        var resultURL: NSURL?
+        do {
+            try FileManager.default.trashItem(at: trashTarget, resultingItemURL: &resultURL)
+            print("Moved to Trash: \(trashTarget.path)")
+        } catch {
+            let errAlert = NSAlert()
+            errAlert.messageText = "Could not move to Trash"
+            errAlert.informativeText = error.localizedDescription
+            errAlert.alertStyle = .critical
+            errAlert.addButton(withTitle: "OK")
+            errAlert.runModal()
+            return
+        }
+
+        NSApp.terminate(nil)
+    }
+
+    // ── Live version fetch ────────────────────────────────────────────────
+
+    private func fetchVersionFromFlask() {
+        guard let url = URL(string: "http://localhost:5001/api/version") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let version = json["version"] as? String else { return }
+            DispatchQueue.main.async {
+                self?.headerMenuItem?.title = "Energy Monitor  v\(version)"
+            }
+        }.resume()
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
@@ -120,6 +243,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         flaskProcess?.terminate()
+        releaseLock()
     }
 
     // ── Flask startup ─────────────────────────────────────────────────────────
@@ -177,6 +301,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     if ready {
                         print("Flask is ready — opening browser")
                         NSWorkspace.shared.open(dashboardURL)
+                        self.fetchVersionFromFlask()
                     } else if Date() < deadline {
                         DispatchQueue.main.asyncAfter(deadline: .now() + self.probeInterval) {
                             probe()
