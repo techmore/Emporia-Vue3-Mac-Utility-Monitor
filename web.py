@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.6.3"
+VERSION = "1.6.4"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -790,15 +790,31 @@ DASH_HTML = """
               <div class="card-meta">{{ "%.0f"|format(current_watts) }} W at ${{ "%.4f"|format(rate) }}/kWh</div>
             </div>
             <div class="card">
-              <div class="card-label">24h Avg</div>
-              <div class="card-value" style="font-size:1.6rem;">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }}<span class="unit">W</span></div>
-              <div class="card-meta">
-                {% if yd_pct is not none %}
-                  {% if yd_pct > 0 %}<span style="color:#e57373;">↑{{ "%.0f"|format(yd_pct) }}% vs yesterday</span>
-                  {% elif yd_pct < 0 %}<span style="color:#81c784;">↓{{ "%.0f"|format(yd_pct|abs) }}% vs yesterday</span>
-                  {% else %}same as yesterday{% endif %}
-                {% else %}no prior data{% endif %}
+              <div class="card-label">Panel Balance</div>
+              {% if leg_a and leg_b %}
+              {% set leg_total = leg_a.watts + leg_b.watts %}
+              {% set pct_a = (leg_a.watts / (leg_total or 1) * 100)|round(0)|int %}
+              {% set pct_b = (leg_b.watts / (leg_total or 1) * 100)|round(0)|int %}
+              <div style="display:flex; gap:6px; align-items:center; margin:4px 0;">
+                <div style="flex:1; text-align:center;">
+                  <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase; letter-spacing:0.06em;">Leg A</div>
+                  <div style="font-size:1.1rem; font-weight:700; color:var(--text);">{{ "%.0f"|format(leg_a.watts) }}<span style="font-size:0.7rem; font-weight:400;"> W</span></div>
+                  <div style="font-size:0.7rem; color:var(--text-light);">{{ pct_a }}%</div>
+                </div>
+                <div style="width:1px; background:var(--border); align-self:stretch;"></div>
+                <div style="flex:1; text-align:center;">
+                  <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase; letter-spacing:0.06em;">Leg B</div>
+                  <div style="font-size:1.1rem; font-weight:700; color:var(--text);">{{ "%.0f"|format(leg_b.watts) }}<span style="font-size:0.7rem; font-weight:400;"> W</span></div>
+                  <div style="font-size:0.7rem; color:var(--text-light);">{{ pct_b }}%</div>
+                </div>
               </div>
+              <div style="height:5px; background:var(--surface2); border-radius:3px; overflow:hidden;">
+                <div style="height:5px; width:{{ pct_a }}%; background:var(--olive-500); border-radius:3px;"></div>
+              </div>
+              {% else %}
+              <div class="card-value" style="font-size:1rem;">—</div>
+              <div class="card-meta">no leg data</div>
+              {% endif %}
             </div>
           </div>
 
@@ -829,13 +845,11 @@ DASH_HTML = """
               {% endif %}
             </div>
             <div class="card">
-              <div class="card-label">Budget · ${{ budget }}</div>
-              <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(budget_pct) }}<span class="unit">%</span>
-                <span style="font-size:0.75rem; color:var(--text-light); margin-left:4px;">proj ${{ "%.0f"|format(monthly_projected) }}</span>
-              </div>
-              <div style="height:6px; background:var(--surface2); border-radius:3px; margin:4px 0;">
-                <div style="height:6px; border-radius:3px; width:{{ budget_pct }}%;
-                  background:{{ '#f87171' if budget_pct > 90 else ('#fbbf24' if budget_pct > 70 else 'var(--olive-500)') }};"></div>
+              <div class="card-label">7-Day Trend</div>
+              <div class="card-value" style="font-size:1.4rem; color:{{ trend_color }};">{{ trend_dir }}</div>
+              <div class="card-meta">
+                {{ "%.2f"|format(trend_avg) }} kWh/day avg
+                {% if slope %}· {{ "%.3f"|format(slope|abs) }} kWh/day {% if slope > 0 %}more{% else %}less{% endif %}{% endif %}
               </div>
             </div>
           </div>
@@ -1736,8 +1750,24 @@ def index():
     # $/hr at current draw
     cost_per_hour = current_watts / 1000 * RATE
 
-    # Yesterday delta for avg watts
-    yd_pct = ctx.get("vs_yesterday_pct")
+    # Leg A / Leg B balance for panel sidebar
+    _legs = [m for m in dash_mains if not m.get("is_total")]
+    leg_a = _legs[0] if len(_legs) > 0 else None
+    leg_b = _legs[1] if len(_legs) > 1 else None
+    total_leg_w = (leg_a["watts"] if leg_a else 0) + (leg_b["watts"] if leg_b else 0)
+
+    # 7-day trend label
+    slope = trend.get("slope", 0) if trend else 0
+    if slope > 0.05:
+        trend_dir = "↑ rising"
+        trend_color = "#f87171"
+    elif slope < -0.05:
+        trend_dir = "↓ falling"
+        trend_color = "#81c784"
+    else:
+        trend_dir = "→ steady"
+        trend_color = "var(--text-light)"
+    trend_avg = trend.get("avg_kwh", 0) if trend else 0
 
     return _render(
         DASH_HTML,
@@ -1762,7 +1792,8 @@ def index():
         trend=trend,
         standby=standby,
         standby_total_w=standby_total_w,
-        yd_pct=yd_pct,
+        leg_a=leg_a, leg_b=leg_b,
+        trend_dir=trend_dir, trend_color=trend_color, trend_avg=trend_avg,
         delta_yd=_delta_badge(ctx["vs_yesterday_pct"],  "yesterday", invert=True),
         delta_wk=_delta_badge(ctx["vs_last_week_pct"],  "last week",  invert=True),
         delta_mo=_delta_badge(ctx["vs_last_month_pct"], "last month", invert=True),
