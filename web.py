@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -534,26 +534,28 @@ DASH_HTML = """
       <div style="display:flex; align-items:center; gap:10px;">
         <span class="section-sub">Last {{ ctx.window_minutes }} min</span>
         <div class="view-toggle" id="viewToggle">
-          <button class="vt-btn active" data-view="bars" title="Bar list">≡</button>
           <button class="vt-btn" data-view="panel" title="Breaker panel">⊞</button>
+          <button class="vt-btn" data-view="bars" title="Bar list">≡</button>
           <button class="vt-btn" data-view="grid" title="Card grid">▦</button>
         </div>
       </div>
     </div>
 
     <!-- Bars view -->
-    <div id="view-bars" class="card">
-      <div class="circuit-bars">
-        {% for c in top_circuits %}
-        {% set bar_cls = 'heat' if c.pct > 40 else ('hot' if c.pct > 20 else '') %}
-        <div class="circuit-row">
-          <a class="circuit-name" href="/circuit/{{ c.channel_name|urlencode }}" title="{{ c.channel_name }}">{{ c.channel_name }}</a>
-          <div class="circuit-bar-wrap">
-            <div class="circuit-bar {{ bar_cls }}" style="width:{{ c.pct|round(1) }}%"></div>
+    <div id="view-bars" style="display:none;">
+      <div class="card">
+        <div class="circuit-bars">
+          {% for c in top_circuits %}
+          {% set bar_cls = 'heat' if c.pct > 40 else ('hot' if c.pct > 20 else '') %}
+          <div class="circuit-row">
+            <a class="circuit-name" href="/circuit/{{ c.channel_name|urlencode }}" title="{{ c.channel_name }}">{{ c.channel_name }}</a>
+            <div class="circuit-bar-wrap">
+              <div class="circuit-bar {{ bar_cls }}" style="width:{{ c.pct|round(1) }}%"></div>
+            </div>
+            <div class="circuit-val">{{ "%.0f"|format(c.watts) }} W</div>
           </div>
-          <div class="circuit-val">{{ "%.0f"|format(c.watts) }} W</div>
+          {% endfor %}
         </div>
-        {% endfor %}
       </div>
     </div>
 
@@ -670,7 +672,7 @@ DASH_HTML = """
   <script>
   (function(){
     const views = ['bars','panel','grid'];
-    const saved = localStorage.getItem('circuitView') || 'bars';
+    const saved = localStorage.getItem('circuitView') || 'panel';
     function show(v) {
       views.forEach(n => {
         document.getElementById('view-'+n).style.display = n===v ? '' : 'none';
