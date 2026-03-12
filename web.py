@@ -541,6 +541,9 @@ DASH_HTML = """
   .wx-hi    { font-size:0.95rem; font-weight:700; color:var(--olive-950); }
   .wx-lo    { font-size:0.75rem; color:var(--olive-700); }
   .wx-now   { font-size:0.7rem; margin-top:2px; opacity:0.8; }
+  .wx-hvac  { height:3px; border-radius:2px; margin-top:5px; width:100%; }
+  .wx-hvac.heat { background:rgba(220,60,40,0.65); }
+  .wx-hvac.cool { background:rgba(60,140,220,0.65); }
   </style>
   <script>
   (function(){
@@ -553,12 +556,34 @@ DASH_HTML = """
       // Use browser's local date so Today/Tomorrow roll over at midnight automatically
       const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
       const container = document.getElementById('weather-days');
-      data.days.forEach(d=>{
+
+      // Pre-compute estimated cold/hot hours per day using half-day approximation:
+      // If max < 50 → 24h cold; if min < 50 <= max → 12h cold; else 0
+      // If min > 80 → 24h hot;  if max > 80 >= min → 12h hot;  else 0
+      function coldHours(d) {
+        if (d.temp_max < 50) return 24;
+        if (d.temp_min < 50) return 12;
+        return 0;
+      }
+      function hotHours(d) {
+        if (d.temp_min > 80) return 24;
+        if (d.temp_max > 80) return 12;
+        return 0;
+      }
+
+      data.days.forEach((d, i)=>{
         const dayDate = new Date(d.date + 'T12:00:00'); // noon to avoid DST edge cases
-        const localStr = dayDate.toLocaleDateString('en-CA');
         const diff = Math.round((dayDate - new Date(todayStr + 'T12:00:00')) / 86400000);
         const label = diff === 0 ? 'Today' : (diff === 1 ? 'Tomorrow' : DAYS[dayDate.getDay()]);
         const isToday = diff === 0;
+
+        // 48-hour HVAC pressure: this day + next day
+        const next = data.days[i + 1] || d; // if last day, double-count current
+        const totalCold = coldHours(d) + coldHours(next);
+        const totalHot  = hotHours(d)  + hotHours(next);
+        // Show indicator if >= 24 of the 48h window is cold or hot (≥50% of window)
+        const hvacClass = totalCold >= 24 ? 'heat' : (totalHot >= 24 ? 'cool' : '');
+
         const el = document.createElement('div');
         el.className = 'wx-card' + (isToday ? ' wx-today' : '');
         el.innerHTML = `
@@ -567,6 +592,7 @@ DASH_HTML = """
           <div class="wx-hi">${Math.round(d.temp_max)}°</div>
           <div class="wx-lo">${Math.round(d.temp_min)}°</div>
           ${isToday && data.current_temp !== null ? `<div class="wx-now">${Math.round(data.current_temp)}° now</div>` : ''}
+          ${hvacClass ? `<div class="wx-hvac ${hvacClass}" title="${hvacClass==='heat'?'Heating likely ~'+totalCold+'h':'Cooling likely ~'+totalHot+'h'} over 48h"></div>` : '<div class="wx-hvac"></div>'}
         `;
         container.appendChild(el);
       });
