@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.6.2"
+VERSION = "1.6.3"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -782,17 +782,23 @@ DASH_HTML = """
         <!-- Right: 2-column metrics grid -->
         <div style="display:flex; flex-direction:column; gap:10px;">
 
-          <!-- Row 1: Live + Avg -->
+          <!-- Row 1: $/hr now + 24h Avg with yesterday delta -->
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
             <div class="card">
-              <div class="card-label">Live</div>
-              <div class="card-value" style="font-size:1.6rem;">{{ "%.0f"|format(current_watts) }}<span class="unit">W</span></div>
-              <div class="card-meta">right now</div>
+              <div class="card-label">Cost Right Now</div>
+              <div class="card-value">${{ "%.2f"|format(cost_per_hour) }}<span class="unit">/hr</span></div>
+              <div class="card-meta">{{ "%.0f"|format(current_watts) }} W at ${{ "%.4f"|format(rate) }}/kWh</div>
             </div>
             <div class="card">
               <div class="card-label">24h Avg</div>
               <div class="card-value" style="font-size:1.6rem;">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }}<span class="unit">W</span></div>
-              <div class="card-meta">{{ "%.2f"|format(total_24h.total_kwh or 0) }} kWh</div>
+              <div class="card-meta">
+                {% if yd_pct is not none %}
+                  {% if yd_pct > 0 %}<span style="color:#e57373;">↑{{ "%.0f"|format(yd_pct) }}% vs yesterday</span>
+                  {% elif yd_pct < 0 %}<span style="color:#81c784;">↓{{ "%.0f"|format(yd_pct|abs) }}% vs yesterday</span>
+                  {% else %}same as yesterday{% endif %}
+                {% else %}no prior data{% endif %}
+              </div>
             </div>
           </div>
 
@@ -801,46 +807,43 @@ DASH_HTML = """
             <div class="card">
               <div class="card-label">24h Cost</div>
               <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
-              <div class="card-meta">${{ "%.4f"|format(rate) }}/kWh</div>
+              <div class="card-meta">{{ "%.2f"|format(total_24h.total_kwh or 0) }} kWh used</div>
             </div>
             <div class="card">
               <div class="card-label">Month-to-Date</div>
               <div class="card-value">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) if month_comparison.this_month else '0.00' }}</div>
-              <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) if month_comparison.this_month else '0' }} kWh</div>
+              <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) if month_comparison.this_month else '0' }} kWh &bull; {{ delta_month|safe }}</div>
             </div>
           </div>
 
-          <!-- Row 3: Projected + Budget -->
+          <!-- Row 3: Peak today + Budget -->
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
             <div class="card">
-              <div class="card-label">Projected Month</div>
-              <div class="card-value">${{ "%.2f"|format(monthly_projected) }}</div>
-              <div class="card-meta">estimated at current rate</div>
+              <div class="card-label">Peak Today</div>
+              {% if peak_24h.peak_watts %}
+              <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(peak_24h.peak_watts) }}<span class="unit">W</span></div>
+              <div class="card-meta">at {{ peak_24h.peak_time }}</div>
+              {% else %}
+              <div class="card-value" style="font-size:1.4rem;">—</div>
+              <div class="card-meta">no data yet</div>
+              {% endif %}
             </div>
             <div class="card">
-              <div class="card-label">Budget</div>
-              <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(budget_pct) }}<span class="unit">%</span></div>
+              <div class="card-label">Budget · ${{ budget }}</div>
+              <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(budget_pct) }}<span class="unit">%</span>
+                <span style="font-size:0.75rem; color:var(--text-light); margin-left:4px;">proj ${{ "%.0f"|format(monthly_projected) }}</span>
+              </div>
               <div style="height:6px; background:var(--surface2); border-radius:3px; margin:4px 0;">
                 <div style="height:6px; border-radius:3px; width:{{ budget_pct }}%;
-                  background:{{ 'var(--red-400,#f87171)' if budget_pct > 90 else ('var(--amber-400,#fbbf24)' if budget_pct > 70 else 'var(--olive-500)') }};"></div>
+                  background:{{ '#f87171' if budget_pct > 90 else ('#fbbf24' if budget_pct > 70 else 'var(--olive-500)') }};"></div>
               </div>
-              <div class="card-meta">of ${{ budget }} budget</div>
             </div>
           </div>
 
-          <!-- Row 4: Biggest Load (full width) -->
-          <div class="card">
-            <div class="card-label">Biggest Load (24h)</div>
-            <div style="display:flex; align-items:baseline; gap:8px;">
-              <div class="card-value" style="font-size:1.3rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
-              <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh &bull; {{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total</div>
-            </div>
-          </div>
-
-          <!-- Row 5: Top active circuits mini-list -->
+          <!-- Row 4: Top active circuits mini-list -->
           <div class="card">
             <div class="card-label" style="margin-bottom:8px;">Top Active Circuits</div>
-            {% for c in top_circuits[:5] %}
+            {% for c in top_circuits[:6] %}
             <div style="display:flex; align-items:center; gap:8px; padding:3px 0;
                         border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
               <div style="flex:1; font-size:0.82rem; font-weight:500; color:var(--text);
@@ -848,15 +851,39 @@ DASH_HTML = """
                 <a href="/circuit/{{ c.channel_name|urlencode }}" style="color:inherit; text-decoration:none;">{{ c.channel_name }}</a>
               </div>
               <div style="font-size:0.82rem; font-weight:700; color:var(--text); min-width:48px; text-align:right;">{{ "%.0f"|format(c.watts) }} W</div>
-              <div style="width:60px; height:5px; background:var(--surface2); border-radius:3px; flex-shrink:0;">
+              <div style="width:56px; height:5px; background:var(--surface2); border-radius:3px; flex-shrink:0;">
                 <div style="height:5px; border-radius:3px; width:{{ c.pct|round(1) }}%;
-                  background:{{ 'var(--olive-400)' if c.pct < 20 else ('var(--amber-500,#f59e0b)' if c.pct < 40 else 'var(--red-400,#f87171)') }};"></div>
+                  background:{{ '#f87171' if c.pct >= 40 else ('#fbbf24' if c.pct >= 20 else 'var(--olive-500)') }};"></div>
               </div>
-              <div style="font-size:0.72rem; color:var(--text-light); min-width:32px; text-align:right;">{{ "%.0f"|format(c.pct) }}%</div>
+              <div style="font-size:0.72rem; color:var(--text-light); min-width:30px; text-align:right;">{{ "%.0f"|format(c.pct) }}%</div>
             </div>
             {% else %}
             <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>
             {% endfor %}
+          </div>
+
+          <!-- Row 5: Standby / vampire loads -->
+          <div class="card">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <div class="card-label">Standby Loads <span style="font-weight:400; color:var(--text-light);">(1–50 W always-on)</span></div>
+              {% if standby %}
+              <div style="font-size:0.8rem; font-weight:700; color:var(--text);">{{ standby|length }} circuits · {{ "%.0f"|format(standby_total_w) }} W total</div>
+              {% endif %}
+            </div>
+            {% if standby %}
+            {% for s in standby[:5] %}
+            <div style="display:flex; justify-content:space-between; padding:2px 0;
+                        border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+              <span style="font-size:0.8rem; color:var(--text);">{{ s.name }}</span>
+              <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+            </div>
+            {% endfor %}
+            {% if standby|length > 5 %}
+            <div style="font-size:0.75rem; color:var(--text-light); margin-top:4px;">+ {{ standby|length - 5 }} more</div>
+            {% endif %}
+            {% else %}
+            <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No standby loads detected</div>
+            {% endif %}
           </div>
 
         </div><!-- /right -->
@@ -1683,6 +1710,8 @@ def index():
     for h in peak_usage["peak_hours"]:
         h["hour_label"] = _format_hour(h["hour"])
 
+    peak_24h = energy.get_peak_24h()
+
     mc = energy.get_month_comparison()
 
     # Month delta badge
@@ -1693,11 +1722,29 @@ def index():
     else:
         delta_month = _delta_badge(None, "last month")
 
+    # Standby / vampire loads — circuits with a live reading between 1W and 50W
+    standby = [
+        {"name": name, "watts": _watts_estimate(kwh)}
+        for name, kwh in latest_map.items()
+        if name not in _MAINS_NAMES and name not in _SKIP_NAMES
+        and not str(name).isdigit()
+        and 1 <= _watts_estimate(kwh) <= 50
+    ]
+    standby.sort(key=lambda x: x["watts"], reverse=True)
+    standby_total_w = sum(s["watts"] for s in standby)
+
+    # $/hr at current draw
+    cost_per_hour = current_watts / 1000 * RATE
+
+    # Yesterday delta for avg watts
+    yd_pct = ctx.get("vs_yesterday_pct")
+
     return _render(
         DASH_HTML,
         active_page="dashboard",
         ctx=ctx,
         current_watts=current_watts,
+        cost_per_hour=cost_per_hour,
         top_circuits=top_circuits,
         total_24h=total_24h,
         biggest_circuit=biggest_circuit,
@@ -1709,9 +1756,13 @@ def index():
         hourly_json=energy.get_hourly_data(7),
         month_comparison={"this_month": mc["this_month"], "last_month": mc["last_month"]},
         peak_usage=peak_usage,
+        peak_24h=peak_24h,
         dash_mains=dash_mains,
         dash_breakers=dash_breakers,
         trend=trend,
+        standby=standby,
+        standby_total_w=standby_total_w,
+        yd_pct=yd_pct,
         delta_yd=_delta_badge(ctx["vs_yesterday_pct"],  "yesterday", invert=True),
         delta_wk=_delta_badge(ctx["vs_last_week_pct"],  "last week",  invert=True),
         delta_mo=_delta_badge(ctx["vs_last_month_pct"], "last month", invert=True),

@@ -99,6 +99,33 @@ def save_panel_slot(slot: int, channel_name: str | None, label: str | None,
 ensure_table()
 
 
+def get_known_devices() -> list[str]:
+    """Return all distinct device_gids that have readings, sorted."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT DISTINCT device_gid FROM readings ORDER BY device_gid"
+    ).fetchall()
+    conn.close()
+    return [r["device_gid"] for r in rows]
+
+
+def get_device_labels() -> dict[str, str]:
+    """Return {device_gid: label} from settings.json (missing keys → empty string)."""
+    try:
+        with open("settings.json") as f:
+            return json.load(f).get("device_labels", {})
+    except Exception:
+        return {}
+
+
+def save_device_labels(labels: dict[str, str]):
+    """Merge device_labels into settings.json."""
+    cfg = _load_settings()
+    cfg["device_labels"] = {k: v for k, v in labels.items() if isinstance(v, str)}
+    with open("settings.json", "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
 def migrate_channel_names():
     """
     One-time migration: re-clean any channel_names that still contain
@@ -415,6 +442,38 @@ def get_peak_usage():
             for row in peak_days
         ],
     }
+
+
+def get_peak_24h() -> dict:
+    """Return the highest-demand timestamp in the last 24h (Main channel) and its watt estimate."""
+    conn = _connect()
+    c = conn.cursor()
+    since = (datetime.now() - timedelta(hours=24)).isoformat()
+    # Sum all channels per timestamp to get total load, pick the max
+    c.execute("""
+        SELECT timestamp, SUM(usage_kwh) as total_kwh
+        FROM readings
+        WHERE timestamp >= ? AND channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
+        GROUP BY timestamp
+        ORDER BY total_kwh DESC
+        LIMIT 1
+    """, (since,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return {"peak_watts": 0, "peak_time": None}
+    # Convert kWh per poll interval to watts
+    watts = (row["total_kwh"] or 0) * 1000 * (60 / POLL_INTERVAL)
+    ts = row["timestamp"]
+    try:
+        dt = datetime.fromisoformat(ts[:19])
+        hour = dt.hour
+        label = ("12 AM" if hour == 0 else f"{hour} AM" if hour < 12
+                 else "12 PM" if hour == 12 else f"{hour-12} PM")
+        time_label = f"{label} ({dt.strftime('%m/%d')})"
+    except Exception:
+        time_label = ts[:16]
+    return {"peak_watts": watts, "peak_time": time_label}
 
 
 def get_circuit_data(channel_name, period="day"):
