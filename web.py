@@ -45,10 +45,10 @@ BASE_CSS = """
   --stone-800: #292524;
   --stone-900: #1c1917;
 
-  --bg:         var(--olive-100);
-  --surface:    var(--olive-50);
-  --surface2:   var(--olive-100);
-  --border:     var(--olive-200);
+  --bg:         var(--olive-300);
+  --surface:    var(--olive-200);
+  --surface2:   var(--olive-300);
+  --border:     var(--olive-400);
   --text:       var(--stone-800);
   --text-light: var(--stone-500);
   --accent:     var(--olive-700);
@@ -536,10 +536,10 @@ DASH_HTML = """
   }
   .wx-card.wx-today { background:var(--olive-800); color:var(--olive-50); border-color:var(--olive-700); }
   .wx-card.wx-today .wx-label, .wx-card.wx-today .wx-lo { color:var(--olive-300); }
-  .wx-label { font-size:0.65rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--stone-400); margin-bottom:3px; }
+  .wx-label { font-size:0.65rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--olive-700); margin-bottom:3px; }
   .wx-icon  { font-size:1.4rem; line-height:1; margin-bottom:2px; }
-  .wx-hi    { font-size:0.95rem; font-weight:700; }
-  .wx-lo    { font-size:0.75rem; color:var(--stone-400); }
+  .wx-hi    { font-size:0.95rem; font-weight:700; color:var(--olive-950); }
+  .wx-lo    { font-size:0.75rem; color:var(--olive-700); }
   .wx-now   { font-size:0.7rem; margin-top:2px; opacity:0.8; }
   </style>
   <script>
