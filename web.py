@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -2805,16 +2805,24 @@ SETTINGS_HTML = """
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-              <button type="button" onclick="saveCreds()"
+              <button type="button" id="credBtn" onclick="saveCreds()"
                       style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
-                             border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                             border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;
+                             display:flex; align-items:center; gap:7px; transition:opacity .2s;">
                 Save &amp; Authenticate
               </button>
               <span id="credMsg" style="font-size:0.82rem; display:none;"></span>
             </div>
+            <!-- Live reconnect progress bar -->
+            <div id="credProgress" style="display:none; margin-top:0.75rem;">
+              <div style="font-size:0.78rem; color:var(--text-light); margin-bottom:5px;" id="credProgressLabel">Connecting…</div>
+              <div style="height:4px; background:var(--border); border-radius:2px; overflow:hidden; max-width:320px;">
+                <div id="credProgressBar" style="height:100%; width:0%; background:var(--olive-600); border-radius:2px; transition:width 0.4s ease;"></div>
+              </div>
+            </div>
           </form>
           <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.75rem;">
-            Stored locally in <code>settings.json</code>. Restart the poller after changes.
+            Credentials stored in <code>settings.json</code>. Authenticates and restarts the poller immediately.
           </p>
         </div>
 
@@ -3175,14 +3183,103 @@ function saveCreds() {
   const email = document.getElementById('credEmail').value.trim();
   const pwd   = document.getElementById('credPwd').value;
   const msg   = document.getElementById('credMsg');
-  if (!email) { msg.textContent='Email required'; msg.style.color='var(--red)'; msg.style.display='inline'; return; }
-  fetch('/api/settings/credentials', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({email, password: pwd})
-  }).then(r=>r.json()).then(d => {
-    msg.textContent = d.ok ? 'Saved — restart the poller to apply' : ('Error: ' + d.error);
-    msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+  const btn   = document.getElementById('credBtn');
+  const prog  = document.getElementById('credProgress');
+  const progBar   = document.getElementById('credProgressBar');
+  const progLabel = document.getElementById('credProgressLabel');
+
+  if (!email) {
+    msg.textContent = 'Email required';
+    msg.style.color = 'var(--red)';
     msg.style.display = 'inline';
+    return;
+  }
+
+  // Disable button while working
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
+  msg.style.display = 'none';
+  prog.style.display = 'block';
+  progLabel.textContent = 'Saving credentials…';
+  progBar.style.width = '15%';
+
+  // Step 1 — save credentials
+  fetch('/api/settings/credentials', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({email, password: pwd})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (!d.ok) throw new Error(d.error || 'Failed to save credentials');
+
+    progLabel.textContent = 'Credentials saved — signalling poller…';
+    progBar.style.width = '35%';
+
+    // Step 2 — trigger reconnect (passes credentials so poller gets them immediately)
+    return fetch('/api/poller-reconnect', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email, password: pwd})
+    }).then(r => r.json());
+  })
+  .then(d => {
+    if (!d.ok) throw new Error(d.error || 'Reconnect request failed');
+
+    progLabel.textContent = 'Poller reconnecting…';
+    progBar.style.width = '55%';
+    progBar.style.background = 'var(--olive-500)';
+
+    // Step 3 — poll /api/poller-status until live (up to ~75s)
+    let attempts = 0;
+    const maxAttempts = 15;
+    function checkStatus() {
+      fetch('/api/poller-status').then(r => r.json()).then(s => {
+        attempts++;
+        const pct = 55 + Math.round((attempts / maxAttempts) * 40);
+        progBar.style.width = pct + '%';
+
+        if (s.ok && s.poller_running && s.consecutive_errors === 0) {
+          // Connected!
+          progBar.style.width = '100%';
+          progBar.style.background = 'var(--green)';
+          progLabel.style.color = 'var(--green)';
+          progLabel.textContent = '✓ Connected — poller is live';
+          msg.textContent = '✓ Authenticated and polling';
+          msg.style.color = 'var(--green)';
+          msg.style.display = 'inline';
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          setTimeout(() => { prog.style.display = 'none'; progBar.style.width = '0%'; progBar.style.background = 'var(--olive-600)'; progLabel.style.color = ''; }, 4000);
+        } else if (s.ok === false && s.consecutive_errors > 0) {
+          // Poller responded but has errors
+          throw new Error(s.error || 'Poller reported errors after reconnect');
+        } else if (attempts >= maxAttempts) {
+          throw new Error('Timed out waiting for poller — check /log for status');
+        } else {
+          // Still waiting — try again in 5s
+          setTimeout(checkStatus, 5000);
+        }
+      }).catch(err => {
+        progBar.style.background = 'var(--red)';
+        progLabel.style.color = 'var(--red)';
+        progLabel.textContent = '✗ ' + err.message;
+        msg.textContent = '✗ ' + err.message;
+        msg.style.color = 'var(--red)';
+        msg.style.display = 'inline';
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      });
+    }
+    setTimeout(checkStatus, 5000); // give poller ~5s to pick up the flag
+  })
+  .catch(err => {
+    prog.style.display = 'none';
+    msg.textContent = '✗ ' + err.message;
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'inline';
+    btn.disabled = false;
+    btn.style.opacity = '1';
   });
 }
 function saveConfig() {
