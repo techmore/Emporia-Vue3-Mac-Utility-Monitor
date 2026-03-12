@@ -839,6 +839,9 @@ DASH_HTML = """
         document.getElementById('view-'+n).style.display = n===v ? '' : 'none';
         document.querySelector('[data-view="'+n+'"]').classList.toggle('active', n===v);
       });
+      // Panel view has inline KPI sidebar — hide the standalone 24h section to avoid duplication
+      const s24 = document.getElementById('section-24h');
+      if (s24) s24.style.display = v === 'panel' ? 'none' : '';
       localStorage.setItem('circuitView', v);
     }
     document.querySelectorAll('.vt-btn').forEach(btn => {
@@ -849,7 +852,7 @@ DASH_HTML = """
   </script>
 
   <!-- ── KPI row ────────────────────────────────────────────────────────── -->
-  <div class="section">
+  <div class="section" id="section-24h">
     <div class="section-head">
       <h2>24-Hour Summary</h2>
       <span class="section-sub">Since midnight yesterday</span>
