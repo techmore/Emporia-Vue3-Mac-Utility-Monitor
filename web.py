@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -22,32 +22,45 @@ BASE_CSS = """
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --olive-50:  oklch(96% 0.015 110);
-  --olive-100: oklch(91% 0.020 110);
-  --olive-200: oklch(85% 0.028 110);
-  --olive-300: oklch(75% 0.040 110);
-  --olive-400: oklch(62% 0.055 110);
-  --olive-500: oklch(50% 0.065 110);
-  --olive-600: oklch(42% 0.055 110);
-  --olive-700: oklch(35% 0.045 110);
-  --olive-800: oklch(28% 0.035 110);
-  --olive-900: oklch(22% 0.025 110);
-  --olive-950: oklch(16% 0.015 110);
+  --olive-50:  #f7f8f4;
+  --olive-100: #eef0e6;
+  --olive-200: #dde1d0;
+  --olive-300: #c4c9b0;
+  --olive-400: #a7ae8b;
+  --olive-500: #8a9269;
+  --olive-600: #6e754b;
+  --olive-700: #575d3d;
+  --olive-800: #464a34;
+  --olive-900: #3b3e2d;
+  --olive-950: #1f2117;
 
-  --bg:         var(--olive-100);
-  --surface:    var(--olive-50);
-  --surface2:   var(--olive-100);
+  --stone-50:  #fafaf9;
+  --stone-100: #f5f5f4;
+  --stone-200: #e7e5e4;
+  --stone-300: #d6d3d1;
+  --stone-400: #a8a29e;
+  --stone-500: #78716c;
+  --stone-600: #57534e;
+  --stone-700: #44403c;
+  --stone-800: #292524;
+  --stone-900: #1c1917;
+
+  --bg:         var(--stone-50);
+  --surface:    #ffffff;
+  --surface2:   var(--olive-50);
   --border:     var(--olive-200);
-  --text:       var(--olive-950);
-  --text-light: var(--olive-600);
-  --accent:     var(--olive-800);
+  --text:       var(--stone-800);
+  --text-light: var(--stone-500);
+  --accent:     var(--olive-700);
   --accent-fg:  var(--olive-50);
-  --green:      oklch(52% 0.14 145);
-  --red:        oklch(52% 0.18 25);
-  --amber:      oklch(68% 0.15 75);
-  --chart1:     var(--olive-700);
-  --chart2:     oklch(52% 0.10 195);
+  --green:      #5a8a5e;
+  --red:        #c0392b;
+  --amber:      #b07d2a;
+  --chart1:     var(--olive-600);
+  --chart2:     #5ba4b5;
 }
+
+html { scroll-behavior: smooth; }
 
 body {
   font-family: 'Inter', system-ui, sans-serif;
@@ -59,12 +72,23 @@ body {
 }
 h1,h2,h3,h4 { font-family: 'Instrument Serif', serif; line-height: 1.2; }
 
+/* ── Selection & scrollbar ── */
+::selection { background-color: var(--olive-200); color: var(--olive-800); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--stone-100); }
+::-webkit-scrollbar-thumb { background: var(--olive-400); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--olive-500); }
+:focus-visible { outline: 2px solid var(--olive-500); outline-offset: 2px; }
+
 /* ── Nav ── */
 nav.topnav {
-  background: var(--olive-950);
-  color: var(--olive-50);
+  background: rgba(247, 248, 244, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(221, 225, 208, 0.6);
+  color: var(--stone-800);
   position: sticky; top: 0; z-index: 50;
-  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
 nav.topnav .inner {
   max-width: 72rem; margin: 0 auto;
@@ -73,20 +97,27 @@ nav.topnav .inner {
   height: 56px;
 }
 nav.topnav a {
-  color: var(--olive-200);
+  color: var(--stone-600);
   text-decoration: none;
   font-size: 0.875rem; font-weight: 500;
   padding: 0.4rem 0.75rem;
   border-radius: 6px;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-nav.topnav a:hover, nav.topnav a.active { background: var(--olive-800); color: var(--olive-50); }
+nav.topnav a:hover { background: var(--olive-100); color: var(--olive-800); }
+nav.topnav a.active { background: var(--olive-600); color: #fff; }
 nav.topnav .nav-links { display: flex; gap: 4px; }
+nav.topnav .brand {
+  font-family: 'Instrument Serif', serif;
+  font-size: 1.1rem; font-weight: 700;
+  color: var(--olive-900); margin-right: 0.5rem;
+  text-decoration: none;
+}
 nav.topnav .status-dot {
   width: 8px; height: 8px; border-radius: 50%;
   display: inline-block; margin-right: 6px;
 }
-nav.topnav .status-dot.live  { background: var(--green); box-shadow: 0 0 0 3px oklch(52% 0.14 145 / 0.3); }
+nav.topnav .status-dot.live  { background: var(--green); box-shadow: 0 0 0 3px rgba(90,138,94,0.25); }
 nav.topnav .status-dot.stale { background: var(--amber); }
 nav.topnav .status-dot.dead  { background: var(--red);   }
 
@@ -363,21 +394,75 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   display: inline-block; height: 6px; border-radius: 3px;
   background: var(--olive-400); vertical-align: middle; margin-right: 6px;
 }
+
+/* ── Animations ── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fadeInUp 0.5s ease-out forwards; }
+
+.hover-lift {
+  transition: transform 0.25s cubic-bezier(0.4,0,0.2,1), box-shadow 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -6px rgba(0,0,0,.10);
+}
+
+/* ── Skeleton loader ── */
+@keyframes skeleton { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skeleton {
+  background: linear-gradient(90deg, var(--olive-100) 25%, var(--olive-50) 50%, var(--olive-100) 75%);
+  background-size: 200% 100%;
+  animation: skeleton 1.5s infinite;
+  border-radius: 6px;
+}
+
+/* ── Gradient text ── */
+.gradient-text {
+  background: linear-gradient(135deg, var(--olive-700) 0%, var(--olive-500) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Glass surface ── */
+.glass {
+  background: rgba(247, 248, 244, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 """
 
 NAV_HTML = """
 <nav class="topnav">
   <div class="inner">
+    <div style="display:flex; align-items:center; gap:0.25rem;">
+      <a href="/" class="brand" style="display:flex; align-items:center; gap:0.5rem; text-decoration:none;">
+        <span style="width:28px; height:28px; background:var(--olive-600); border-radius:7px; display:inline-flex; align-items:center; justify-content:center; font-size:1rem; color:#fff; flex-shrink:0;">⚡</span>
+        <span style="font-family:'Instrument Serif',serif; font-size:1rem; font-weight:700; color:var(--olive-900);">Energy</span>
+      </a>
+    </div>
     <div class="nav-links">
       <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/circuits" class="{{ 'active' if active_page == 'circuits' else '' }}">Circuits</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/log" class="{{ 'active' if active_page == 'log' else '' }}">Log</a>
       <a href="/import" class="{{ 'active' if active_page == 'import' else '' }}">Import</a>
+      <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>
-    <div style="font-size:0.8rem; color: var(--olive-300); display:flex; align-items:center; gap:10px;">
-      <span style="font-size:0.65rem; color:var(--olive-600); font-variant-numeric:tabular-nums;">v{{ version }}</span>
+    <div style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
+      <span style="font-size:0.65rem; color:var(--stone-400); font-variant-numeric:tabular-nums;">v{{ version }}</span>
       <span class="status-dot {{ status_cls }}"></span>
       {{ status_label }}
     </div>
@@ -439,6 +524,50 @@ def _render(template: str, **ctx):
 
 DASH_HTML = """
 <div class="page">
+
+  <!-- ── Weather Strip ─────────────────────────────────────────────────── -->
+  <div id="weather-strip" style="display:none; margin-bottom:0.75rem; overflow-x:auto;">
+    <div id="weather-days" style="display:flex; gap:8px; min-width:max-content; padding:2px 0;"></div>
+  </div>
+  <style>
+  .wx-card {
+    background:var(--surface2); border:1px solid var(--border); border-radius:10px;
+    padding:8px 12px; text-align:center; min-width:72px; flex-shrink:0;
+  }
+  .wx-card.wx-today { background:var(--olive-800); color:var(--olive-50); border-color:var(--olive-700); }
+  .wx-card.wx-today .wx-label, .wx-card.wx-today .wx-lo { color:var(--olive-300); }
+  .wx-label { font-size:0.65rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--stone-400); margin-bottom:3px; }
+  .wx-icon  { font-size:1.4rem; line-height:1; margin-bottom:2px; }
+  .wx-hi    { font-size:0.95rem; font-weight:700; }
+  .wx-lo    { font-size:0.75rem; color:var(--stone-400); }
+  .wx-now   { font-size:0.7rem; margin-top:2px; opacity:0.8; }
+  </style>
+  <script>
+  (function(){
+    fetch('/api/weather').then(r=>r.json()).then(data=>{
+      if(!data.days || !data.days.length) return;
+      const icons = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',51:'🌦️',53:'🌦️',55:'🌧️',
+        61:'🌧️',63:'🌧️',65:'🌧️',71:'🌨️',73:'🌨️',75:'🌨️',77:'🌨️',80:'🌦️',81:'🌧️',82:'🌧️',
+        85:'🌨️',86:'🌨️',95:'⛈️',96:'⛈️',99:'⛈️'};
+      const container = document.getElementById('weather-days');
+      data.days.forEach((d,i)=>{
+        const el = document.createElement('div');
+        el.className = 'wx-card' + (i===0?' wx-today':'');
+        const icon = icons[d.weathercode] || '🌡️';
+        const label = i===0 ? 'Today' : (i===1 ? 'Tomorrow' : d.date.slice(5).replace('-','/'));
+        el.innerHTML = `
+          <div class="wx-label">${label}</div>
+          <div class="wx-icon">${icon}</div>
+          <div class="wx-hi">${Math.round(d.temp_max)}°</div>
+          <div class="wx-lo">${Math.round(d.temp_min)}°</div>
+          ${i===0 && data.current_temp !== null ? `<div class="wx-now">${Math.round(data.current_temp)}° now</div>` : ''}
+        `;
+        container.appendChild(el);
+      });
+      document.getElementById('weather-strip').style.display='';
+    }).catch(()=>{});
+  })();
+  </script>
 
   <!-- ── Now Panel ─────────────────────────────────────────────────────── -->
   <div class="now-panel">
@@ -566,7 +695,7 @@ DASH_HTML = """
         <!-- Left: breaker panel -->
         <div class="panel-wrap" style="margin-top:0;">
           {% if dash_mains %}
-          <div class="panel-label">Service Panel — Live</div>
+          <div class="panel-label">{{ panel_label }} — Live</div>
           {% for m in dash_mains %}
           {% if m.is_total %}
           <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
@@ -866,7 +995,7 @@ CIRCUITS_HTML = """
 
   <!-- ── Panel totals ──────────────────────────────────────────────────── -->
   <div class="panel-wrap">
-    <div class="panel-label">Barn Service Panel</div>
+    <div class="panel-label">{{ panel_label }}</div>
     {% for m in mains %}
     {% if m.is_total %}
     <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
@@ -1346,11 +1475,17 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 def _common():
-    """Values needed by every page (status indicator)."""
+    """Values needed by every page (status indicator + device labels)."""
     latest = energy.get_latest()
     last   = latest[0]["timestamp"] if latest else "N/A"
     cls, label, _ = _status(last)
-    return {"last_updated": last, "status_cls": cls, "status_label": label, "version": VERSION}
+    device_labels = energy.get_device_labels()
+    named = [v for v in device_labels.values() if v.strip()]
+    panel_label = " · ".join(named) if named else "Service Panel"
+    return {
+        "last_updated": last, "status_cls": cls, "status_label": label,
+        "version": VERSION, "device_labels": device_labels, "panel_label": panel_label,
+    }
 
 
 _MAINS_NAMES = {"Mains_A", "Mains_B", "Mains_C", "Main"}
@@ -1679,6 +1814,44 @@ def log_page():
 
 # ── REST API ──────────────────────────────────────────────────────────────────
 
+@app.route("/api/weather")
+def api_weather():
+    """Fetch 10-day forecast from Open-Meteo for zip 18947 (Pipersville, PA).
+    Cached for 30 min to avoid hammering the free API."""
+    import urllib.request, json as _json, time as _time
+    cache = getattr(api_weather, "_cache", None)
+    if cache and _time.time() - cache["ts"] < 1800:
+        return jsonify(cache["data"])
+    try:
+        url = (
+            "https://api.open-meteo.com/v1/forecast"
+            "?latitude=40.42538&longitude=-75.13934"
+            "&daily=weathercode,temperature_2m_max,temperature_2m_min"
+            "&current_weather=true"
+            "&temperature_unit=fahrenheit"
+            "&forecast_days=10"
+            "&timezone=America%2FNew_York"
+        )
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            raw = _json.loads(resp.read())
+        daily = raw.get("daily", {})
+        current = raw.get("current_weather", {})
+        days = [
+            {
+                "date":        daily["time"][i],
+                "weathercode": daily["weathercode"][i],
+                "temp_max":    daily["temperature_2m_max"][i],
+                "temp_min":    daily["temperature_2m_min"][i],
+            }
+            for i in range(len(daily.get("time", [])))
+        ]
+        result = {"days": days, "current_temp": current.get("temperature")}
+        api_weather._cache = {"ts": _time.time(), "data": result}
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"days": [], "current_temp": None, "error": str(e)})
+
+
 @app.route("/api/summary")
 def api_summary():
     return jsonify(energy.get_summary(24))
@@ -1863,6 +2036,100 @@ SETTINGS_HTML = """
     <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.5rem;">Restart Flask for changes to take effect.</p>
   </div>
 
+  <!-- Panel Labels -->
+  <div class="card" style="margin-bottom:1.5rem;">
+    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Panel Labels</h3>
+    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
+      Name each Emporia device. Labels appear in the panel header and breaker views.
+    </p>
+    {% for gid in known_devices %}
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+      <code style="font-size:0.72rem; background:var(--stone-100); color:var(--stone-600);
+                   padding:3px 7px; border-radius:5px; flex-shrink:0;">{{ gid }}</code>
+      <input type="text" class="device-label-input" data-gid="{{ gid }}"
+             value="{{ device_labels.get(gid, '') }}"
+             placeholder="e.g. House, Barn, Garage"
+             style="flex:1; min-width:180px; max-width:280px; padding:8px 10px; border-radius:8px;
+                    border:1px solid var(--border); background:var(--bg); color:var(--text);
+                    font-size:0.9rem; font-family:inherit;">
+    </div>
+    {% else %}
+    <p style="font-size:0.82rem; color:var(--text-light); font-style:italic;">
+      No devices found in the database yet.
+    </p>
+    {% endfor %}
+    {% if known_devices %}
+    <div style="display:flex; gap:10px; align-items:center; margin-top:0.5rem;">
+      <button type="button" onclick="saveDeviceLabels()"
+              style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                     border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+        Save Labels
+      </button>
+      <span id="lblMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Aqara Integration -->
+  <div class="card" style="margin-bottom:1.5rem;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:0.25rem;">
+      <h3 style="font-size:1.1rem; margin:0;">Aqara Integration</h3>
+      <span style="font-size:0.7rem; padding:2px 8px; background:var(--stone-200); color:var(--stone-600);
+                   border-radius:20px; font-weight:600; letter-spacing:0.04em;">COMING SOON</span>
+    </div>
+    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
+      Connect your <strong>Aqara Hub M3</strong> to display temperature &amp; humidity sensor readings.<br>
+      Requires a free Aqara developer account — sign-up is currently unavailable but will open soon.
+    </p>
+
+    <div style="background:var(--stone-50); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:1rem;">
+      <p style="font-size:0.78rem; font-weight:600; margin:0 0 0.5rem; color:var(--olive-800);">Setup steps (when available):</p>
+      <ol style="font-size:0.78rem; color:var(--text-light); margin:0; padding-left:1.25rem; line-height:1.8;">
+        <li>Register at <code>developer.aqara.com</code> → create an app</li>
+        <li>Copy your <strong>App ID</strong>, <strong>App Key</strong>, and <strong>Key ID</strong> below</li>
+        <li>Click <strong>Authorize</strong> to link your Aqara account via OAuth</li>
+        <li>Navigate to the <a href="/aqara" style="color:var(--olive-700);">Aqara tab</a> to see live sensor data</li>
+      </ol>
+    </div>
+
+    <form id="aqaraCredForm" style="display:flex; flex-direction:column; gap:10px; max-width:420px; opacity:0.5; pointer-events:none;">
+      <label style="font-size:0.82rem; font-weight:600;">
+        App ID
+        <input type="text" id="aqaraAppId" value="{{ aqara_app_id }}" placeholder="e.g. axxx000000000000"
+               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:0.9rem;">
+      </label>
+      <label style="font-size:0.82rem; font-weight:600;">
+        App Key
+        <input type="password" id="aqaraAppKey" placeholder="••••••••••••••••"
+               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:0.9rem;">
+      </label>
+      <label style="font-size:0.82rem; font-weight:600;">
+        Key ID
+        <input type="text" id="aqaraKeyId" value="{{ aqara_key_id }}" placeholder="e.g. Kxxx000000000000"
+               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:0.9rem;">
+      </label>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button type="button" onclick="saveAqaraCreds()"
+                style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                       border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+          Save Credentials
+        </button>
+        <button type="button" onclick="authorizeAqara()"
+                style="padding:9px 22px; background:var(--surface2); color:var(--text);
+                       border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+          Authorize →
+        </button>
+        <span id="aqaraMsg" style="font-size:0.82rem; display:none; align-self:center;"></span>
+      </div>
+    </form>
+    <p style="font-size:0.73rem; color:var(--stone-400); margin-top:0.75rem;">
+      Credentials are stored locally in <code>settings.json</code>. Your Aqara password is never stored — only the OAuth access token.
+    </p>
+  </div>
+
   <!-- Panel layout link -->
   <div class="card">
     <h3 style="font-size:1.1rem; margin-bottom:0.4rem;">Panel Layout</h3>
@@ -1900,6 +2167,33 @@ function saveConfig() {
     const m = document.getElementById('cfgMsg');
     m.style.display='inline'; setTimeout(()=>m.style.display='none', 2500);
   });
+}
+function saveDeviceLabels() {
+  const labels = {};
+  document.querySelectorAll('.device-label-input').forEach(inp => {
+    labels[inp.dataset.gid] = inp.value.trim();
+  });
+  fetch('/api/settings/device-labels', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(labels)
+  }).then(r=>r.json()).then(d => {
+    const m = document.getElementById('lblMsg');
+    m.style.display='inline'; setTimeout(()=>m.style.display='none', 2500);
+  });
+}
+function saveAqaraCreds() {
+  // Placeholder: will POST to /api/settings/aqara when developer signup is available
+  const msg = document.getElementById('aqaraMsg');
+  msg.textContent = 'Aqara integration not yet active — developer signup opens soon.';
+  msg.style.color = 'var(--stone-500)';
+  msg.style.display = 'inline';
+}
+function authorizeAqara() {
+  // Placeholder: will open OAuth flow at developer.aqara.com when available
+  const msg = document.getElementById('aqaraMsg');
+  msg.textContent = 'OAuth flow coming soon.';
+  msg.style.color = 'var(--stone-500)';
+  msg.style.display = 'inline';
 }
 </script>
 """
@@ -1942,6 +2236,120 @@ def api_panel_layout():
     return jsonify({"ok": True})
 
 
+AQARA_HTML = """
+<div class="page">
+  <div class="section-head" style="margin-top:1.5rem;">
+    <h2>Aqara Sensors</h2>
+    <span class="section-sub">Temperature &amp; humidity — Hub M3</span>
+  </div>
+
+  {% if not aqara_configured %}
+  <!-- Not configured state -->
+  <div class="card" style="text-align:center; padding:3rem 2rem;">
+    <div style="font-size:3rem; margin-bottom:1rem;">🌡️</div>
+    <h3 style="font-size:1.3rem; margin-bottom:0.5rem;">Aqara not yet connected</h3>
+    <p style="font-size:0.88rem; color:var(--text-light); max-width:480px; margin:0 auto 1.5rem;">
+      Aqara developer sign-up is temporarily unavailable. Once it reopens, you can connect
+      your <strong>Hub M3</strong> and your temperature &amp; humidity sensors will appear here automatically.
+    </p>
+    <div style="background:var(--stone-50); border:1px solid var(--border); border-radius:10px;
+                padding:1.25rem; max-width:520px; margin:0 auto 1.5rem; text-align:left;">
+      <p style="font-size:0.8rem; font-weight:600; margin:0 0 0.6rem; color:var(--olive-800);">
+        When developer.aqara.com sign-up opens:
+      </p>
+      <ol style="font-size:0.8rem; color:var(--text-light); margin:0; padding-left:1.25rem; line-height:2;">
+        <li>Create a developer account &amp; app → copy <strong>App ID</strong>, <strong>App Key</strong>, <strong>Key ID</strong></li>
+        <li>Enter credentials in <a href="/settings" style="color:var(--olive-700);">Settings → Aqara Integration</a></li>
+        <li>Click <strong>Authorize</strong> to link your account via OAuth</li>
+        <li>Return here — sensors will appear automatically</li>
+      </ol>
+    </div>
+    <a href="/settings" style="display:inline-block; padding:9px 24px; background:var(--olive-800);
+       color:var(--olive-50); border-radius:8px; font-size:0.85rem; text-decoration:none;">
+      Go to Settings →
+    </a>
+  </div>
+
+  {% else %}
+  <!-- Configured: show sensor grid -->
+  {% if aqara_error %}
+  <div style="padding:0.75rem 1rem; background:#fef2f2; border:1px solid #fca5a5;
+              border-radius:8px; font-size:0.82rem; color:#b91c1c; margin-bottom:1rem;">
+    API error: {{ aqara_error }}
+  </div>
+  {% endif %}
+
+  {% if sensors %}
+  <div class="grid-4" style="margin-bottom:1.5rem;">
+    {% for s in sensors %}
+    <div class="card" style="position:relative;">
+      {% if not s.online %}
+      <span style="position:absolute; top:10px; right:10px; font-size:0.65rem; padding:2px 7px;
+                   background:var(--stone-200); color:var(--stone-500); border-radius:20px;">offline</span>
+      {% endif %}
+      <div class="card-label">{{ s.name }}</div>
+      {% if s.temperature is not none %}
+      <div class="card-value" style="font-size:2rem;">
+        {{ "%.1f"|format(s.temperature) }}<span class="unit">°C</span>
+        <span style="font-size:1rem; color:var(--text-light); margin-left:4px;">
+          / {{ "%.1f"|format(s.temperature * 9/5 + 32) }}°F
+        </span>
+      </div>
+      {% else %}
+      <div class="card-value" style="color:var(--stone-400);">—</div>
+      {% endif %}
+      {% if s.humidity is not none %}
+      <div class="card-meta">💧 {{ "%.1f"|format(s.humidity) }}% RH</div>
+      {% endif %}
+      {% if s.battery is not none %}
+      <div style="margin-top:0.5rem; font-size:0.72rem; color:var(--stone-400);">
+        🔋 {{ s.battery }}%
+        <div style="height:3px; background:var(--border); border-radius:2px; margin-top:3px;">
+          <div style="height:3px; border-radius:2px; width:{{ s.battery }}%;
+               background:{{ 'var(--green)' if s.battery > 30 else '#f59e0b' if s.battery > 15 else '#ef4444' }};"></div>
+        </div>
+      </div>
+      {% endif %}
+      <div style="margin-top:0.5rem; font-size:0.68rem; color:var(--stone-400);">{{ s.model }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card" style="text-align:center; padding:2rem; color:var(--text-light); font-style:italic;">
+    No TH sensors found. Make sure your sensors are paired to the Hub M3.
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <p style="font-size:0.72rem; color:var(--stone-400); margin-top:1rem;">
+    Data via <strong>Aqara Cloud OpenAPI v3</strong> &bull; Hub: M3 &bull; Region: USA &bull;
+    Refreshes on page load
+  </p>
+</div>
+"""
+
+
+@app.route("/aqara")
+def aqara_page():
+    import aqara as _aqara
+    com = _common()
+    configured = _aqara.is_configured()
+    sensors, error = [], None
+    if configured:
+        try:
+            sensors = _aqara.get_sensors()
+        except Exception as e:
+            error = str(e)
+    cfg = _aqara._load_aqara_config()
+    return _render(AQARA_HTML, active_page="aqara",
+                   aqara_configured=configured,
+                   sensors=sensors,
+                   aqara_error=error,
+                   aqara_app_id=cfg.get("app_id", ""),
+                   aqara_key_id=cfg.get("key_id", ""),
+                   **com)
+
+
 @app.route("/settings")
 def settings_page():
     import json as _json, os as _os
@@ -1953,11 +2361,16 @@ def settings_page():
     except Exception:
         pass
     has_tokens = _os.path.exists("keys.json")
+    aq = cfg.get("aqara", {})
     return _render(SETTINGS_HTML, active_page="settings",
                    saved_email=cfg.get("emporia_email", ""),
                    has_tokens=has_tokens,
                    rate_cents=energy.RATE_CENTS,
                    monthly_budget=MONTHLY_BUDGET,
+                   known_devices=energy.get_known_devices(),
+                   aqara_app_id=aq.get("app_id", ""),
+                   aqara_key_id=aq.get("key_id", ""),
+                   device_labels=cfg.get("device_labels", {}),
                    **com)
 
 
@@ -2002,6 +2415,15 @@ def api_save_config():
         cfg["monthly_budget"] = float(data["monthly_budget"])
     with open("settings.json", "w") as f:
         _json.dump(cfg, f, indent=2)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/settings/device-labels", methods=["POST"])
+def api_save_device_labels():
+    data = request.get_json(force=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Expected object"}), 400
+    energy.save_device_labels(data)
     return jsonify({"ok": True})
 
 
