@@ -428,6 +428,74 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .slot-row input.inp-amps { text-align: center; }
 .slot-row select.sel-poles { text-align: center; }
 
+/* ── Settings sidebar ── */
+.settings-wrap {
+  display: grid;
+  grid-template-columns: 196px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+.sys-nav {
+  position: sticky; top: 72px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.4rem;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.sys-nav-group {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.09em; color: var(--text-light);
+  padding: 0.65rem 0.75rem 0.3rem;
+}
+.sys-link {
+  display: flex; align-items: center; gap: 9px;
+  padding: 0.55rem 0.75rem;
+  border-radius: 7px; cursor: pointer;
+  text-decoration: none; color: var(--text);
+  transition: background 0.13s;
+  border: none; background: none;
+  width: 100%; text-align: left; font-family: inherit;
+}
+.sys-link:hover  { background: var(--olive-50); }
+.sys-link.active { background: var(--olive-100); }
+.sys-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.sys-dot.ok   { background: var(--green); box-shadow: 0 0 0 2px rgba(90,138,94,.2); }
+.sys-dot.warn { background: var(--amber); }
+.sys-dot.soon { background: var(--stone-300); }
+.sys-name { font-size: 0.82rem; font-weight: 600; line-height: 1.2; white-space: nowrap; }
+.sys-sub  { font-size: 0.68rem; color: var(--text-light); margin-top: 1px; white-space: nowrap; }
+.sys-panel { display: none; }
+.sys-panel.active { display: block; }
+.sys-panel-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 1.25rem; flex-wrap: wrap;
+}
+.sys-panel-head h3 { font-size: 1.2rem; margin: 0; }
+.int-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; padding: 3px 9px; border-radius: 20px;
+}
+.int-badge.ok     { background: rgba(90,138,94,.12); color: var(--green); }
+.int-badge.warn   { background: rgba(176,125,42,.12); color: var(--amber); }
+.int-badge.coming { background: var(--stone-100); color: var(--stone-500); }
+
+/* Coming-soon instruction card */
+.setup-steps {
+  background: var(--stone-50); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1rem 1.1rem; margin-bottom: 1rem;
+}
+.setup-steps p { font-size: 0.78rem; font-weight: 600; margin: 0 0 0.4rem; color: var(--olive-800); }
+.setup-steps ol, .setup-steps ul {
+  font-size: 0.78rem; color: var(--text-light);
+  margin: 0; padding-left: 1.25rem; line-height: 1.85;
+}
+.setup-steps li code {
+  background: var(--stone-100); padding: 1px 5px; border-radius: 4px; font-size: 0.75rem;
+}
+
 /* ── Usage spreadsheet ── */
 .usage-pct-bar {
   display: inline-block; height: 6px; border-radius: 3px;
@@ -2441,211 +2509,441 @@ SETTINGS_HTML = """
 <div class="page">
   <div class="section-head" style="margin-top:1.5rem;">
     <h2>Settings</h2>
-    <span class="section-sub">Emporia credentials &amp; app configuration</span>
+    <span class="section-sub">System integrations &amp; configuration</span>
   </div>
 
-  <!-- Credentials -->
-  <div class="card" style="margin-bottom:1.5rem;">
-    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Emporia Account</h3>
-    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
-      {% if has_tokens %}
-      <span style="color:var(--green);">&#10003; Authenticated</span> — tokens cached in <code>keys.json</code>.
-      Re-enter credentials only if you change your password or tokens expire.
-      {% else %}
-      No tokens found. Enter your Emporia email &amp; password to start live polling.
-      {% endif %}
-    </p>
-    <form id="credForm" style="display:flex; flex-direction:column; gap:10px; max-width:420px;">
-      <label style="font-size:0.82rem; font-weight:600;">
-        Email
-        <input type="email" id="credEmail" value="{{ saved_email }}"
-               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
-                      border:1px solid var(--border); background:var(--bg); color:var(--text);
-                      font-size:0.9rem; font-family:inherit;">
-      </label>
-      <label style="font-size:0.82rem; font-weight:600;">
-        Password
-        <input type="password" id="credPwd" placeholder="••••••••"
-               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
-                      border:1px solid var(--border); background:var(--bg); color:var(--text);
-                      font-size:0.9rem; font-family:inherit;">
-      </label>
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button type="button" onclick="saveCreds()"
-                style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
-                       border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-          Save &amp; Authenticate
-        </button>
-        <span id="credMsg" style="font-size:0.82rem; display:none;"></span>
-      </div>
-    </form>
-    <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.75rem;">
-      Credentials are stored locally in <code>settings.json</code>. The live poller must be restarted after changes.
-    </p>
-  </div>
+  <div class="settings-wrap">
 
-  <!-- Rate & Budget -->
-  <div class="card" style="margin-bottom:1.5rem;">
-    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Rate &amp; Budget</h3>
-    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:0.75rem;">
-      <label style="font-size:0.82rem; font-weight:600;">
-        Electricity rate (¢/kWh)
-        <input type="number" id="cfgRate" step="0.01" value="{{ rate_cents }}"
-               style="display:block; width:120px; margin-top:4px; padding:8px 10px; border-radius:8px;
-                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
-      </label>
-      <label style="font-size:0.82rem; font-weight:600;">
-        Monthly budget ($)
-        <input type="number" id="cfgBudget" step="1" value="{{ monthly_budget }}"
-               style="display:block; width:120px; margin-top:4px; padding:8px 10px; border-radius:8px;
-                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
-      </label>
-    </div>
-    <button type="button" onclick="saveConfig()" style="margin-top:0.85rem; padding:9px 22px;
-            background:var(--olive-800); color:var(--olive-50); border:none; border-radius:8px;
-            font-size:0.85rem; cursor:pointer; font-family:inherit;">
-      Save Rate &amp; Budget
-    </button>
-    <span id="cfgMsg" style="font-size:0.82rem; color:var(--green); margin-left:10px; display:none;">Saved ✓</span>
-    <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.5rem;">Restart Flask for changes to take effect.</p>
-  </div>
-
-  <!-- Panel Labels -->
-  <div class="card" style="margin-bottom:1.5rem;">
-    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Panel Labels</h3>
-    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
-      Name each Emporia device. Labels appear in the panel header and breaker views.
-    </p>
-    {% for gid in known_devices %}
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-      <code style="font-size:0.72rem; background:var(--stone-100); color:var(--stone-600);
-                   padding:3px 7px; border-radius:5px; flex-shrink:0;">{{ gid }}</code>
-      <input type="text" class="device-label-input" data-gid="{{ gid }}"
-             value="{{ device_labels.get(gid, '') }}"
-             placeholder="e.g. House, Barn, Garage"
-             style="flex:1; min-width:180px; max-width:280px; padding:8px 10px; border-radius:8px;
-                    border:1px solid var(--border); background:var(--bg); color:var(--text);
-                    font-size:0.9rem; font-family:inherit;">
-    </div>
-    {% else %}
-    <p style="font-size:0.82rem; color:var(--text-light); font-style:italic;">
-      No devices found in the database yet.
-    </p>
-    {% endfor %}
-    {% if known_devices %}
-    <div style="display:flex; gap:10px; align-items:center; margin-top:0.5rem;">
-      <button type="button" onclick="saveDeviceLabels()"
-              style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
-                     border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-        Save Labels
+    <!-- ── Sidebar nav ── -->
+    <div class="sys-nav">
+      <div class="sys-nav-group">Active</div>
+      <button class="sys-link active" onclick="showPanel('emporia',this)">
+        <span class="sys-dot {{ 'ok' if has_tokens else 'warn' }}"></span>
+        <div><div class="sys-name">Emporia Vue</div><div class="sys-sub">Energy Monitor</div></div>
       </button>
-      <span id="lblMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
-    </div>
-    {% endif %}
-  </div>
 
-  <!-- Aqara Integration -->
-  <div class="card" style="margin-bottom:1.5rem;">
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:0.25rem;">
-      <h3 style="font-size:1.1rem; margin:0;">Aqara Integration</h3>
-      <span style="font-size:0.7rem; padding:2px 8px; background:var(--stone-200); color:var(--stone-600);
-                   border-radius:20px; font-weight:600; letter-spacing:0.04em;">COMING SOON</span>
-    </div>
-    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
-      Connect your <strong>Aqara Hub M3</strong> to display temperature &amp; humidity sensor readings.<br>
-      Requires a free Aqara developer account — sign-up is currently unavailable but will open soon.
-    </p>
-
-    <div style="background:var(--stone-50); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:1rem;">
-      <p style="font-size:0.78rem; font-weight:600; margin:0 0 0.5rem; color:var(--olive-800);">Setup steps (when available):</p>
-      <ol style="font-size:0.78rem; color:var(--text-light); margin:0; padding-left:1.25rem; line-height:1.8;">
-        <li>Register at <code>developer.aqara.com</code> → create an app</li>
-        <li>Copy your <strong>App ID</strong>, <strong>App Key</strong>, and <strong>Key ID</strong> below</li>
-        <li>Click <strong>Authorize</strong> to link your Aqara account via OAuth</li>
-        <li>Navigate to the <a href="/aqara" style="color:var(--olive-700);">Aqara tab</a> to see live sensor data</li>
-      </ol>
-    </div>
-
-    <form id="aqaraCredForm" style="display:flex; flex-direction:column; gap:10px; max-width:420px; opacity:0.5; pointer-events:none;">
-      <label style="font-size:0.82rem; font-weight:600;">
-        App ID
-        <input type="text" id="aqaraAppId" value="{{ aqara_app_id }}" placeholder="e.g. axxx000000000000"
-               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
-                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:0.9rem;">
-      </label>
-      <label style="font-size:0.82rem; font-weight:600;">
-        App Key
-        <input type="password" id="aqaraAppKey" placeholder="••••••••••••••••"
-               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
-                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:0.9rem;">
-      </label>
-      <label style="font-size:0.82rem; font-weight:600;">
-        Key ID
-        <input type="text" id="aqaraKeyId" value="{{ aqara_key_id }}" placeholder="e.g. Kxxx000000000000"
-               style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
-                      border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:0.9rem;">
-      </label>
-      <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        <button type="button" onclick="saveAqaraCreds()"
-                style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
-                       border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-          Save Credentials
-        </button>
-        <button type="button" onclick="authorizeAqara()"
-                style="padding:9px 22px; background:var(--surface2); color:var(--text);
-                       border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-          Authorize →
-        </button>
-        <span id="aqaraMsg" style="font-size:0.82rem; display:none; align-self:center;"></span>
-      </div>
-    </form>
-    <p style="font-size:0.73rem; color:var(--stone-400); margin-top:0.75rem;">
-      Credentials are stored locally in <code>settings.json</code>. Your Aqara password is never stored — only the OAuth access token.
-    </p>
-  </div>
-
-  <!-- Panel Display Options -->
-  <div class="card" style="margin-bottom:1.5rem;">
-    <h3 style="font-size:1.1rem; margin-bottom:0.25rem;">Panel Display</h3>
-    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
-      Residential panels wire odd slots (left column) top-to-bottom, but some installs run
-      even slots (right column) bottom-to-top. Toggle to match your physical wiring.
-    </p>
-    <div style="display:flex; gap:2rem; flex-wrap:wrap; margin-bottom:1rem;">
-      <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
-        <input type="checkbox" id="invertLeft" {% if panel_invert_left %}checked{% endif %}
-               style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
-        Invert left column (odd slots)
-      </label>
-      <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
-        <input type="checkbox" id="invertRight" {% if panel_invert_right %}checked{% endif %}
-               style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
-        Invert right column (even slots)
-      </label>
-    </div>
-    <div style="display:flex; gap:10px; align-items:center;">
-      <button type="button" onclick="savePanelDisplay()"
-              style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
-                     border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-        Save Display Options
+      <div class="sys-nav-group" style="margin-top:0.4rem;">Planned</div>
+      <button class="sys-link" onclick="showPanel('aqara',this)">
+        <span class="sys-dot soon"></span>
+        <div><div class="sys-name">Aqara</div><div class="sys-sub">Temp &amp; Humidity</div></div>
       </button>
-      <span id="pdMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓ — reload dashboard to see changes</span>
+      <button class="sys-link" onclick="showPanel('kasa',this)">
+        <span class="sys-dot soon"></span>
+        <div><div class="sys-name">Kasa</div><div class="sys-sub">Light Switches</div></div>
+      </button>
+      <button class="sys-link" onclick="showPanel('broan',this)">
+        <span class="sys-dot soon"></span>
+        <div><div class="sys-name">Broan AI ERV</div><div class="sys-sub">Ventilation</div></div>
+      </button>
+      <button class="sys-link" onclick="showPanel('mitsubishi',this)">
+        <span class="sys-dot soon"></span>
+        <div><div class="sys-name">Mitsubishi</div><div class="sys-sub">Hyper Heat HVAC</div></div>
+      </button>
+      <button class="sys-link" onclick="showPanel('nuts',this)">
+        <span class="sys-dot soon"></span>
+        <div><div class="sys-name">NUTS / UPS</div><div class="sys-sub">ESP Remote Monitor</div></div>
+      </button>
     </div>
-  </div>
 
-  <!-- Panel layout link -->
-  <div class="card">
-    <h3 style="font-size:1.1rem; margin-bottom:0.4rem;">Panel Layout</h3>
-    <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:0.75rem;">
-      Assign circuits to physical breaker slots, add custom labels and hover notes.
-    </p>
-    <a href="/panel" style="display:inline-block; padding:9px 22px; background:var(--olive-800);
-       color:var(--olive-50); border-radius:8px; font-size:0.85rem; text-decoration:none;">
-      Edit Panel Layout →
-    </a>
-  </div>
+    <!-- ── Content panels ── -->
+    <div>
+
+      <!-- ════════════════════════════════ EMPORIA VUE ════════════════════════════════ -->
+      <div id="panel-emporia" class="sys-panel active">
+        <div class="sys-panel-head">
+          <h3>Emporia Vue Energy Monitor</h3>
+          {% if has_tokens %}
+          <span class="int-badge ok">&#10003; Connected</span>
+          {% else %}
+          <span class="int-badge warn">Not Authenticated</span>
+          {% endif %}
+        </div>
+
+        <!-- Account credentials -->
+        <div class="card" style="margin-bottom:1rem;">
+          <h3 style="font-size:1rem; margin-bottom:0.5rem;">Account Credentials</h3>
+          <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
+            {% if has_tokens %}<span style="color:var(--green);">&#10003; Authenticated</span> — tokens cached in <code>keys.json</code>. Re-enter only if your password changed or tokens expired.
+            {% else %}No tokens found. Enter your Emporia email &amp; password to start live polling.{% endif %}
+          </p>
+          <form style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
+            <label style="font-size:0.82rem; font-weight:600;">Email
+              <input type="email" id="credEmail" value="{{ saved_email }}"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">Password
+              <input type="password" id="credPwd" placeholder="••••••••"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <button type="button" onclick="saveCreds()"
+                      style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
+                             border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                Save &amp; Authenticate
+              </button>
+              <span id="credMsg" style="font-size:0.82rem; display:none;"></span>
+            </div>
+          </form>
+          <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.75rem;">
+            Stored locally in <code>settings.json</code>. Restart the poller after changes.
+          </p>
+        </div>
+
+        <!-- Rate & Budget -->
+        <div class="card" style="margin-bottom:1rem;">
+          <h3 style="font-size:1rem; margin-bottom:0.5rem;">Rate &amp; Budget</h3>
+          <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:0.25rem;">
+            <label style="font-size:0.82rem; font-weight:600;">Electricity rate (¢/kWh)
+              <input type="number" id="cfgRate" step="0.01" value="{{ rate_cents }}"
+                     style="display:block; width:130px; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">Monthly budget ($)
+              <input type="number" id="cfgBudget" step="1" value="{{ monthly_budget }}"
+                     style="display:block; width:130px; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
+            </label>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; margin-top:0.85rem;">
+            <button type="button" onclick="saveConfig()"
+                    style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
+                           border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+              Save Rate &amp; Budget
+            </button>
+            <span id="cfgMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
+          </div>
+          <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.5rem;">Restart Flask for rate changes to take effect.</p>
+        </div>
+
+        <!-- Panel Labels -->
+        <div class="card" style="margin-bottom:1rem;">
+          <h3 style="font-size:1rem; margin-bottom:0.5rem;">Panel Labels</h3>
+          <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:0.85rem;">
+            Name each Emporia device. Labels appear in the panel header and breaker views.
+          </p>
+          {% for gid in known_devices %}
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap;">
+            <code style="font-size:0.72rem; background:var(--stone-100); color:var(--stone-600);
+                         padding:3px 7px; border-radius:5px; flex-shrink:0;">{{ gid }}</code>
+            <input type="text" class="device-label-input" data-gid="{{ gid }}"
+                   value="{{ device_labels.get(gid, '') }}" placeholder="e.g. House, Barn, Garage"
+                   style="flex:1; min-width:180px; max-width:260px; padding:8px 10px; border-radius:8px;
+                          border:1px solid var(--border); background:var(--bg); color:var(--text);
+                          font-size:0.9rem; font-family:inherit;">
+          </div>
+          {% else %}
+          <p style="font-size:0.82rem; color:var(--text-light); font-style:italic;">No devices in database yet.</p>
+          {% endfor %}
+          {% if known_devices %}
+          <div style="display:flex; gap:10px; align-items:center; margin-top:0.6rem;">
+            <button type="button" onclick="saveDeviceLabels()"
+                    style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
+                           border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+              Save Labels
+            </button>
+            <span id="lblMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- Panel Display -->
+        <div class="card" style="margin-bottom:1rem;">
+          <h3 style="font-size:1rem; margin-bottom:0.5rem;">Panel Display</h3>
+          <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:0.85rem;">
+            Residential panels wire odd slots top-to-bottom, but some installs run even slots bottom-to-top.
+            Toggle to match your physical wiring.
+          </p>
+          <div style="display:flex; gap:2rem; flex-wrap:wrap; margin-bottom:0.85rem;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
+              <input type="checkbox" id="invertLeft" {% if panel_invert_left %}checked{% endif %}
+                     style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
+              Invert left column (odd slots)
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
+              <input type="checkbox" id="invertRight" {% if panel_invert_right %}checked{% endif %}
+                     style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
+              Invert right column (even slots)
+            </label>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button type="button" onclick="savePanelDisplay()"
+                    style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
+                           border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+              Save Display Options
+            </button>
+            <span id="pdMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓ — reload dashboard</span>
+          </div>
+        </div>
+
+        <!-- Panel Layout -->
+        <div class="card">
+          <h3 style="font-size:1rem; margin-bottom:0.4rem;">Panel Layout</h3>
+          <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:0.75rem;">
+            Assign circuits to physical breaker slots, set custom labels, pole count, and hover notes.
+          </p>
+          <a href="/panel" style="display:inline-block; padding:9px 22px; background:var(--olive-800);
+             color:var(--olive-50); border-radius:8px; font-size:0.85rem; text-decoration:none;">
+            Edit Panel Layout →
+          </a>
+        </div>
+      </div><!-- /panel-emporia -->
+
+
+      <!-- ════════════════════════════════ AQARA ════════════════════════════════ -->
+      <div id="panel-aqara" class="sys-panel">
+        <div class="sys-panel-head">
+          <h3>Aqara — Temperature &amp; Humidity</h3>
+          <span class="int-badge coming">Coming Soon</span>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+          <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
+            Connect your <strong>Aqara Hub M3</strong> to pull temperature, humidity, and contact sensor readings
+            into a dedicated tab. Uses the <strong>Aqara Open Cloud API</strong> with OAuth2.
+          </p>
+          <div class="setup-steps">
+            <p>Setup steps (when available):</p>
+            <ol>
+              <li>Register at <code>developer.aqara.com</code> → create an Application</li>
+              <li>Copy your <strong>App ID</strong>, <strong>App Key</strong>, and <strong>Key ID</strong> below</li>
+              <li>Click <strong>Authorize</strong> to link your Aqara account via OAuth2</li>
+              <li>Sensor data will appear on the <em>Aqara</em> tab</li>
+            </ol>
+          </div>
+          <form style="display:flex; flex-direction:column; gap:10px; max-width:400px; opacity:0.45; pointer-events:none;">
+            <label style="font-size:0.82rem; font-weight:600;">App ID
+              <input type="text" id="aqaraAppId" value="{{ aqara_app_id }}" placeholder="axxx000000000000"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">App Key
+              <input type="password" id="aqaraAppKey" placeholder="••••••••••••••••"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">Key ID
+              <input type="text" id="aqaraKeyId" value="{{ aqara_key_id }}" placeholder="Kxxx000000000000"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button type="button" style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                      border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                Save Credentials
+              </button>
+              <button type="button" style="padding:9px 22px; background:var(--surface2); color:var(--text);
+                      border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                Authorize →
+              </button>
+            </div>
+          </form>
+          <p style="font-size:0.73rem; color:var(--stone-400); margin-top:0.75rem;">
+            Credentials stored locally in <code>settings.json</code>. Your Aqara password is never stored — only the OAuth token.
+          </p>
+        </div>
+      </div><!-- /panel-aqara -->
+
+
+      <!-- ════════════════════════════════ KASA ════════════════════════════════ -->
+      <div id="panel-kasa" class="sys-panel">
+        <div class="sys-panel-head">
+          <h3>Kasa — Smart Light Switches</h3>
+          <span class="int-badge coming">Coming Soon</span>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+          <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
+            Control and monitor <strong>TP-Link Kasa</strong> smart light switches on your local network.
+            Supports local UDP discovery — no cloud account required for basic on/off control and state monitoring.
+          </p>
+          <div class="setup-steps">
+            <p>Planned capabilities:</p>
+            <ul>
+              <li>Auto-discover Kasa switches on the local network (port 9999 UDP broadcast)</li>
+              <li>Display on/off state, power draw (where supported), and uptime</li>
+              <li>Toggle switches from the dashboard</li>
+              <li>Supported devices: <code>KS200M</code>, <code>HS200</code>, <code>HS210</code>, <code>KS205</code> and compatible</li>
+              <li>Optional: TP-Link cloud account for remote access outside the LAN</li>
+            </ul>
+          </div>
+          <form style="display:flex; flex-direction:column; gap:10px; max-width:400px; opacity:0.45; pointer-events:none;">
+            <label style="font-size:0.82rem; font-weight:600;">Local subnet (optional, for scan)
+              <input type="text" id="kasaSubnet" value="{{ kasa_host }}" placeholder="e.g. 192.168.1.0/24"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <div style="display:flex; gap:10px;">
+              <button type="button" style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                      border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                Discover Devices
+              </button>
+            </div>
+          </form>
+          <p style="font-size:0.73rem; color:var(--stone-400); margin-top:0.75rem;">
+            Uses <code>python-kasa</code> library for local LAN control. No cloud credentials needed for local access.
+          </p>
+        </div>
+      </div><!-- /panel-kasa -->
+
+
+      <!-- ════════════════════════════════ BROAN ERV ════════════════════════════════ -->
+      <div id="panel-broan" class="sys-panel">
+        <div class="sys-panel-head">
+          <h3>Broan AI ERV</h3>
+          <span class="int-badge coming">Coming Soon</span>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+          <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
+            Monitor your <strong>Broan AI Energy Recovery Ventilator</strong> — fan speed, ventilation rates,
+            air quality index, and filter status. Integration method is under evaluation.
+          </p>
+          <div class="setup-steps">
+            <p>Possible integration paths:</p>
+            <ul>
+              <li><strong>Broan App API</strong> — cloud-based, requires Broan account credentials</li>
+              <li><strong>Local Modbus/BACnet</strong> — if ERV exposes a local protocol</li>
+              <li><strong>Matter / Home Assistant bridge</strong> — if paired via a Matter-compatible hub</li>
+            </ul>
+          </div>
+          <form style="display:flex; flex-direction:column; gap:10px; max-width:400px; opacity:0.45; pointer-events:none;">
+            <label style="font-size:0.82rem; font-weight:600;">Broan Account Email
+              <input type="email" placeholder="you@example.com"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">Password
+              <input type="password" placeholder="••••••••"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <button type="button" style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                    border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit; width:fit-content;">
+              Connect
+            </button>
+          </form>
+        </div>
+      </div><!-- /panel-broan -->
+
+
+      <!-- ════════════════════════════════ MITSUBISHI ════════════════════════════════ -->
+      <div id="panel-mitsubishi" class="sys-panel">
+        <div class="sys-panel-head">
+          <h3>Mitsubishi Hyper Heat</h3>
+          <span class="int-badge coming">Coming Soon</span>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+          <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
+            Monitor and control your <strong>Mitsubishi Hyper Heat</strong> mini-split system —
+            set point, current mode (heat/cool/auto), room temperature, and compressor status.
+          </p>
+          <div class="setup-steps">
+            <p>Possible integration paths:</p>
+            <ul>
+              <li><strong>MELCloud API</strong> — Mitsubishi's cloud service (requires MELCloud account + internet)</li>
+              <li><strong>Kumo Cloud</strong> — US-market cloud API (if using Kumo Touch thermostat)</li>
+              <li><strong>Local CN105 serial</strong> — direct wired integration via ESP32/ESPHome using the CN105 port</li>
+              <li><strong>MelCloud Python library</strong> — <code>pymelcloud</code> on PyPI</li>
+            </ul>
+          </div>
+          <form style="display:flex; flex-direction:column; gap:10px; max-width:400px; opacity:0.45; pointer-events:none;">
+            <label style="font-size:0.82rem; font-weight:600;">MELCloud / Kumo Email
+              <input type="email" placeholder="you@example.com"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">Password
+              <input type="password" placeholder="••••••••"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <button type="button" style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
+                    border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit; width:fit-content;">
+              Connect
+            </button>
+          </form>
+        </div>
+      </div><!-- /panel-mitsubishi -->
+
+
+      <!-- ════════════════════════════════ NUTS / UPS ════════════════════════════════ -->
+      <div id="panel-nuts" class="sys-panel">
+        <div class="sys-panel-head">
+          <h3>NUTS / UPS — ESP Remote Monitor</h3>
+          <span class="int-badge coming">Coming Soon</span>
+        </div>
+
+        <div class="card" style="margin-bottom:1rem;">
+          <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
+            Aggregate UPS status from <strong>ESP32/ESP8266 devices</strong> running local HTTP endpoints
+            (NUTS — Network UPS Tools-style). Each ESP reports battery level, load %, input/output voltage,
+            and runtime remaining.
+          </p>
+          <div class="setup-steps">
+            <p>How it will work:</p>
+            <ul>
+              <li>Each ESP device exposes a JSON endpoint, e.g. <code>http://192.168.1.x/ups</code></li>
+              <li>Add each device's IP and a friendly name below</li>
+              <li>The app polls each endpoint on a configurable interval</li>
+              <li>UPS status appears on a dedicated tab with battery and load gauges</li>
+            </ul>
+          </div>
+
+          <div style="margin-bottom:0.75rem;">
+            <p style="font-size:0.82rem; font-weight:600; margin-bottom:0.5rem;">ESP Devices</p>
+            {% if nuts_devices %}
+            {% for d in nuts_devices %}
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px; opacity:0.45;">
+              <input type="text" value="{{ d.name }}" placeholder="Name"
+                     style="width:140px; padding:7px 9px; border-radius:7px; border:1px solid var(--border);
+                            background:var(--bg); color:var(--text); font-size:0.85rem; font-family:inherit;">
+              <input type="text" value="{{ d.url }}" placeholder="http://192.168.1.x/ups"
+                     style="flex:1; padding:7px 9px; border-radius:7px; border:1px solid var(--border);
+                            background:var(--bg); color:var(--text); font-size:0.85rem; font-family:inherit;">
+            </div>
+            {% endfor %}
+            {% else %}
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px; opacity:0.45;">
+              <input type="text" placeholder="Name (e.g. Server Room)"
+                     style="width:140px; padding:7px 9px; border-radius:7px; border:1px solid var(--border);
+                            background:var(--bg); color:var(--text); font-size:0.85rem; font-family:inherit;">
+              <input type="text" placeholder="http://192.168.1.x/ups"
+                     style="flex:1; padding:7px 9px; border-radius:7px; border:1px solid var(--border);
+                            background:var(--bg); color:var(--text); font-size:0.85rem; font-family:inherit;">
+            </div>
+            {% endif %}
+          </div>
+          <p style="font-size:0.73rem; color:var(--stone-400);">
+            No cloud required — all polling is local. Devices must be reachable on the same network as this machine.
+          </p>
+        </div>
+      </div><!-- /panel-nuts -->
+
+    </div><!-- /content -->
+  </div><!-- /settings-wrap -->
 </div>
+
 <script>
+function showPanel(id, btn) {
+  document.querySelectorAll('.sys-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.sys-link').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  if (btn) btn.classList.add('active');
+  history.replaceState(null,'','#'+id);
+}
+// Restore panel from URL hash on load
+(function() {
+  const hash = location.hash.slice(1);
+  if (hash) {
+    const panel = document.getElementById('panel-' + hash);
+    const btn = document.querySelector('.sys-link[onclick*=\\''+hash+'\\']');
+    if (panel) showPanel(hash, btn);
+  }
+})();
+
 function saveCreds() {
   const email = document.getElementById('credEmail').value.trim();
   const pwd   = document.getElementById('credPwd').value;
@@ -2679,7 +2977,7 @@ function saveDeviceLabels() {
   fetch('/api/settings/device-labels', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(labels)
-  }).then(r=>r.json()).then(d => {
+  }).then(r=>r.json()).then(() => {
     const m = document.getElementById('lblMsg');
     m.style.display='inline'; setTimeout(()=>m.style.display='none', 2500);
   });
@@ -2690,24 +2988,10 @@ function savePanelDisplay() {
   fetch('/api/settings/panel-display', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({invert_left: invertLeft, invert_right: invertRight})
-  }).then(r=>r.json()).then(d => {
+  }).then(r=>r.json()).then(() => {
     const m = document.getElementById('pdMsg');
     m.style.display='inline'; setTimeout(()=>m.style.display='none', 4000);
   });
-}
-function saveAqaraCreds() {
-  // Placeholder: will POST to /api/settings/aqara when developer signup is available
-  const msg = document.getElementById('aqaraMsg');
-  msg.textContent = 'Aqara integration not yet active — developer signup opens soon.';
-  msg.style.color = 'var(--stone-500)';
-  msg.style.display = 'inline';
-}
-function authorizeAqara() {
-  // Placeholder: will open OAuth flow at developer.aqara.com when available
-  const msg = document.getElementById('aqaraMsg');
-  msg.textContent = 'OAuth flow coming soon.';
-  msg.style.color = 'var(--stone-500)';
-  msg.style.display = 'inline';
 }
 </script>
 """
@@ -2876,8 +3160,10 @@ def settings_page():
     except Exception:
         pass
     has_tokens = _os.path.exists("keys.json")
-    aq = cfg.get("aqara", {})
+    aq   = cfg.get("aqara", {})
     pinv = cfg.get("panel_display", {})
+    kasa = cfg.get("kasa", {})
+    nuts = cfg.get("nuts", {})
     return _render(SETTINGS_HTML, active_page="settings",
                    saved_email=cfg.get("emporia_email", ""),
                    has_tokens=has_tokens,
@@ -2888,6 +3174,8 @@ def settings_page():
                    aqara_key_id=aq.get("key_id", ""),
                    panel_invert_left=pinv.get("invert_left", False),
                    panel_invert_right=pinv.get("invert_right", False),
+                   kasa_host=kasa.get("host", ""),
+                   nuts_devices=nuts.get("devices", []),
                    **com)
 
 
