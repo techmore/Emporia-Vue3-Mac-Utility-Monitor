@@ -2436,7 +2436,6 @@ def settings_page():
                    known_devices=energy.get_known_devices(),
                    aqara_app_id=aq.get("app_id", ""),
                    aqara_key_id=aq.get("key_id", ""),
-                   device_labels=cfg.get("device_labels", {}),
                    **com)
 
 
