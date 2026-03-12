@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.7.2"
+VERSION = "1.7.3"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -890,7 +890,7 @@ DASH_HTML = """
             <div class="mc-w" style="font-size:2.2rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:0.9rem;color:var(--olive-300)">W</span>
               <span style="font-size:0.8rem; color:var(--olive-300); margin-left:10px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1)) }}/kWh</span>
             </div>
-            <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
+            <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
           </div>
           <div class="panel-mains" style="margin-bottom:10px;">
           {% elif loop.last %}
@@ -1417,21 +1417,21 @@ CIRCUITS_HTML = """
       <div class="mc-w" style="font-size:2.5rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-300)">W</span>
         <span style="font-size:0.9rem; color:var(--olive-300); margin-left:12px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1)) }}/kWh</span>
       </div>
-      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
+      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
     </div>
     <div class="panel-mains" style="margin-bottom:10px;">
     {% elif loop.last %}
       <div class="mains-card">
         <div class="mc-leg">{{ m.label }}</div>
         <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
       </div>
     </div>
     {% else %}
       <div class="mains-card">
         <div class="mc-leg">{{ m.label }}</div>
         <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh today &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
       </div>
     {% endif %}
     {% endfor %}
@@ -2084,8 +2084,19 @@ def index():
     main_now = next((r for r in ctx["latest"] if r["channel_name"] == "Main"), None)
     current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
 
+    # Freshness: is the latest reading less than 5 minutes old?
+    def _reading_fresh(r: dict, max_age_secs: int = 300) -> bool:
+        if not r or not r.get("timestamp"):
+            return False
+        try:
+            age = (datetime.now() - datetime.fromisoformat(r["timestamp"][:19])).total_seconds()
+            return age < max_age_secs
+        except Exception:
+            return False
+
     # Circuit bars — exclude Main/Balance, annotate with live watts
     latest_map = {r["channel_name"]: r["usage_kwh"] for r in ctx["latest"]}
+    latest_ts_map = {r["channel_name"]: r.get("timestamp") for r in ctx["latest"]}
     top_circuits = []
     for c in ctx["circuits"]:
         name = c["channel_name"]
@@ -2097,14 +2108,17 @@ def index():
     top_circuits.sort(key=lambda x: x["watts"], reverse=True)
     top_circuits = top_circuits[:12]
 
-    # 24h summary (Main channel only)
+    # 24h circuit breakdown (meta channels already excluded by get_summary)
     summary_24 = energy.get_summary(24)
-    total_24h  = next((r for r in summary_24 if r["channel_name"] == "Main"),
-                      {"total_kwh": sum(r["total_kwh"] for r in summary_24),
-                       "total_cents": sum(r["total_cents"] for r in summary_24)})
-    circuits_24 = [r for r in summary_24 if r["channel_name"] not in _MAINS_NAMES
-                   and r["channel_name"] != "Balance" and not str(r["channel_name"]).isdigit()]
-    total_kwh_24 = total_24h["total_kwh"] or 1
+    # Authoritative 24h total from Main channel on real device (no double-counting)
+    main_24h   = energy.get_main_total(24)
+    total_24h  = main_24h or {"total_kwh": sum(r["total_kwh"] for r in summary_24),
+                               "total_cents": sum(r["total_cents"] for r in summary_24)}
+    circuits_24 = [r for r in summary_24
+                   if r["channel_name"] not in _MAINS_NAMES
+                   and r["channel_name"] not in _SKIP_NAMES
+                   and not str(r["channel_name"]).isdigit()]
+    total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
     for r in circuits_24:
         r["pct"] = r["total_kwh"] / total_kwh_24 * 100
     biggest_circuit = max(circuits_24, key=lambda r: r["total_kwh"]) if circuits_24 else None
@@ -2119,16 +2133,14 @@ def index():
     # Mains: Total first (from live Main channel), then Leg A / Leg B
     leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
     dash_mains = []
-    # Total row — prefer live Main channel for watts, sum legs for kWh
-    leg_kwh   = sum(sum_24h_map[n]["total_kwh"]   for n in ("Mains_A","Mains_B") if n in sum_24h_map)
-    leg_cents = sum(sum_24h_map[n]["total_cents"]  for n in ("Mains_A","Mains_B") if n in sum_24h_map)
+    # Total row — authoritative Main channel (no double-counting)
     total_watts = _watts_estimate(latest_map.get("Main", 0)) or (
         sum(_watts_estimate(latest_map.get(n, 0)) for n in ("Mains_A","Mains_B")))
     dash_mains.append({
         "label": "Total", "is_total": True,
         "watts": total_watts,
-        "kwh_24h": leg_kwh or sum_24h_map.get("Main", {}).get("total_kwh", 0),
-        "cost_24h": (leg_cents or sum_24h_map.get("Main", {}).get("total_cents", 0)) / 100,
+        "kwh_24h": (main_24h or {}).get("total_kwh", 0),
+        "cost_24h": (main_24h or {}).get("total_cents", 0) / 100,
     })
     for name in ("Mains_A", "Mains_B", "Mains_C"):
         if name not in sum_24h_map:
@@ -2242,9 +2254,12 @@ def index():
     cost_per_hour = current_watts / 1000 * RATE
 
     # Leg A / Leg B balance for panel sidebar
+    # Only show if the Mains_A/B readings are fresh (< 5 min old)
+    _mains_a_row = next((r for r in ctx["latest"] if r["channel_name"] == "Mains_A"), None)
+    _legs_fresh = _reading_fresh(_mains_a_row)
     _legs = [m for m in dash_mains if not m.get("is_total")]
-    leg_a = _legs[0] if len(_legs) > 0 else None
-    leg_b = _legs[1] if len(_legs) > 1 else None
+    leg_a = _legs[0] if len(_legs) > 0 and _legs_fresh else None
+    leg_b = _legs[1] if len(_legs) > 1 and _legs_fresh else None
     total_leg_w = (leg_a["watts"] if leg_a else 0) + (leg_b["watts"] if leg_b else 0)
 
     # 7-day trend label
@@ -2309,15 +2324,15 @@ def circuits_page():
 
     # ── Mains cards — Total first, then Leg A / Leg B ─────────────────────
     leg_labels  = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
-    leg_kwh     = sum(sum_24h[n]["total_kwh"]   for n in ("Mains_A","Mains_B") if n in sum_24h)
-    leg_cents   = sum(sum_24h[n]["total_cents"]  for n in ("Mains_A","Mains_B") if n in sum_24h)
     total_watts = _watts_estimate(latest_map.get("Main", 0)) or \
                   sum(_watts_estimate(latest_map.get(n, 0)) for n in ("Mains_A","Mains_B"))
+    # Use authoritative Main-channel 24h total (no double-counting)
+    _main_24h_c = energy.get_main_total(24)
     mains = [{
         "label": "Total", "is_total": True,
         "watts": total_watts,
-        "kwh_24h":  leg_kwh  or sum_24h.get("Main", {}).get("total_kwh", 0),
-        "cost_24h": (leg_cents or sum_24h.get("Main", {}).get("total_cents", 0)) / 100,
+        "kwh_24h":  (_main_24h_c or {}).get("total_kwh", 0),
+        "cost_24h": (_main_24h_c or {}).get("total_cents", 0) / 100,
     }]
     for name in ("Mains_A", "Mains_B", "Mains_C"):
         if name not in sum_24h:
@@ -3622,7 +3637,7 @@ def api_import_csv():
         f.save(tmp.name)
         tmp_path = tmp.name
     try:
-        result = energy.import_emporia_csv(tmp_path)
+        result = energy.import_emporia_csv(tmp_path, original_filename=f.filename)
     except Exception as exc:
         result = {"imported": 0, "skipped": 0, "errors": 1, "message": str(exc)}
     finally:
@@ -3636,4 +3651,8 @@ if __name__ == "__main__":
     n = energy.migrate_channel_names()
     if n:
         print(f"[startup] migrated {n} channel name(s)")
+    # One-time migration: fix kWatts CSV rows stored without unit conversion
+    csv_fix = energy.fix_csv_kwatts_import()
+    if csv_fix["fixed"]:
+        print(f"[startup] fixed {csv_fix['fixed']:,} CSV kWatts rows (÷60 unit correction)")
     app.run(debug=False, host="0.0.0.0", port=5001)

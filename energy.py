@@ -53,6 +53,22 @@ def _read_rate_cents() -> float:
 
 RATE_CENTS = _read_rate_cents()
 
+# Channels that represent whole-panel totals — exclude from circuit summaries
+# to avoid double-counting individual circuit readings.
+META_CHANNELS = frozenset({"Main", "Mains_A", "Mains_B", "Mains_C", "Balance"})
+
+# Device GID that always reports 0 W (secondary/phantom device) — exclude from queries
+_GHOST_DEVICE = "81134"
+
+# kWatts CSV: interval label → minutes per bucket
+_KWATTS_INTERVAL_MINUTES: dict[str, float] = {
+    "1SEC": 1 / 60,
+    "1MIN": 1.0,
+    "15MIN": 15.0,
+    "1H": 60.0,
+    "1DAY": 1440.0,
+}
+
 
 def _connect() -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with row_factory set."""
@@ -384,22 +400,50 @@ def run_continuous():
         time.sleep(POLL_INTERVAL)
 
 
+def get_main_total(hours: int = 24) -> dict | None:
+    """
+    Return the Main channel total kWh and cost_cents for the last `hours` hours
+    from the primary real device (551741).  Used for authoritative whole-house
+    totals without double-counting individual circuits.
+    """
+    conn = _connect()
+    c = conn.cursor()
+    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    c.execute(
+        """SELECT SUM(usage_kwh) as total_kwh, SUM(cost_cents) as total_cents,
+                  COUNT(*) as readings
+           FROM readings
+           WHERE channel_name = 'Main'
+             AND device_gid != ?
+             AND timestamp >= ?""",
+        (_GHOST_DEVICE, since),
+    )
+    row = c.fetchone()
+    conn.close()
+    if row and row["total_kwh"] is not None:
+        return {"total_kwh": row["total_kwh"], "total_cents": row["total_cents"],
+                "readings": row["readings"], "channel_name": "Main"}
+    return None
+
+
 def get_summary(hours=24):
     conn = _connect()
     c = conn.cursor()
 
     since = (datetime.now() - timedelta(hours=hours)).isoformat()
 
+    # Exclude the ghost device (device 81134 always reports 0 W, pollutes sums)
     c.execute(
-        """SELECT channel_name, 
-        SUM(usage_kwh) as total_kwh, 
+        """SELECT channel_name,
+        SUM(usage_kwh) as total_kwh,
         SUM(cost_cents) as total_cents,
         COUNT(*) as readings
-        FROM readings 
-        WHERE timestamp >= ? 
+        FROM readings
+        WHERE timestamp >= ?
+          AND device_gid != ?
         GROUP BY channel_name
         ORDER BY total_kwh DESC""",
-        (since,),
+        (since, _GHOST_DEVICE),
     )
 
     results = c.fetchall()
@@ -468,7 +512,7 @@ def get_latest():
 
 
 def get_month_comparison():
-    """Compare current month to previous month."""
+    """Compare current month to previous month using Main channel only (avoids double-counting)."""
     conn = _connect()
     c = conn.cursor()
 
@@ -485,8 +529,10 @@ def get_month_comparison():
         SUM(cost_cents) as total_cents
         FROM readings
         WHERE timestamp >= ?
+          AND channel_name = 'Main'
+          AND device_gid != ?
         GROUP BY month""",
-        (last_month_start.isoformat(),),
+        (last_month_start.isoformat(), _GHOST_DEVICE),
     )
 
     results = c.fetchall()
@@ -646,6 +692,7 @@ def get_circuit_data(channel_name, period="day"):
 
 
 def get_monthly_projection():
+    """Most recent month's total using Main channel only (avoids double-counting)."""
     conn = _connect()
     c = conn.cursor()
 
@@ -654,9 +701,11 @@ def get_monthly_projection():
         SUM(usage_kwh) as total_kwh,
         SUM(cost_cents) as total_cents
         FROM readings
+        WHERE channel_name = 'Main'
+          AND device_gid != ?
         GROUP BY month
         ORDER BY month DESC
-        LIMIT 1""")
+        LIMIT 1""", (_GHOST_DEVICE,))
 
     result = c.fetchone()
     conn.close()
@@ -820,28 +869,47 @@ def _clean_csv_channel_name(col: str) -> str:
     return name
 
 
-def import_emporia_csv(filepath: str, device_gid: str | None = None) -> dict:
+def import_emporia_csv(
+    filepath: str,
+    device_gid: str | None = None,
+    original_filename: str | None = None,
+) -> dict:
     """
     Import an Emporia energy export CSV into the readings table.
 
     Expected format:
       Column 0: "Time Bucket (America/New_York)"  → "MM/DD/YYYY HH:MM:SS"
-      Columns 1+: "{Device}-{ChannelDesc} (kWhs)" → float or "No CT"
+      Columns 1+: "{Device}-{ChannelDesc} (kWatts)" or "(kWhs)" → float or "No CT"
 
-    Returns {"imported": N, "skipped": N, "errors": N}.
+    Unit handling:
+      - Columns suffixed "(kWatts)" store average power in kW per bucket.
+        These are converted to kWh using the interval duration (parsed from filename).
+        e.g. 1MIN: kWh = kW × (1/60);  15MIN: kWh = kW × (15/60)
+      - Columns suffixed "(kWhs)" are already in kWh — stored as-is.
+
+    Returns {"imported": N, "skipped": N, "errors": N, "unit": "kWatts"|"kWhs"}.
     """
     import csv as csv_mod
     from pathlib import Path
 
     filepath = Path(filepath)
+    # Use original filename (from upload) for device_gid + interval, not temp path
+    name_stem = Path(original_filename).stem if original_filename else filepath.stem
+
     if device_gid is None:
-        # "8C9E94-Barn-1H.csv" → "8C9E94"
-        stem = filepath.stem
-        device_gid = stem.split("-")[0] if stem else "IMPORT"
+        # "8C9E94-Barn-1MIN.csv" → "8C9E94"
+        parts = name_stem.split("-")
+        device_gid = parts[0] if parts else "IMPORT"
+
+    # Detect time-bucket interval from filename (last segment after last "-")
+    # e.g. "8C9E94-Barn-1MIN" → "1MIN"
+    interval_str = name_stem.split("-")[-1].upper()
+    interval_minutes = _KWATTS_INTERVAL_MINUTES.get(interval_str)  # None if unrecognised
 
     conn = _connect()
     c = conn.cursor()
     imported = skipped = errors = 0
+    detected_unit: str | None = None
 
     with open(filepath, newline="", encoding="utf-8-sig") as f:
         reader = csv_mod.DictReader(f)
@@ -853,14 +921,22 @@ def import_emporia_csv(filepath: str, device_gid: str | None = None) -> dict:
 
         ts_col = headers[0]
 
-        # Build [(original_col_header, channel_name), …]
+        # Determine unit from first data column header suffix
+        # Build [(col_header, channel_name, is_kwatts), …]
         channel_cols = []
         for col in headers[1:]:
-            channel_cols.append((col, _clean_csv_channel_name(col)))
+            is_kwatts = "(kWatts)" in col or "(kW)" in col
+            if detected_unit is None:
+                detected_unit = "kWatts" if is_kwatts else "kWhs"
+            channel_cols.append((col, _clean_csv_channel_name(col), is_kwatts))
 
+        # Conversion factor for kWatts columns: kWh = kW × (interval_minutes / 60)
+        # Fall back to assuming 1MIN if interval not parseable from filename
+        if interval_minutes is None:
+            interval_minutes = 1.0  # safe default; warn via returned dict
+        kwatts_to_kwh = interval_minutes / 60.0
 
-        # Pre-fetch existing (timestamp, device_gid, channel_name) combos
-        # scoped to this device so dedup is fast without per-row queries.
+        # Pre-fetch existing (timestamp, channel_name) combos scoped to this device
         c.execute(
             "SELECT timestamp, channel_name FROM readings WHERE device_gid = ?",
             (device_gid,),
@@ -880,13 +956,13 @@ def import_emporia_csv(filepath: str, device_gid: str | None = None) -> dict:
                 errors += 1
                 continue
 
-            for col, channel_name in channel_cols:
+            for col, channel_name, is_kwatts in channel_cols:
                 val = row.get(col, "").strip()
                 if not val or val.lower() == "no ct":
                     skipped += 1
                     continue
                 try:
-                    usage_kwh = float(val)
+                    raw_value = float(val)
                 except ValueError:
                     errors += 1
                     continue
@@ -895,6 +971,8 @@ def import_emporia_csv(filepath: str, device_gid: str | None = None) -> dict:
                     skipped += 1
                     continue
 
+                # Apply unit conversion
+                usage_kwh = raw_value * kwatts_to_kwh if is_kwatts else raw_value
                 cost_cents = usage_kwh * RATE_CENTS
                 rows_to_insert.append(
                     (ts_iso, device_gid, None, channel_name, usage_kwh, cost_cents)
@@ -912,7 +990,49 @@ def import_emporia_csv(filepath: str, device_gid: str | None = None) -> dict:
 
     conn.commit()
     conn.close()
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "unit": detected_unit or "unknown",
+        "interval": interval_str,
+        "conversion_factor": kwatts_to_kwh if detected_unit == "kWatts" else 1.0,
+    }
+
+
+def fix_csv_kwatts_import() -> dict:
+    """
+    One-time migration: CSV rows imported before unit-detection was added stored
+    kWatts values directly as usage_kwh (kWh).  For 1-minute buckets this inflates
+    every reading by 60×.
+
+    Heuristic: rows whose timestamp has NO fractional-second component came from
+    CSV imports (live poller always writes microseconds).  We divide those rows'
+    usage_kwh and cost_cents by 60 (assumes 1MIN source files, which is what
+    Emporia exports by default and what was historically imported here).
+
+    Safe to re-run — already-corrected rows are not touched because after
+    correction their values will be small and a second ÷60 would make them tiny,
+    but we guard against double-application by only touching rows in the ghost
+    import device bucket (device_gid != '551741' and not LIKE '%.%' timestamp).
+
+    Returns {"fixed": N} count of rows updated.
+    """
+    conn = _connect()
+    c = conn.cursor()
+    # Rows from CSV import: exact-second timestamps (no '.' in timestamp string)
+    # Exclude the real live device (551741) which should never have exact timestamps
+    c.execute(
+        """UPDATE readings
+           SET usage_kwh  = usage_kwh  / 60.0,
+               cost_cents = cost_cents / 60.0
+           WHERE timestamp NOT LIKE '%.%'
+             AND device_gid != '551741'""",
+    )
+    fixed = c.rowcount
+    conn.commit()
+    conn.close()
+    return {"fixed": fixed}
 
 
 def get_log_entries(n: int = 200) -> list[dict]:
