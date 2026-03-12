@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -570,9 +570,9 @@ NAV_HTML = """
     </div>
     <div style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
       <span style="font-size:0.65rem; color:var(--stone-400); font-variant-numeric:tabular-nums;">v{{ version }}</span>
-      <a href="/log" style="display:flex; align-items:center; gap:6px; text-decoration:none; color:inherit;">
-        <span class="status-dot {{ status_cls }}"></span>
-        {{ status_label }}
+      <a href="/log" id="nav-status-link" style="display:flex; align-items:center; gap:6px; text-decoration:none; color:inherit;">
+        <span class="status-dot {{ status_cls }}" id="nav-status-dot"></span>
+        <span id="nav-status-label">{{ status_label }}</span>
       </a>
       <a href="https://github.com/techmore/Emporia-Vue3-Mac-Utility-Monitor" target="_blank" rel="noopener"
          title="View on GitHub"
@@ -593,6 +593,36 @@ NAV_HTML = """
     </div>
   </div>
 </nav>
+<script>
+(function() {
+  function fmtNavStatus(s) {
+    const age = s.age_secs;
+    if (s.ok && s.poller_running) {
+      if (age < 90)  return { cls: 'live',  label: 'Live · ' + age + 's ago' };
+      if (age < 180) return { cls: 'live',  label: 'Live · ' + Math.round(age/60) + 'm ago' };
+    }
+    if (s.timestamp) {
+      const h = age / 3600;
+      if (h < 1)  return { cls: 'stale', label: 'Stale · ' + Math.round(age/60) + 'm ago' };
+      if (h < 6)  return { cls: 'stale', label: 'Stale · ' + h.toFixed(1) + 'h ago' };
+      return { cls: 'dead', label: 'Offline · ' + Math.round(h) + 'h ago' };
+    }
+    return { cls: 'dead', label: 'Offline' };
+  }
+  function refreshNavStatus() {
+    fetch('/api/poller-status').then(r => r.json()).then(s => {
+      const dot   = document.getElementById('nav-status-dot');
+      const label = document.getElementById('nav-status-label');
+      if (!dot || !label) return;
+      const st = fmtNavStatus(s);
+      dot.className = 'status-dot ' + st.cls;
+      label.textContent = st.label;
+    }).catch(() => {});
+  }
+  refreshNavStatus();
+  setInterval(refreshNavStatus, 30000);
+})();
+</script>
 """
 
 
