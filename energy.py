@@ -62,9 +62,16 @@ def ensure_table():
             channel_name TEXT,               -- matches readings.channel_name (nullable = empty slot)
             label       TEXT,               -- display label override (defaults to channel_name)
             note        TEXT,               -- freeform note, e.g. "Bedroom outlets, 20A"
-            amps        INTEGER             -- breaker size in amps
+            amps        INTEGER,            -- breaker size in amps
+            poles       INTEGER DEFAULT 1   -- 1 = single-pole (120V), 2 = double-pole (240V)
         );
     """)
+    # Migrate: add poles column if it doesn't exist yet (existing DBs)
+    try:
+        conn.execute("ALTER TABLE circuit_labels ADD COLUMN poles INTEGER DEFAULT 1")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -73,24 +80,25 @@ def get_panel_layout() -> list[dict]:
     """Return all circuit_labels rows ordered by slot."""
     conn = _connect()
     rows = conn.execute(
-        "SELECT slot, channel_name, label, note, amps FROM circuit_labels ORDER BY slot"
+        "SELECT slot, channel_name, label, note, amps, poles FROM circuit_labels ORDER BY slot"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def save_panel_slot(slot: int, channel_name: str | None, label: str | None,
-                    note: str | None, amps: int | None):
+                    note: str | None, amps: int | None, poles: int | None = 1):
     conn = _connect()
     conn.execute("""
-        INSERT INTO circuit_labels(slot, channel_name, label, note, amps)
-        VALUES(?,?,?,?,?)
+        INSERT INTO circuit_labels(slot, channel_name, label, note, amps, poles)
+        VALUES(?,?,?,?,?,?)
         ON CONFLICT(slot) DO UPDATE SET
             channel_name=excluded.channel_name,
             label=excluded.label,
             note=excluded.note,
-            amps=excluded.amps
-    """, (slot, channel_name or None, label or None, note or None, amps or None))
+            amps=excluded.amps,
+            poles=excluded.poles
+    """, (slot, channel_name or None, label or None, note or None, amps or None, poles or 1))
     conn.commit()
     conn.close()
 

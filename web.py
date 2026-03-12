@@ -11,7 +11,7 @@ import energy
 
 app = Flask(__name__)
 
-VERSION = "1.6.6"
+VERSION = "1.6.7"
 
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
 RATE = energy.RATE_CENTS / 100
@@ -368,26 +368,65 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .breaker { position: relative; }
 .breaker-amps { font-size: 0.6rem; color: var(--olive-500); margin-top: 1px; }
 
+/* ── Breaker safety zones ── */
+.breaker-load-row {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 0.6rem; margin-top: 3px; line-height: 1;
+}
+.breaker-load-bar-wrap {
+  flex: 1; height: 3px; background: var(--olive-900); border-radius: 2px; overflow: hidden; position: relative;
+}
+.breaker-load-bar-fill {
+  height: 100%; border-radius: 2px; transition: width 0.4s ease;
+}
+/* 80% NEC tick mark */
+.breaker-load-bar-wrap::after {
+  content: ''; position: absolute; top: 0; left: 80%; width: 1px; height: 100%;
+  background: rgba(255,255,255,0.35);
+}
+.breaker-load-text { font-size: 0.58rem; white-space: nowrap; min-width: 28px; text-align: right; }
+
+/* safety zone colours */
+.load-normal   { color: #4ade80; }
+.load-moderate { color: #facc15; }
+.load-caution  { color: #f97316; }
+.load-danger   { color: #ef4444; }
+.fill-normal   { background: #4ade80; }
+.fill-moderate { background: #facc15; }
+.fill-caution  { background: #f97316; }
+.fill-danger   { background: #ef4444; }
+
+/* breaker border glow by safety */
+.breaker.sz-moderate { border-color: rgba(250,204,21,0.45); }
+.breaker.sz-caution  { border-color: rgba(249,115,22,0.6); box-shadow: 0 0 0 1px rgba(249,115,22,0.3); }
+.breaker.sz-danger   { border-color: rgba(239,68,68,0.7);  box-shadow: 0 0 0 1px rgba(239,68,68,0.4); }
+
+/* peak-user badge */
+.breaker-peak-badge {
+  position: absolute; top: 3px; right: 3px;
+  font-size: 0.55rem; background: rgba(250,204,21,0.18);
+  border: 1px solid rgba(250,204,21,0.45); border-radius: 3px;
+  padding: 1px 3px; color: #facc15; line-height: 1.2;
+}
+
 /* ── Panel edit page ── */
 .panel-edit-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-  margin-top: 1rem;
+  margin-top: 0.5rem;
 }
 .slot-row {
-  display: flex; gap: 8px; align-items: center;
+  display: grid; grid-template-columns: 28px 1fr 110px 1fr 52px 56px; gap: 5px; align-items: center;
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 12px;
+  border-radius: 8px; padding: 6px 10px;
 }
-.slot-num { width: 2rem; font-size: 0.75rem; color: var(--text-light); flex-shrink: 0; font-weight: 600; }
+.slot-num { font-size: 0.75rem; color: var(--text-light); flex-shrink: 0; font-weight: 600; }
 .slot-row input, .slot-row select {
   font-size: 0.8rem; padding: 4px 6px; border-radius: 5px;
   border: 1px solid var(--border); background: var(--bg);
-  color: var(--text); font-family: inherit;
+  color: var(--text); font-family: inherit; width: 100%;
 }
-.slot-row input.inp-label { width: 110px; }
-.slot-row select { flex: 1; }
-.slot-row input.inp-amps { width: 44px; }
-.slot-row input.inp-note { flex: 1; }
+.slot-row input.inp-amps { text-align: center; }
+.slot-row select.sel-poles { text-align: center; }
 
 /* ── Usage spreadsheet ── */
 .usage-pct-bar {
@@ -760,10 +799,22 @@ DASH_HTML = """
           {%- macro render_breaker(b) %}
             {% if b.channel_name %}
             <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
+              {% if b.is_peak %}<div class="breaker-peak-badge">⚡ top</div>{% endif %}
               <div class="breaker-num">{{ b.slot }}</div>
               <div class="breaker-body">
                 <div class="breaker-name">{{ b.label }}</div>
-                <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W</div>
+                <div class="breaker-watts">
+                  {{ "%.0f"|format(b.watts) }} W
+                  {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
+                </div>
+                {% if b.load_label %}
+                <div class="breaker-load-row">
+                  <div class="breaker-load-bar-wrap">
+                    <div class="breaker-load-bar-fill {{ b.fill_cls }}" style="width:{{ b.load_bar_w }}%"></div>
+                  </div>
+                  <span class="breaker-load-text {{ b.load_cls }}">{{ b.load_label }}</span>
+                </div>
+                {% endif %}
               </div>
               <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
               {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
@@ -1281,10 +1332,22 @@ CIRCUITS_HTML = """
     {%- macro render_breaker_c(b) %}
       {% if b.channel_name %}
       <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
+        {% if b.is_peak %}<div class="breaker-peak-badge">⚡ top</div>{% endif %}
         <div class="breaker-num">{{ b.slot }}</div>
         <div class="breaker-body">
           <div class="breaker-name">{{ b.label }}</div>
-          <div class="breaker-watts">{{ "%.0f"|format(b.watts) }} W{% if b.amps %} &bull; {{ b.amps }}A{% endif %}</div>
+          <div class="breaker-watts">
+            {{ "%.0f"|format(b.watts) }} W
+            {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
+          </div>
+          {% if b.load_label %}
+          <div class="breaker-load-row">
+            <div class="breaker-load-bar-wrap">
+              <div class="breaker-load-bar-fill {{ b.fill_cls }}" style="width:{{ b.load_bar_w }}%"></div>
+            </div>
+            <span class="breaker-load-text {{ b.load_cls }}">{{ b.load_label }}</span>
+          </div>
+          {% endif %}
         </div>
         <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
         {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
@@ -1817,20 +1880,48 @@ def index():
     if not layout:
         for i, name in enumerate(ordered):
             layout[i + 1] = {"slot": i+1, "channel_name": name,
-                             "label": None, "note": None, "amps": None}
+                             "label": None, "note": None, "amps": None, "poles": 1}
     max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in ordered), default=1) or 1
+    # Identify top-load circuits for the "peak user" badge
+    _live_watts = {n: _watts_estimate(latest_map.get(n, 0)) for n in ordered}
+    _sorted_watts = sorted(_live_watts.values(), reverse=True)
+    _peak_threshold = _sorted_watts[2] if len(_sorted_watts) >= 3 else (_sorted_watts[0] if _sorted_watts else 0)
     dash_breakers = []
     for slot in range(1, max(len(ordered) + 1, max(layout.keys(), default=0) + 1)):
         row   = layout.get(slot, {})
         name  = row.get("channel_name")
+        rated_amps = row.get("amps")
+        poles = row.get("poles") or 1
+        voltage = 240 if poles == 2 else 120
         watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
         bar   = min(100, watts / max_w * 100)
-        cls   = "active-heat" if bar > 75 else "active-high" if bar > 40 else ""
+        # Safety zone vs rated breaker amps
+        if rated_amps and rated_amps > 0 and watts > 0:
+            amps_now  = watts / voltage
+            load_pct  = amps_now / rated_amps * 100
+            if load_pct >= 100:
+                sz_cls = "sz-danger";   load_cls = "load-danger";   fill_cls = "fill-danger"
+            elif load_pct >= 80:
+                sz_cls = "sz-caution";  load_cls = "load-caution";  fill_cls = "fill-caution"
+            elif load_pct >= 60:
+                sz_cls = "sz-moderate"; load_cls = "load-moderate"; fill_cls = "fill-moderate"
+            else:
+                sz_cls = "";            load_cls = "load-normal";   fill_cls = "fill-normal"
+            load_bar_w = min(100, load_pct)  # % width of load bar
+            load_label = f"{amps_now:.1f}/{rated_amps}A"
+        else:
+            sz_cls = ""; load_cls = ""; fill_cls = "fill-normal"
+            load_bar_w = 0; load_label = ""
+        is_peak = bool(name and watts >= _peak_threshold and watts > 0)
+        cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         dash_breakers.append({
             "slot": slot, "channel_name": name,
             "label": row.get("label") or name or "—",
-            "note": row.get("note"), "amps": row.get("amps"),
-            "watts": watts, "bar_pct": bar, "cls": cls,
+            "note": row.get("note"), "amps": rated_amps, "poles": poles,
+            "watts": watts, "bar_pct": bar, "cls": cls.strip(),
+            "load_cls": load_cls, "fill_cls": fill_cls,
+            "load_bar_w": load_bar_w, "load_label": load_label,
+            "is_peak": is_peak,
         })
 
     # Panel column invert — read from settings.json
@@ -1986,26 +2077,55 @@ def circuits_page():
     if not layout:
         for i, name in enumerate(all_circuits):
             layout[i + 1] = {"slot": i + 1, "channel_name": name,
-                              "label": None, "note": None, "amps": None}
+                              "label": None, "note": None, "amps": None, "poles": 1}
 
     max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in all_circuits), default=1) or 1
+    _live_w_c = {n: _watts_estimate(latest_map.get(n, 0)) for n in all_circuits}
+    _sorted_w_c = sorted(_live_w_c.values(), reverse=True)
+    _peak_thr_c = _sorted_w_c[2] if len(_sorted_w_c) >= 3 else (_sorted_w_c[0] if _sorted_w_c else 0)
 
     breakers = []
     for slot in range(1, panel_slots + 1):
         row = layout.get(slot, {})
         name  = row.get("channel_name")
+        rated_amps = row.get("amps")
+        poles = row.get("poles") or 1
+        voltage = 240 if poles == 2 else 120
         watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
         bar   = min(100, watts / max_w * 100)
-        cls   = "active-heat" if bar > 75 else "active-high" if bar > 40 else ""
+        if rated_amps and rated_amps > 0 and watts > 0:
+            amps_now  = watts / voltage
+            load_pct  = amps_now / rated_amps * 100
+            if load_pct >= 100:
+                sz_cls = "sz-danger";   load_cls = "load-danger";   fill_cls = "fill-danger"
+            elif load_pct >= 80:
+                sz_cls = "sz-caution";  load_cls = "load-caution";  fill_cls = "fill-caution"
+            elif load_pct >= 60:
+                sz_cls = "sz-moderate"; load_cls = "load-moderate"; fill_cls = "fill-moderate"
+            else:
+                sz_cls = "";            load_cls = "load-normal";   fill_cls = "fill-normal"
+            load_bar_w = min(100, load_pct)
+            load_label = f"{amps_now:.1f}/{rated_amps}A"
+        else:
+            sz_cls = ""; load_cls = ""; fill_cls = "fill-normal"
+            load_bar_w = 0; load_label = ""
+        is_peak = bool(name and watts >= _peak_thr_c and watts > 0)
+        cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         breakers.append({
             "slot":         slot,
             "channel_name": name,
             "label":        row.get("label") or name or "—",
             "note":         row.get("note"),
-            "amps":         row.get("amps"),
+            "amps":         rated_amps,
+            "poles":        poles,
             "watts":        watts,
             "bar_pct":      bar,
-            "cls":          cls,
+            "cls":          cls.strip(),
+            "load_cls":     load_cls,
+            "fill_cls":     fill_cls,
+            "load_bar_w":   load_bar_w,
+            "load_label":   load_label,
+            "is_peak":      is_peak,
         })
 
     # ── Usage table rows ──────────────────────────────────────────────────
@@ -2224,11 +2344,12 @@ PANEL_EDIT_HTML = """
 <div class="page">
   <div class="section-head" style="margin-top:1.5rem;">
     <h2>Panel Layout Editor</h2>
-    <span class="section-sub">Assign circuits to physical breaker slots, add labels &amp; notes</span>
+    <span class="section-sub">Assign circuits, breaker size &amp; pole type — drives live safety indicators</span>
   </div>
   <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
-    Slot numbers mirror the physical breaker positions (1 = top-left, 2 = top-right, alternating down).
-    Leave <em>Circuit</em> blank for a spare/empty slot.
+    Slot numbers mirror physical positions (1 = top-left, 2 = top-right, alternating down).
+    <strong>Amps</strong> + <strong>poles</strong> determine voltage (1P = 120 V, 2P = 240 V) and enable the
+    NEC 80% safety indicators on every breaker card.
   </p>
 
   <div style="display:flex; gap:12px; margin-bottom:1rem; flex-wrap:wrap; align-items:center;">
@@ -2245,6 +2366,13 @@ PANEL_EDIT_HTML = """
     <span id="saveMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
   </div>
 
+  <!-- column headers -->
+  <div style="display:grid; grid-template-columns:28px 1fr 110px 1fr 52px 56px; gap:5px;
+              font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+              color:var(--text-light); padding:0 4px 6px; border-bottom:1px solid var(--border); margin-bottom:4px;">
+    <span>#</span><span>Circuit</span><span>Label</span><span>Note / description</span><span style="text-align:center">Amps</span><span style="text-align:center">Poles</span>
+  </div>
+
   <div class="panel-edit-grid" id="editGrid">
     {% for b in breakers %}
     <div class="slot-row" data-slot="{{ b.slot }}">
@@ -2256,10 +2384,27 @@ PANEL_EDIT_HTML = """
         {% endfor %}
       </select>
       <input class="inp-label" type="text" placeholder="Label" value="{{ b.label if b.label and b.label != b.channel_name else '' }}" title="Display label override">
-      <input class="inp-note" type="text" placeholder="Note (e.g. Bedroom outlets, 20A)" value="{{ b.note or '' }}" title="Hover note">
-      <input class="inp-amps" type="number" placeholder="A" value="{{ b.amps or '' }}" min="1" max="200" title="Breaker amps">
+      <input class="inp-note" type="text" placeholder="e.g. Bedroom outlets" value="{{ b.note or '' }}" title="Hover note">
+      <input class="inp-amps" type="number" placeholder="A" value="{{ b.amps or '' }}" min="1" max="200"
+             style="text-align:center;" title="Breaker rating in amps (15, 20, 30, 50…)">
+      <select class="sel-poles" title="Single-pole 120V or double-pole 240V"
+              style="text-align:center; padding:4px 2px;">
+        <option value="1" {{ 'selected' if (b.poles or 1)==1 else '' }}>1P</option>
+        <option value="2" {{ 'selected' if (b.poles or 1)==2 else '' }}>2P</option>
+      </select>
     </div>
     {% endfor %}
+  </div>
+
+  <!-- Safety zone legend -->
+  <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:1.5rem; padding:0.75rem 1rem;
+              background:var(--surface2); border-radius:10px; font-size:0.75rem; color:var(--text-light);">
+    <strong style="color:var(--text); align-self:center;">Safety zones:</strong>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#4ade80;margin-right:4px;vertical-align:middle;"></span>Normal &lt; 60%</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#facc15;margin-right:4px;vertical-align:middle;"></span>Moderate 60–80%</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f97316;margin-right:4px;vertical-align:middle;"></span>NEC limit ≥ 80%</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#ef4444;margin-right:4px;vertical-align:middle;"></span>Over rated &gt; 100%</span>
+    <span style="border-left:1px solid var(--border); padding-left:16px;">⚡ = top load circuit</span>
   </div>
 </div>
 <script>
@@ -2271,6 +2416,7 @@ function saveLayout() {
     label:        row.querySelector('.inp-label').value.trim() || null,
     note:         row.querySelector('.inp-note').value.trim() || null,
     amps:         parseInt(row.querySelector('.inp-amps').value) || null,
+    poles:        parseInt(row.querySelector('.sel-poles').value) || 1,
   }));
   fetch('/api/panel-layout', {
     method: 'POST',
@@ -2282,7 +2428,6 @@ function saveLayout() {
     setTimeout(() => m.style.display = 'none', 2500);
   });
 }
-// Show/hide slots based on panel size selector
 document.getElementById('panelSize').addEventListener('change', function() {
   const n = parseInt(this.value);
   document.querySelectorAll('.slot-row').forEach(r => {
@@ -2588,6 +2733,7 @@ def panel_edit_page():
             "label":        row.get("label") or "",
             "note":         row.get("note") or "",
             "amps":         row.get("amps") or "",
+            "poles":        row.get("poles") or 1,
         })
     return _render(PANEL_EDIT_HTML, active_page="settings",
                    breakers=breakers, all_channels=all_channels,
@@ -2600,7 +2746,7 @@ def api_panel_layout():
     for s in data.get("slots", []):
         energy.save_panel_slot(
             s["slot"], s.get("channel_name"), s.get("label"),
-            s.get("note"), s.get("amps")
+            s.get("note"), s.get("amps"), s.get("poles", 1)
         )
     return jsonify({"ok": True})
 
