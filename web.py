@@ -528,13 +528,13 @@ DASH_HTML = """
 <div class="page">
 
   <!-- ── Weather Strip ─────────────────────────────────────────────────── -->
-  <div id="weather-strip" style="display:none; margin-bottom:0.75rem; overflow-x:auto;">
-    <div id="weather-days" style="display:flex; gap:8px; min-width:max-content; padding:2px 0;"></div>
+  <div id="weather-strip" style="display:none; margin-bottom:0.75rem;">
+    <div id="weather-days" style="display:flex; gap:6px; padding:2px 0;"></div>
   </div>
   <style>
   .wx-card {
     background:var(--surface2); border:1px solid var(--border); border-radius:10px;
-    padding:8px 12px; text-align:center; min-width:72px; flex-shrink:0;
+    padding:8px 6px; text-align:center; flex:1; min-width:0;
   }
   .wx-card.wx-today { background:var(--olive-800); color:var(--olive-50); border-color:var(--olive-700); }
   .wx-card.wx-today .wx-label, .wx-card.wx-today .wx-lo { color:var(--olive-300); }
@@ -1961,7 +1961,7 @@ def log_page():
 
 @app.route("/api/weather")
 def api_weather():
-    """Fetch 10-day forecast from Open-Meteo for zip 18947 (Pipersville, PA).
+    """Fetch 14-day forecast from Open-Meteo for zip 18947 (Pipersville, PA).
     Cached for 30 min to avoid hammering the free API."""
     import urllib.request, json as _json, time as _time
     cache = getattr(api_weather, "_cache", None)
@@ -1974,7 +1974,7 @@ def api_weather():
             "&daily=weathercode,temperature_2m_max,temperature_2m_min"
             "&current_weather=true"
             "&temperature_unit=fahrenheit"
-            "&forecast_days=10"
+            "&forecast_days=14"
             "&timezone=America%2FNew_York"
         )
         with urllib.request.urlopen(url, timeout=8) as resp:
