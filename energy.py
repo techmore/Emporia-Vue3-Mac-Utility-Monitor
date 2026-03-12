@@ -11,6 +11,32 @@ from pyemvue.enums import Scale, Unit
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
 DB_RETENTION_DAYS = int(os.environ.get("DB_RETENTION_DAYS", "365"))
+POLLER_STATUS_FILE = os.environ.get("POLLER_STATUS_FILE", "poller_status.json")
+RECONNECT_FLAG_FILE = "reconnect.flag"
+
+
+def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
+    """Write heartbeat file so Flask can monitor poller health."""
+    try:
+        data = {
+            "ok": ok,
+            "timestamp": datetime.now().isoformat(),
+            "error": error,
+            "consecutive_errors": consecutive_errors,
+        }
+        with open(POLLER_STATUS_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def read_poller_status() -> dict:
+    """Read the heartbeat file from Flask (safe — returns defaults if missing)."""
+    try:
+        with open(POLLER_STATUS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {"ok": None, "timestamp": None, "error": "Status file not found — poller may not be running", "consecutive_errors": 0}
 
 # Rate can come from env, settings.json, or default
 def _read_rate_cents() -> float:
@@ -189,26 +215,22 @@ def login_vue():
             )
     else:
         if not username or not password:
-            print("Please set EMPORIA_EMAIL and EMPORIA_PASSWORD environment variables")
-            exit(1)
+            raise RuntimeError(
+                "No keys.json and no credentials available. "
+                "Enter your Emporia email & password via the Reconnect panel on /log."
+            )
         print("Logging in with username/password...")
         try:
             result = vue.login(
                 username=username, password=password, token_storage_file=token_file
             )
         except Exception as e:
-            print(f"LOGIN EXCEPTION: {type(e).__name__}: {e}")
-            import traceback
-
-            traceback.print_exc()
-            exit(1)
+            raise RuntimeError(f"Login failed: {type(e).__name__}: {e}") from e
         print(f"Login result: {result}")
         if not result:
-            print("LOGIN FAILED! Check credentials.")
-            print(
-                "Note: Emporia may have restricted API access. Try ESPHome for local access."
+            raise RuntimeError(
+                "Login returned False — check credentials or Emporia API availability."
             )
-            exit(1)
     return vue
 
 
@@ -274,15 +296,91 @@ def run_continuous():
     print(f"Rate: ${RATE_CENTS / 100:.4f}/kWh")
     print(f"Database: {DB_PATH}")
 
-    vue = login_vue()
-    device_gids, device_info = get_devices_with_channels(vue)
-    print(f"Found {len(device_gids)} device(s)")
+    # ── Initial login — stay alive even if first login fails ─────────────
+    vue = None
+    device_gids = []
+    consecutive_errors = 0
+    MAX_ERRORS_BEFORE_RELOGIN = 3
+    RELOGIN_BACKOFF = [30, 60, 120, 300]
+
+    try:
+        vue = login_vue()
+        device_gids, _ = get_devices_with_channels(vue)
+        print(f"Found {len(device_gids)} device(s)")
+        write_poller_status(True, consecutive_errors=0)
+    except Exception as e:
+        err = f"Startup login failed: {e}"
+        print(err)
+        write_poller_status(False, error=err + " — use /log reconnect panel to re-authenticate.",
+                            consecutive_errors=0)
 
     while True:
+        # ── Check for a reconnect request from the Flask UI ───────────────
+        if os.path.exists(RECONNECT_FLAG_FILE):
+            print("Reconnect flag detected — attempting re-login...")
+            try:
+                os.remove(RECONNECT_FLAG_FILE)
+            except Exception:
+                pass
+            cfg = _load_settings()
+            has_password = bool(cfg.get("emporia_password"))
+            # Only clear tokens if we have a password to fall back on
+            if has_password and os.path.exists("keys.json"):
+                try:
+                    os.remove("keys.json")
+                except Exception:
+                    pass
+            try:
+                vue = login_vue()
+                device_gids, _ = get_devices_with_channels(vue)
+                print(f"Reconnected — {len(device_gids)} device(s)")
+                consecutive_errors = 0
+                write_poller_status(True, consecutive_errors=0)
+            except Exception as e:
+                err = f"Reconnect failed: {e}"
+                print(err)
+                write_poller_status(False, error=err, consecutive_errors=consecutive_errors)
+
+        # ── Normal poll (skip if no client yet) ───────────────────────────
+        if vue is None or not device_gids:
+            write_poller_status(False,
+                                error="Waiting for credentials — use /log reconnect panel.",
+                                consecutive_errors=consecutive_errors)
+            time.sleep(POLL_INTERVAL)
+            continue
+
         try:
             poll_and_store(vue, device_gids)
+            consecutive_errors = 0
+            write_poller_status(True, consecutive_errors=0)
         except Exception as e:
-            print(f"Error during poll: {type(e).__name__}: {e}")
+            consecutive_errors += 1
+            err_str = f"{type(e).__name__}: {e}"
+            print(f"[Poll error #{consecutive_errors}] {err_str}")
+            write_poller_status(False, error=err_str, consecutive_errors=consecutive_errors)
+
+            # Auto re-login after enough consecutive failures (expired tokens etc.)
+            if consecutive_errors >= MAX_ERRORS_BEFORE_RELOGIN:
+                backoff = RELOGIN_BACKOFF[min(consecutive_errors - MAX_ERRORS_BEFORE_RELOGIN,
+                                              len(RELOGIN_BACKOFF) - 1)]
+                print(f"Auto re-login attempt (backoff {backoff}s)…")
+                time.sleep(backoff)
+                try:
+                    cfg = _load_settings()
+                    # Only wipe tokens if we have credentials to re-login with
+                    if cfg.get("emporia_password") and os.path.exists("keys.json"):
+                        os.remove("keys.json")
+                    vue = login_vue()
+                    device_gids, _ = get_devices_with_channels(vue)
+                    print(f"Auto re-login OK — {len(device_gids)} device(s)")
+                    consecutive_errors = 0
+                    write_poller_status(True, consecutive_errors=0)
+                except Exception as re_e:
+                    reauth_err = f"Auto re-login failed: {re_e}"
+                    print(reauth_err)
+                    write_poller_status(False, error=reauth_err,
+                                        consecutive_errors=consecutive_errors)
+
         time.sleep(POLL_INTERVAL)
 
 

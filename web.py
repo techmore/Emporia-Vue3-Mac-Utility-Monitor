@@ -1757,6 +1757,74 @@ LOG_HTML = """
     <h2>Poller Log</h2>
     <span class="section-sub">Last {{ entries|length }} poll cycles &bull; auto-refreshes every 30s</span>
   </div>
+
+  <!-- ── Poller Health Card ─────────────────────────────────────────────── -->
+  <div class="card" id="pollerHealth" style="margin-bottom:1.5rem;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:0.75rem; flex-wrap:wrap;">
+      <h3 style="font-size:1.05rem; margin:0;">Poller Health</h3>
+      <span id="ph-dot" style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--stone-400);"></span>
+      <span id="ph-label" style="font-size:0.82rem; color:var(--text-light);">Checking…</span>
+      <div style="flex:1;"></div>
+      <button onclick="requestReconnect()" id="reconnectBtn"
+              style="padding:7px 18px; background:var(--olive-800); color:var(--olive-50);
+                     border:none; border-radius:8px; font-size:0.82rem; cursor:pointer; font-family:inherit;">
+        ⟳ Reconnect
+      </button>
+    </div>
+
+    <!-- Status details row -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:1rem;">
+      <div style="background:var(--surface2); border-radius:8px; padding:10px 14px;">
+        <div style="font-size:0.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-light); margin-bottom:3px;">Last Poll</div>
+        <div id="ph-last" style="font-size:0.85rem; font-weight:600;">—</div>
+      </div>
+      <div style="background:var(--surface2); border-radius:8px; padding:10px 14px;">
+        <div style="font-size:0.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-light); margin-bottom:3px;">Consecutive Errors</div>
+        <div id="ph-errs" style="font-size:0.85rem; font-weight:600;">—</div>
+      </div>
+      <div style="background:var(--surface2); border-radius:8px; padding:10px 14px;">
+        <div style="font-size:0.65rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-light); margin-bottom:3px;">Last Error</div>
+        <div id="ph-err" style="font-size:0.78rem; word-break:break-word; color:var(--red);">—</div>
+      </div>
+    </div>
+
+    <!-- Error / reconnect message -->
+    <div id="ph-error-banner" style="display:none; padding:0.6rem 0.9rem; background:oklch(94% 0.06 25);
+         border:1px solid oklch(75% 0.12 25); border-radius:8px; font-size:0.82rem;
+         color:oklch(35% 0.14 25); margin-bottom:0.75rem;"></div>
+
+    <!-- Reconnect panel (hidden until poller is detected dead / user clicks Reconnect) -->
+    <div id="reconnectPanel" style="display:none; border-top:1px solid var(--border); padding-top:0.85rem; margin-top:0.5rem;">
+      <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:0.6rem;">
+        Enter your Emporia credentials to force a fresh re-authentication.
+        Leave blank to use saved credentials.
+      </p>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+        <label style="font-size:0.78rem; font-weight:600;">
+          Email
+          <input type="email" id="rcEmail" placeholder="(saved)" autocomplete="username"
+                 style="display:block; margin-top:3px; padding:7px 10px; border-radius:7px;
+                        border:1px solid var(--border); background:var(--bg); color:var(--text);
+                        font-size:0.85rem; font-family:inherit; width:220px;">
+        </label>
+        <label style="font-size:0.78rem; font-weight:600;">
+          Password
+          <input type="password" id="rcPwd" placeholder="(saved)" autocomplete="current-password"
+                 style="display:block; margin-top:3px; padding:7px 10px; border-radius:7px;
+                        border:1px solid var(--border); background:var(--bg); color:var(--text);
+                        font-size:0.85rem; font-family:inherit; width:180px;">
+        </label>
+        <button onclick="sendReconnect()"
+                style="padding:8px 20px; background:var(--olive-700); color:var(--olive-50);
+                       border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+          Re-authenticate →
+        </button>
+      </div>
+      <div id="rcMsg" style="margin-top:0.6rem; font-size:0.82rem; display:none;"></div>
+    </div>
+  </div>
+
+  <!-- ── Poll log table ─────────────────────────────────────────────────── -->
   <div class="card" style="font-family: 'SF Mono', 'Menlo', monospace;">
     <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-light); display:grid; grid-template-columns:1fr auto auto auto; gap:8px; padding:0 0 8px; border-bottom:1px solid var(--border); margin-bottom:4px;">
       <span>Timestamp</span><span>Total kWh</span><span>Cost</span><span>Channels</span>
@@ -1776,11 +1844,100 @@ LOG_HTML = """
     {% endif %}
   </div>
   <div style="margin-top:1rem; font-size:0.78rem; color:var(--text-light);">
-    Log file: <code>/tmp/energymonitor-poller.log</code>
-    &bull; Start poller: <code>PYTHONUNBUFFERED=1 python3 -u energy.py</code>
+    Start poller: <code>python3 energy.py</code>
   </div>
 </div>
-<script>setTimeout(() => location.reload(), 30000);</script>
+
+<script>
+function fmtAge(secs) {
+  if (secs === null || secs === undefined) return '—';
+  if (secs < 90)  return secs + 's ago';
+  if (secs < 3600) return Math.round(secs/60) + 'm ago';
+  return Math.round(secs/3600) + 'h ago';
+}
+
+function refreshStatus() {
+  fetch('/api/poller-status').then(r=>r.json()).then(d => {
+    const dot   = document.getElementById('ph-dot');
+    const label = document.getElementById('ph-label');
+    const last  = document.getElementById('ph-last');
+    const errs  = document.getElementById('ph-errs');
+    const errEl = document.getElementById('ph-err');
+    const banner = document.getElementById('ph-error-banner');
+    const panel  = document.getElementById('reconnectPanel');
+
+    // Running status
+    if (!d.timestamp) {
+      dot.style.background = 'var(--stone-400)';
+      label.textContent = 'Poller not running';
+      label.style.color = 'var(--text-light)';
+      panel.style.display = 'block';
+    } else if (d.poller_running && d.ok) {
+      dot.style.background = 'var(--green)';
+      dot.style.boxShadow = '0 0 0 3px rgba(90,138,94,0.25)';
+      label.textContent = 'Live';
+      label.style.color = 'var(--green)';
+      panel.style.display = 'none';
+      banner.style.display = 'none';
+    } else if (d.poller_running && !d.ok) {
+      dot.style.background = 'var(--amber)';
+      label.textContent = 'Polling errors';
+      label.style.color = 'var(--amber)';
+      panel.style.display = 'block';
+    } else {
+      dot.style.background = 'var(--red)';
+      label.textContent = 'Offline · ' + fmtAge(d.age_secs);
+      label.style.color = 'var(--red)';
+      panel.style.display = 'block';
+    }
+
+    last.textContent = d.timestamp ? (d.timestamp.slice(0,19).replace('T',' ') + ' (' + fmtAge(d.age_secs) + ')') : '—';
+    errs.textContent = d.consecutive_errors ?? '—';
+    errs.style.color = (d.consecutive_errors > 0) ? 'var(--red)' : 'var(--text)';
+
+    if (d.error) {
+      errEl.textContent = d.error;
+      banner.textContent = '⚠ ' + d.error;
+      banner.style.display = 'block';
+    } else {
+      errEl.textContent = 'None';
+      errEl.style.color = 'var(--text-light)';
+      banner.style.display = 'none';
+    }
+  }).catch(() => {
+    document.getElementById('ph-label').textContent = 'Could not reach Flask API';
+  });
+}
+
+function requestReconnect() {
+  document.getElementById('reconnectPanel').style.display = 'block';
+}
+
+function sendReconnect() {
+  const email = document.getElementById('rcEmail').value.trim();
+  const pwd   = document.getElementById('rcPwd').value;
+  const msg   = document.getElementById('rcMsg');
+  msg.style.display = 'none';
+  fetch('/api/poller-reconnect', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email: email || null, password: pwd || null})
+  }).then(r=>r.json()).then(d => {
+    msg.style.display = 'block';
+    msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+    msg.textContent = d.ok ? ('✓ ' + d.message) : ('✗ ' + d.error);
+    if (d.ok) setTimeout(refreshStatus, 5000);
+  }).catch(e => {
+    msg.style.display = 'block';
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Request failed: ' + e;
+  });
+}
+
+refreshStatus();
+setInterval(refreshStatus, 15000);
+setTimeout(() => location.reload(), 30000);
+</script>
 """
 
 
@@ -2384,6 +2541,60 @@ def api_weather():
 @app.route("/api/version")
 def api_version():
     return jsonify({"version": VERSION})
+
+
+@app.route("/api/poller-status")
+def api_poller_status():
+    """Return the live heartbeat written by the energy.py poller process."""
+    import json as _json, os as _os, time as _time
+    status = energy.read_poller_status()
+    # Calculate how many seconds ago the last heartbeat was
+    last_ts = status.get("timestamp")
+    age_secs = None
+    if last_ts:
+        try:
+            from datetime import datetime as _dt
+            age_secs = int((_dt.now() - _dt.fromisoformat(last_ts[:19])).total_seconds())
+        except Exception:
+            pass
+    status["age_secs"] = age_secs
+    # Poller is considered "running" if heartbeat is < 3 minutes old
+    status["poller_running"] = age_secs is not None and age_secs < 180
+    return jsonify(status)
+
+
+@app.route("/api/poller-reconnect", methods=["POST"])
+def api_poller_reconnect():
+    """
+    Trigger a reconnect in the background poller.
+    Optionally accepts {email, password} to refresh credentials first.
+    Writes reconnect.flag which the poller loop checks every cycle.
+    """
+    import json as _json, os as _os
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip()
+    pwd   = (data.get("password") or "").strip()
+    # Persist new credentials if supplied
+    if email:
+        cfg = {}
+        try:
+            with open("settings.json") as _f:
+                cfg = _json.load(_f)
+        except Exception:
+            pass
+        cfg["emporia_email"] = email
+        if pwd:
+            cfg["emporia_password"] = pwd
+        with open("settings.json", "w") as _f:
+            _json.dump(cfg, _f, indent=2)
+    # Write the flag file — poller checks for it each loop iteration
+    try:
+        with open(energy.RECONNECT_FLAG_FILE, "w") as _f:
+            _json.dump({"requested_at": __import__("datetime").datetime.now().isoformat()}, _f)
+        return jsonify({"ok": True, "message": "Reconnect flag set — poller will re-authenticate on next cycle (up to 60s)"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/api/summary")
 def api_summary():
