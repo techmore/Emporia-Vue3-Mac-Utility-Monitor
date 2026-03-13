@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.31"
+VERSION = "1.7.32"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -844,18 +844,24 @@ def _build_live_dashboard_payload() -> dict:
     latest_map = {row["channel_name"]: row["usage_kwh"] for row in ctx["latest"]}
     main_now = next((row for row in ctx["latest"] if row["channel_name"] == "Main"), None)
     current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
+    summary_24 = energy.get_summary(24)
+    summary_24_map = {row["channel_name"]: row for row in summary_24}
+    total_24h_main = energy.get_main_total(24)
+    total_kwh_24 = (total_24h_main or {}).get("total_kwh") or (sum(row["total_kwh"] for row in summary_24) or 1)
     top_circuits = []
     for row in ctx["circuits"]:
         name = row["channel_name"]
         if name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
+        summary_row = summary_24_map.get(name, {})
         top_circuits.append({
             "channel_name": name,
+            "display_name": name,
             "watts": _watts_estimate(latest_map.get(name, 0)),
-            "pct": (row["kwh"] / (ctx["current_kwh"] or 1)) * 100,
+            "kwh_24h": summary_row.get("total_kwh", 0),
+            "pct_24h": ((summary_row.get("total_kwh", 0) / total_kwh_24) * 100) if total_kwh_24 else 0,
         })
     top_circuits.sort(key=lambda row: row["watts"], reverse=True)
-    summary_24 = energy.get_summary(24)
     main_24h = energy.get_main_total(24)
     total_24h = main_24h or {
         "total_kwh": sum(row["total_kwh"] for row in summary_24),
@@ -908,6 +914,10 @@ PANEL_FRAGMENT_HTML = """
         <span style="font-size:{{ total_rate_size }}rem; color:var(--olive-300); margin-left:{{ total_rate_margin }}px;">${{ "%.4f"|format(total_main.cost_24h / (total_main.kwh_24h or 1)) }}/kWh</span>
       </div>
       <div class="mc-kwh">{{ "%.2f"|format(total_main.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(total_main.cost_24h) }}</strong></div>
+      {% if balance_info %}
+      <div class="mc-kwh" style="margin-top:4px; color:var(--olive-200);">Balance: {{ balance_info.leg_a_label }} {{ balance_info.pct_a }}% &bull; {{ balance_info.leg_b_label }} {{ balance_info.pct_b }}%</div>
+      {% if balance_info.live_estimated %}<div class="mc-kwh" style="margin-top:2px;">live balance estimated from slot layout</div>{% endif %}
+      {% endif %}
     </div>
   </div>
   {% endif %}
@@ -997,6 +1007,7 @@ def _render_panel_fragment(
     mains_legs: list[dict],
     breakers_left: list[dict],
     breakers_right: list[dict],
+    balance_info: dict | None,
     *,
     panel_label_text: str,
     bus_label: str,
@@ -1012,6 +1023,7 @@ def _render_panel_fragment(
         mains_legs=mains_legs,
         breakers_left=breakers_left,
         breakers_right=breakers_right,
+        balance_info=balance_info,
         panel_label_text=panel_label_text,
         bus_label=bus_label,
         edit_href=edit_href,
@@ -1264,7 +1276,7 @@ DASH_HTML = """
 
         <div class="panel-view-sidebar" data-panel-section="sidebar-metrics">
 
-          <!-- Row 1: $/hr now + 24h Avg with yesterday delta -->
+          <!-- Row 1: Cost now + 24h cost -->
           <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">Cost Right Now</div>
@@ -1272,52 +1284,30 @@ DASH_HTML = """
               <div class="card-meta">{{ "%.0f"|format(current_watts) }} W at ${{ "%.4f"|format(rate) }}/kWh</div>
             </div>
             <div class="card">
-              <div class="card-label">Panel Balance</div>
-              {% if leg_a and leg_b %}
-              {% set leg_total = leg_a.watts + leg_b.watts %}
-              {% set pct_a = (leg_a.watts / (leg_total or 1) * 100)|round(0)|int %}
-              {% set pct_b = (leg_b.watts / (leg_total or 1) * 100)|round(0)|int %}
-              <div style="display:flex; gap:6px; align-items:center; margin:4px 0;">
-                <div style="flex:1; text-align:center;">
-                  <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase; letter-spacing:0.06em;">Leg A</div>
-                  <div style="font-size:1.1rem; font-weight:700; color:var(--text);">{{ "%.0f"|format(leg_a.watts) }}<span style="font-size:0.7rem; font-weight:400;"> W</span></div>
-                  <div style="font-size:0.7rem; color:var(--text-light);">{{ pct_a }}%</div>
-                </div>
-                <div style="width:1px; background:var(--border); align-self:stretch;"></div>
-                <div style="flex:1; text-align:center;">
-                  <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase; letter-spacing:0.06em;">Leg B</div>
-                  <div style="font-size:1.1rem; font-weight:700; color:var(--text);">{{ "%.0f"|format(leg_b.watts) }}<span style="font-size:0.7rem; font-weight:400;"> W</span></div>
-                  <div style="font-size:0.7rem; color:var(--text-light);">{{ pct_b }}%</div>
-                </div>
-              </div>
-              <div style="height:5px; background:var(--surface2); border-radius:3px; overflow:hidden;">
-                <div style="height:5px; width:{{ pct_a }}%; background:var(--olive-500); border-radius:3px;"></div>
-              </div>
-              {% if leg_a.live_estimated or leg_b.live_estimated %}
-              <div class="card-meta">historical legs native; live balance estimated from slot layout</div>
-              {% endif %}
-              {% else %}
-              <div class="card-value" style="font-size:1rem;">—</div>
-              <div class="card-meta">no leg data</div>
-              {% endif %}
-            </div>
-          </div>
-
-          <!-- Row 2: 24h Cost + MTD -->
-          <div class="panel-view-metrics">
-            <div class="card">
               <div class="card-label">24h Cost</div>
               <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
               <div class="card-meta">{{ "%.2f"|format(total_24h.total_kwh or 0) }} kWh used</div>
             </div>
+          </div>
+
+          <!-- Row 2: MTD + trend -->
+          <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">Month-to-Date</div>
               <div class="card-value">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) if month_comparison.this_month else '0.00' }}</div>
               <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) if month_comparison.this_month else '0' }} kWh &bull; {{ delta_month|safe }}</div>
             </div>
+            <div class="card">
+              <div class="card-label">7-Day Trend</div>
+              <div class="card-value" style="font-size:1.4rem; color:{{ trend_color }};">{{ trend_dir }}</div>
+              <div class="card-meta">
+                {{ "%.2f"|format(trend_avg) }} kWh/day avg
+                {% if slope %}· {{ "%.3f"|format(slope|abs) }} kWh/day {% if slope > 0 %}more{% else %}less{% endif %}{% endif %}
+              </div>
+            </div>
           </div>
 
-          <!-- Row 3: Peak today + Budget -->
+          <!-- Row 3: Peak today + Top active circuits -->
           <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">Peak Today</div>
@@ -1330,36 +1320,23 @@ DASH_HTML = """
               {% endif %}
             </div>
             <div class="card">
-              <div class="card-label">7-Day Trend</div>
-              <div class="card-value" style="font-size:1.4rem; color:{{ trend_color }};">{{ trend_dir }}</div>
-              <div class="card-meta">
-                {{ "%.2f"|format(trend_avg) }} kWh/day avg
-                {% if slope %}· {{ "%.3f"|format(slope|abs) }} kWh/day {% if slope > 0 %}more{% else %}less{% endif %}{% endif %}
+              <div class="card-label" style="margin-bottom:8px;">Top 5 Active Circuits</div>
+              <div id="live-top-circuits-list">
+              {% for c in top_circuits[:5] %}
+              <div style="padding:5px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                  <a href="/circuit/{{ c.channel_name|urlencode }}" style="flex:1; font-size:0.82rem; font-weight:600; color:var(--text); text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ c.display_name or c.channel_name }}</a>
+                  <span style="font-size:0.78rem; color:var(--text-light);">{{ "%.0f"|format(c.pct_24h or 0) }}%</span>
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:2px;">
+                  <span style="font-size:0.75rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W now</span>
+                  <span style="font-size:0.75rem; color:var(--text-light);">{{ "%.2f"|format(c.kwh_24h or 0) }} kWh / 24h</span>
+                </div>
               </div>
-            </div>
-          </div>
-
-          <!-- Row 4: Top active circuits mini-list -->
-          <div class="card">
-            <div class="card-label" style="margin-bottom:8px;">Top Active Circuits</div>
-            <div id="live-top-circuits-list">
-            {% for c in top_circuits[:3] %}
-            <div style="display:flex; align-items:center; gap:8px; padding:3px 0;
-                        border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
-              <div style="flex:1; font-size:0.82rem; font-weight:500; color:var(--text);
-                          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                <a href="/circuit/{{ c.channel_name|urlencode }}" style="color:inherit; text-decoration:none;">{{ c.channel_name }}</a>
+              {% else %}
+              <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>
+              {% endfor %}
               </div>
-              <div style="font-size:0.82rem; font-weight:700; color:var(--text); min-width:48px; text-align:right;">{{ "%.0f"|format(c.watts) }} W</div>
-              <div style="width:56px; height:5px; background:var(--surface2); border-radius:3px; flex-shrink:0;">
-                <div style="height:5px; border-radius:3px; width:{{ c.pct|round(1) }}%;
-                  background:{{ '#f87171' if c.pct >= 40 else ('#fbbf24' if c.pct >= 20 else 'var(--olive-500)') }};"></div>
-              </div>
-              <div style="font-size:0.72rem; color:var(--text-light); min-width:30px; text-align:right;">{{ "%.0f"|format(c.pct) }}%</div>
-            </div>
-            {% else %}
-            <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>
-            {% endfor %}
             </div>
           </div>
 
@@ -1548,19 +1525,16 @@ DASH_HTML = """
         list.innerHTML = '<div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>';
         return;
       }
-      list.innerHTML = circuits.slice(0, 3).map((circuit, index) => `
-        <div style="display:flex; align-items:center; gap:8px; padding:3px 0;
-                    border-bottom:${index < Math.min(circuits.length, 3) - 1 ? '1px solid var(--border)' : 'none'};">
-          <div style="flex:1; font-size:0.82rem; font-weight:500; color:var(--text);
-                      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-            <a href="/circuit/${encodeURIComponent(circuit.channel_name)}" style="color:inherit; text-decoration:none;">${circuit.channel_name}</a>
+      list.innerHTML = circuits.slice(0, 5).map((circuit, index) => `
+        <div style="padding:5px 0; border-bottom:${index < Math.min(circuits.length, 5) - 1 ? '1px solid var(--border)' : 'none'};">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <a href="/circuit/${encodeURIComponent(circuit.channel_name)}" style="flex:1; font-size:0.82rem; font-weight:600; color:var(--text); text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${circuit.display_name || circuit.channel_name}</a>
+            <span style="font-size:0.78rem; color:var(--text-light);">${Math.round(circuit.pct_24h || 0)}%</span>
           </div>
-          <div style="font-size:0.82rem; font-weight:700; color:var(--text); min-width:48px; text-align:right;">${Math.round(circuit.watts)} W</div>
-          <div style="width:56px; height:5px; background:var(--surface2); border-radius:3px; flex-shrink:0;">
-            <div style="height:5px; border-radius:3px; width:${Math.max(0, Math.min(100, circuit.pct)).toFixed(1)}%;
-              background:${circuit.pct >= 40 ? '#f87171' : (circuit.pct >= 20 ? '#fbbf24' : 'var(--olive-500)')};"></div>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:2px;">
+            <span style="font-size:0.75rem; color:var(--text-light);">${Math.round(circuit.watts)} W now</span>
+            <span style="font-size:0.75rem; color:var(--text-light);">${Number(circuit.kwh_24h || 0).toFixed(2)} kWh / 24h</span>
           </div>
-          <div style="font-size:0.72rem; color:var(--text-light); min-width:30px; text-align:right;">${Math.round(circuit.pct)}%</div>
         </div>
       `).join('');
     }
@@ -3284,21 +3258,26 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
 
     main_now = next((r for r in ctx["latest"] if r["channel_name"] == "Main"), None)
     current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
+    summary_24_map = {row["channel_name"]: row for row in summary_24}
     top_circuits = []
     for row in ctx["circuits"]:
         name = row["channel_name"]
         if name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
         watts = _watts_estimate(latest_map.get(name, 0))
+        summary_row = summary_24_map.get(name, {})
         top_circuits.append({
             **row,
+            "display_name": name,
             "watts": watts,
             "pct": (row["kwh"] / (ctx["current_kwh"] or 1)) * 100,
+            "kwh_24h": summary_row.get("total_kwh", 0),
+            "pct_24h": ((summary_row.get("total_kwh", 0) / ((total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1))) * 100),
         })
     top_circuits.sort(key=lambda row: row["watts"], reverse=True)
     top_circuits = top_circuits[:12]
     top_live_circuits = [
-        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": row["watts"]}
+        {"channel_name": row["channel_name"], "display_name": row["display_name"], "watts": row["watts"], "kwh_24h": row["kwh_24h"], "pct_24h": row["pct_24h"]}
         for row in top_circuits
     ]
 
@@ -3420,6 +3399,17 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     standby.sort(key=lambda row: row["watts"], reverse=True)
     leg_rows = mains_legs
     legs_fresh = bool(leg_rows)
+    balance_info = None
+    if len(mains_legs) >= 2:
+        leg_a, leg_b = mains_legs[0], mains_legs[1]
+        leg_total = (leg_a.get("watts") or 0) + (leg_b.get("watts") or 0)
+        balance_info = {
+            "leg_a_label": leg_a.get("label", "Leg A"),
+            "leg_b_label": leg_b.get("label", "Leg B"),
+            "pct_a": int(round(((leg_a.get("watts") or 0) / (leg_total or 1)) * 100)),
+            "pct_b": int(round(((leg_b.get("watts") or 0) / (leg_total or 1)) * 100)),
+            "live_estimated": bool(leg_a.get("live_estimated") or leg_b.get("live_estimated")),
+        }
 
     slope = (trend or {}).get("slope") or 0
 
@@ -3470,6 +3460,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
             mains_legs,
             breakers_left,
             breakers_right,
+            balance_info,
             panel_label_text=f"{panel_label} — Live",
             bus_label=f"Bus bar • {dashboard_panel_slots} slots",
         ),
@@ -3751,6 +3742,7 @@ def circuits_page():
                        mains_legs,
                        breakers_left,
                        breakers_right,
+                       None,
                        panel_label_text=com["panel_label"],
                        bus_label=f"Bus bar • {panel_slots} slots",
                        edit_href="/panel",

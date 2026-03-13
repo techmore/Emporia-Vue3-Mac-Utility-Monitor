@@ -354,7 +354,7 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("Today vs Yesterday", body)
         self.assertIn("todayRowChart", body)
         self.assertIn("yesterdayRowChart", body)
-        self.assertIn("Top Active Circuits", body)
+        self.assertIn("Top 5 Active Circuits", body)
         self.assertGreaterEqual(body.count('class="breaker '), 2)
         self.assertLess(body.index("Service Feed"), body.index("Bus bar"))
         self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
