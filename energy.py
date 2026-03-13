@@ -316,6 +316,13 @@ def get_devices_with_channels(vue):
     return device_gids, device_info
 
 
+def _normalize_channel_name(name: str | None) -> str | None:
+    """Normalize live/API channel names before persisting or comparing them."""
+    if name is None:
+        return None
+    return _clean_csv_channel_name(name)
+
+
 def poll_and_store(vue, device_gids):
     conn = _connect()
     c = conn.cursor()
@@ -333,14 +340,15 @@ def poll_and_store(vue, device_gids):
         for channelnum, channel in device.channels.items():
             if channel.usage is None:
                 continue
+            channel_name = _normalize_channel_name(channel.name)
 
             cost = channel.usage * RATE_CENTS
 
             c.execute(
                 """INSERT INTO readings
-                (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-                VALUES (?, ?, ?, ?, ?, ?)""",
-                (now, gid, channelnum, channel.name, channel.usage, cost),
+                   (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (now, gid, channelnum, channel_name, channel.usage, cost),
             )
 
     # Prune old rows to keep the database from growing unboundedly.

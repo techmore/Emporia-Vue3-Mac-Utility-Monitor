@@ -72,6 +72,10 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(dryer["timestamp"], "2026-03-13T11:00:00.000001")
         self.assertEqual(dryer["usage_kwh"], 0.7)
 
+    def test_normalize_channel_name_trims_live_channel_whitespace(self):
+        self.assertEqual(energy._normalize_channel_name("Well "), "Well")
+        self.assertEqual(energy._normalize_channel_name(" Barn-Mains_A (kWatts) "), "Mains_A")
+
     def test_import_emporia_csv_skips_duplicates_via_unique_index(self):
         csv_text = (
             "Time Bucket (America/New_York),Barn-Dryer (kWhs)\n"
