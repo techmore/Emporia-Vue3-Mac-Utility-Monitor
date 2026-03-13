@@ -22,7 +22,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.6"
+VERSION = "1.7.7"
 
 
 def _read_monthly_budget() -> float:
@@ -356,6 +356,33 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 .panel-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+}
+.panel-view-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+.panel-view-shell {
+  min-width: 0;
+}
+.panel-view-sidebar {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.panel-view-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 980px) {
+  .panel-view-layout { grid-template-columns: 1fr; }
+  .panel-view-metrics { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 720px) {
+  .panel-view-metrics { grid-template-columns: 1fr; }
 }
 .breaker {
   background: var(--olive-900);
@@ -1078,17 +1105,17 @@ DASH_HTML = """
       </div>
     </div>
 
-    <!-- Panel view: 50% panel + 50% metrics sidebar -->
+    <!-- Panel view: self-contained panel + right-side metrics -->
     <div id="view-panel" style="display:none;">
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; align-items:start;">
+      <div class="panel-view-layout">
+        <div class="panel-view-shell" data-panel-section="digital-panel">
+          {{ panel_fragment|safe }}
+        </div>
 
-        {{ panel_fragment|safe }}
-
-        <!-- Right: 2-column metrics grid -->
-        <div style="display:flex; flex-direction:column; gap:10px;">
+        <div class="panel-view-sidebar" data-panel-section="sidebar-metrics">
 
           <!-- Row 1: $/hr now + 24h Avg with yesterday delta -->
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">Cost Right Now</div>
               <div class="card-value">${{ "%.2f"|format(cost_per_hour) }}<span class="unit">/hr</span></div>
@@ -1124,7 +1151,7 @@ DASH_HTML = """
           </div>
 
           <!-- Row 2: 24h Cost + MTD -->
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">24h Cost</div>
               <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
@@ -1138,7 +1165,7 @@ DASH_HTML = """
           </div>
 
           <!-- Row 3: Peak today + Budget -->
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">Peak Today</div>
               {% if peak_24h.peak_watts %}

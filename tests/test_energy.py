@@ -203,6 +203,7 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("Recommendations", body)
         self.assertGreaterEqual(body.count('class="breaker '), 2)
         self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
+        self.assertLess(body.index('data-panel-section="digital-panel"'), body.index('data-panel-section="sidebar-metrics"'))
 
     def test_circuits_route_renders_action_center_and_panel(self):
         self._seed_ui_data()
