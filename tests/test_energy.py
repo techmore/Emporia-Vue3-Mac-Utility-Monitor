@@ -355,9 +355,6 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("todayRowChart", body)
         self.assertIn("yesterdayRowChart", body)
         self.assertIn("Top Active Circuits", body)
-        self.assertIn("Analysis", body)
-        self.assertIn("Cost & Budget", body)
-        self.assertIn("Usage Patterns", body)
         self.assertGreaterEqual(body.count('class="breaker '), 2)
         self.assertLess(body.index("Service Feed"), body.index("Bus bar"))
         self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
@@ -397,6 +394,7 @@ class EnergyTests(unittest.TestCase):
 
         expectations = {
             "/reports": ["24h Cost", "Peak Today", "Biggest 24h Load", "Next Best Actions"],
+            "/trends": ["Operational Summary", "Action Center", "24-Hour Summary", "Cost & Budget"],
             "/guide": ["First-Time Setup", "Metric Meanings", "Panel view"],
             "/settings": ["Settings", "Reports & Recommendations", "Circuits", "Import", "Aqara", "Log"],
         }

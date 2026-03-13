@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.30"
+VERSION = "1.7.31"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1583,114 +1583,6 @@ DASH_HTML = """
   })();
   </script>
 
-  <!-- ── KPI row ────────────────────────────────────────────────────────── -->
-  <div class="section" id="section-24h">
-    <div class="section-head">
-      <h2>24-Hour Summary</h2>
-      <span class="section-sub">Since midnight yesterday</span>
-    </div>
-    <div class="grid-4">
-      <div class="card">
-        <div class="card-label">Usage</div>
-        <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
-        <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Cost</div>
-        <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
-        <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Biggest Load</div>
-        <div class="card-value" style="font-size:1.4rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
-        <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh ({{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total)</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Month-to-Date</div>
-        <div class="card-value">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) if month_comparison.this_month else '$0.00' }}</div>
-        <div class="card-meta">
-          {{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) }} kWh this month
-          {% if month_comparison.last_month %}
-          &bull; {{ delta_month|safe }}
-          {% endif %}
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Action center ─────────────────────────────────────────────────── -->
-  <div class="section">
-    <div class="section-head">
-      <h2>Action Center</h2>
-      <span class="section-sub">What needs attention right now</span>
-    </div>
-    <div class="grid-3">
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
-        {% for b in safety_breakers[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
-          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
-        {% for c in top_live_circuits[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
-        {% for s in standby_circuits[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2>Analysis</h2>
-      <span class="section-sub">Deeper history and comparisons live in Reports and Trends</span>
-    </div>
-    <div class="grid-3">
-      <a href="/reports" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Reports</div>
-          <div class="card-value" style="font-size:1.35rem;">Cost & Budget</div>
-          <div class="card-meta">24h cost, monthly projection, month-over-month changes, standby review, and recommendations.</div>
-        </div>
-      </a>
-      <a href="/trends" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Trends</div>
-          <div class="card-value" style="font-size:1.35rem;">Usage Patterns</div>
-          <div class="card-meta">Daily usage, hourly pattern, trend slope, and historical comparisons.</div>
-        </div>
-      </a>
-      <a href="/circuits" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Circuits</div>
-          <div class="card-value" style="font-size:1.35rem;">Panel Detail</div>
-          <div class="card-meta">Breaker safety, slot layout, always-on loads, and circuit-level drilldown.</div>
-        </div>
-      </a>
-    </div>
-  </div>
-
   <div style="margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--border); font-size:0.75rem; color:var(--text-light);">
     Energy Monitor &bull; Updated: {{ last_updated }} &bull; ${{ "%.4f"|format(rate) }}/kWh
   </div>
@@ -2406,6 +2298,209 @@ CIRCUIT_HTML = """
     <h3>Usage — {{ period|capitalize }} view</h3>
     <canvas id="usageChart" height="180"></canvas>
   </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Operational Summary</h2>
+      <span class="section-sub">Rolled up from the main dashboard for deeper review</span>
+    </div>
+    <div class="grid-4">
+      <div class="card">
+        <div class="card-label">24-Hour Summary</div>
+        <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
+        <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Cost</div>
+        <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
+        <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Biggest Load</div>
+        <div class="card-value" style="font-size:1.4rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
+        <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh ({{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total)</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Month-to-Date</div>
+        <div class="card-value">${{ "%.2f"|format((mc.this_month.total_cents or 0)/100) }}</div>
+        <div class="card-meta">{{ "%.1f"|format(mc.this_month.total_kwh or 0) }} kWh this month</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Action Center</h2>
+      <span class="section-sub">Safety, heavy hitters, and always-on loads</span>
+    </div>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
+        {% for b in safety_breakers[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
+          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
+        {% for c in top_live_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
+        {% for s in standby_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Analysis</h2>
+      <span class="section-sub">Next places to drill down</span>
+    </div>
+    <div class="grid-3">
+      <a href="/reports#recommendations" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Reports</div>
+          <div class="card-value" style="font-size:1.35rem;">Cost & Budget</div>
+          <div class="card-meta">Monthly projection, month-over-month changes, standby review, and recommendations.</div>
+        </div>
+      </a>
+      <a href="/trends" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Trends</div>
+          <div class="card-value" style="font-size:1.35rem;">Usage Patterns</div>
+          <div class="card-meta">Daily usage, hourly pattern, and trend slope.</div>
+        </div>
+      </a>
+      <a href="/circuits" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Circuits</div>
+          <div class="card-value" style="font-size:1.35rem;">Panel Detail</div>
+          <div class="card-meta">Breaker safety, slot layout, always-on loads, and circuit drilldown.</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Operational Summary</h2>
+      <span class="section-sub">Rolled up from the main dashboard for deeper review</span>
+    </div>
+    <div class="grid-4">
+      <div class="card">
+        <div class="card-label">24-Hour Summary</div>
+        <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
+        <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Cost</div>
+        <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
+        <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Biggest Load</div>
+        <div class="card-value" style="font-size:1.4rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
+        <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh ({{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total)</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Month-to-Date</div>
+        <div class="card-value">${{ "%.2f"|format((mc.this_month.total_cents or 0)/100) }}</div>
+        <div class="card-meta">{{ "%.1f"|format(mc.this_month.total_kwh or 0) }} kWh this month</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Action Center</h2>
+      <span class="section-sub">Safety, heavy hitters, and always-on loads</span>
+    </div>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
+        {% for b in safety_breakers[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
+          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
+        {% for c in top_live_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
+        {% for s in standby_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Analysis</h2>
+      <span class="section-sub">Next places to drill down</span>
+    </div>
+    <div class="grid-3">
+      <a href="/reports#recommendations" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Reports</div>
+          <div class="card-value" style="font-size:1.35rem;">Cost & Budget</div>
+          <div class="card-meta">Monthly projection, month-over-month changes, standby review, and recommendations.</div>
+        </div>
+      </a>
+      <a href="/trends" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Trends</div>
+          <div class="card-value" style="font-size:1.35rem;">Usage Patterns</div>
+          <div class="card-meta">Daily usage, hourly pattern, and trend slope.</div>
+        </div>
+      </a>
+      <a href="/circuits" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Circuits</div>
+          <div class="card-value" style="font-size:1.35rem;">Panel Detail</div>
+          <div class="card-meta">Breaker safety, slot layout, always-on loads, and circuit drilldown.</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
@@ -2512,6 +2607,107 @@ TRENDS_HTML = """
       <div class="card-meta">vs last month</div>
     </div>
     {% endif %}
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Operational Summary</h2>
+      <span class="section-sub">Rolled up from the main dashboard for deeper review</span>
+    </div>
+    <div class="grid-4">
+      <div class="card">
+        <div class="card-label">24-Hour Summary</div>
+        <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
+        <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Cost</div>
+        <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
+        <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Biggest Load</div>
+        <div class="card-value" style="font-size:1.4rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
+        <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh ({{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total)</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Month-to-Date</div>
+        <div class="card-value">${{ "%.2f"|format((mc.this_month.total_cents or 0)/100) }}</div>
+        <div class="card-meta">{{ "%.1f"|format(mc.this_month.total_kwh or 0) }} kWh this month</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Action Center</h2>
+      <span class="section-sub">Safety, heavy hitters, and always-on loads</span>
+    </div>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
+        {% for b in safety_breakers[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
+          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
+        {% for c in top_live_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
+        {% for s in standby_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Analysis</h2>
+      <span class="section-sub">Next places to drill down</span>
+    </div>
+    <div class="grid-3">
+      <a href="/reports#recommendations" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Reports</div>
+          <div class="card-value" style="font-size:1.35rem;">Cost & Budget</div>
+          <div class="card-meta">Monthly projection, month-over-month changes, standby review, and recommendations.</div>
+        </div>
+      </a>
+      <a href="/trends" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Trends</div>
+          <div class="card-value" style="font-size:1.35rem;">Usage Patterns</div>
+          <div class="card-meta">Daily usage, hourly pattern, and trend slope.</div>
+        </div>
+      </a>
+      <a href="/circuits" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Circuits</div>
+          <div class="card-value" style="font-size:1.35rem;">Panel Detail</div>
+          <div class="card-meta">Breaker safety, slot layout, always-on loads, and circuit drilldown.</div>
+        </div>
+      </a>
+    </div>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -3630,17 +3826,73 @@ def circuit_detail(circuit_name, period="day"):
 
 @app.route("/trends")
 def trends_page():
-    com   = _common()
+    com = _common()
     trend = energy.get_trend(14)
-    mc    = energy.get_month_comparison()
+    mc = energy.get_month_comparison(com["active_device_gid"])
+    summary_24 = energy.get_summary(24, com["active_device_gid"])
+    total_24h = energy.get_main_total(24, com["active_device_gid"]) or {
+        "total_kwh": sum(r["total_kwh"] for r in summary_24),
+        "total_cents": sum(r["total_cents"] for r in summary_24),
+    }
+    circuits_24 = [
+        r for r in summary_24
+        if r["channel_name"] not in _MAINS_NAMES and r["channel_name"] not in _SKIP_NAMES
+    ]
+    total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
+    for r in circuits_24:
+        r["pct"] = r["total_kwh"] / total_kwh_24 * 100
+    biggest_circuit = max(circuits_24, key=lambda r: r["total_kwh"]) if circuits_24 else None
+    if biggest_circuit:
+        biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
+    latest_rows = energy.get_latest(com["active_device_gid"])
+    standby_circuits = [
+        {"name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
+        for row in latest_rows
+        if row["channel_name"] not in _MAINS_NAMES
+        and row["channel_name"] not in _SKIP_NAMES
+        and 1 <= _watts_estimate(row["usage_kwh"]) <= 50
+    ]
+    standby_circuits.sort(key=lambda x: x["watts"], reverse=True)
+    top_live_circuits = [
+        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
+        for row in latest_rows
+        if row["channel_name"] not in _MAINS_NAMES and row["channel_name"] not in _SKIP_NAMES
+    ]
+    top_live_circuits.sort(key=lambda x: x["watts"], reverse=True)
+    latest_map = {r["channel_name"]: r["usage_kwh"] for r in latest_rows}
+    safety_breakers = []
+    for row in energy.get_panel_layout():
+        name = row.get("channel_name")
+        if not name or name in _MAINS_NAMES or name in _SKIP_NAMES:
+            continue
+        watts = _watts_estimate(latest_map.get(name) or 0)
+        if not watts:
+            continue
+        configured_amps = row.get("amps") or 15
+        poles = row.get("poles") or 1
+        voltage = 240 if poles == 2 else 120
+        amps_now = watts / voltage
+        safe_limit_amps = configured_amps * 0.8
+        safe_pct = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
+        if safe_pct >= 80:
+            safety_breakers.append({
+                "label": row.get("label") or name,
+                "safe_cls": "danger" if safe_pct >= 100 else "warn",
+                "load_label": f"{amps_now:.1f}/{configured_amps}A",
+            })
     return _render(
         TRENDS_HTML,
         active_page="trends",
         trend=trend,
         trend_json=trend["daily"],
-        hourly_json=energy.get_hourly_data(7),
+        hourly_json=energy.get_hourly_data(7, com["active_device_gid"]),
         mc={"this_month": mc["this_month"], "last_month": mc["last_month"]},
         rate=RATE,
+        total_24h=total_24h,
+        biggest_circuit=biggest_circuit,
+        safety_breakers=safety_breakers,
+        top_live_circuits=top_live_circuits,
+        standby_circuits=standby_circuits,
         **com,
     )
 
