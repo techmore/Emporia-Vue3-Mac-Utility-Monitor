@@ -236,6 +236,39 @@ class EnergyTests(unittest.TestCase):
             for snippet in snippets:
                 self.assertIn(snippet, body, f"{snippet} missing from {path}")
 
+    def test_partial_panel_layout_still_renders_unmapped_circuits(self):
+        conn = energy._connect()
+        now = energy.datetime.now().replace(microsecond=0).isoformat()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (now, "A", 1, "Main", 1.0, 10.0),
+                (now, "A", 2, "Dryer", 0.3, 3.0),
+                (now, "A", 3, "HVAC", 0.2, 2.0),
+                (now, "A", 4, "Office", 0.1, 1.0),
+            ],
+        )
+        conn.execute(
+            """INSERT INTO circuit_labels
+               (slot, channel_name, label, note, amps, poles)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (1, "Dryer", "Dryer", None, 30, 2),
+        )
+        conn.commit()
+        conn.close()
+
+        with web.app.app_context():
+            dashboard = web._build_dashboard_context("Service Panel")
+        dashboard_names = {row["channel_name"] for row in dashboard["dash_breakers"] if row["channel_name"]}
+        self.assertTrue({"Dryer", "HVAC", "Office"}.issubset(dashboard_names))
+
+        client = web.app.test_client()
+        circuits_body = client.get("/circuits").get_data(as_text=True)
+        self.assertIn("HVAC", circuits_body)
+        self.assertIn("Office", circuits_body)
+
 
 if __name__ == "__main__":
     unittest.main()

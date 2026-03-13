@@ -22,7 +22,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.7"
+VERSION = "1.7.8"
 
 
 def _read_monthly_budget() -> float:
@@ -2588,6 +2588,31 @@ def _load_panel_display_settings() -> dict:
         return {}
 
 
+def _normalize_panel_layout(layout: dict[int, dict], channel_names: list[str], minimum_slots: int = 20) -> tuple[dict[int, dict], int]:
+    normalized = {slot: dict(row) for slot, row in layout.items()}
+    assigned = {row.get("channel_name") for row in normalized.values() if row.get("channel_name")}
+    missing = [name for name in channel_names if name not in assigned]
+    empty_slots = sorted(slot for slot, row in normalized.items() if not row.get("channel_name"))
+
+    for name in missing:
+        if empty_slots:
+            slot = empty_slots.pop(0)
+        else:
+            slot = max(normalized.keys(), default=0) + 1
+        normalized[slot] = {
+            "slot": slot,
+            "channel_name": name,
+            "label": None,
+            "note": None,
+            "amps": None,
+            "poles": 1,
+        }
+
+    max_slot = max(max(normalized.keys(), default=0), minimum_slots)
+    panel_slots = max(minimum_slots, ((max_slot + 19) // 20) * 20)
+    return normalized, panel_slots
+
+
 def _build_dashboard_context(panel_label: str) -> dict:
     ctx = energy.get_now_vs_context(60)
     trend = energy.get_trend(14)
@@ -2670,16 +2695,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
         ],
         key=lambda name: (name.startswith("Circuit_"), name),
     )
-    if not layout:
-        for i, name in enumerate(ordered, start=1):
-            layout[i] = {
-                "slot": i,
-                "channel_name": name,
-                "label": None,
-                "note": None,
-                "amps": None,
-                "poles": 1,
-            }
+    layout, _dashboard_panel_slots = _normalize_panel_layout(layout, ordered)
     max_w = max((_watts_estimate(latest_map.get(name, 0)) for name in ordered), default=1) or 1
     live_watts = {name: _watts_estimate(latest_map.get(name, 0)) for name in ordered}
     sorted_watts = sorted(live_watts.values(), reverse=True)
@@ -3013,22 +3029,12 @@ def circuits_page():
     # ── Circuit slots — use saved panel layout if present ─────────────────
     layout = {row["slot"]: row for row in energy.get_panel_layout()}
 
-    # Determine panel size: largest saved slot rounded up to next 20, min 20
-    max_saved = max(layout.keys(), default=0)
-    panel_slots = max(20, ((max_saved + 19) // 20) * 20)
-
-    # All known circuit names for fallback auto-population
     all_circuits = sorted([
         n for n in sum_24h
         if n not in _MAINS_NAMES and n not in _SKIP_NAMES
            and not str(n).isdigit()
     ], key=lambda n: (n.startswith("Circuit_"), n))
-
-    # If no layout saved yet, auto-assign circuits to slots in order
-    if not layout:
-        for i, name in enumerate(all_circuits):
-            layout[i + 1] = {"slot": i + 1, "channel_name": name,
-                              "label": None, "note": None, "amps": None, "poles": 1}
+    layout, panel_slots = _normalize_panel_layout(layout, all_circuits)
 
     max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in all_circuits), default=1) or 1
     _live_w_c = {n: _watts_estimate(latest_map.get(n, 0)) for n in all_circuits}
