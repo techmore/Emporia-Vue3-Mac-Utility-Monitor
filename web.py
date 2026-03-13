@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.26"
+VERSION = "1.7.27"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -4840,6 +4840,9 @@ if __name__ == "__main__":
             "[startup] fixed %s CSV kWatts rows (÷60 unit correction)",
             f"{csv_fix['fixed']:,}",
         )
+    snapshot_fix = energy.backfill_latest_channel_snapshot()
+    if snapshot_fix["rebuilt"]:
+        app.logger.info("[startup] rebuilt latest snapshot for %s channel(s)", snapshot_fix["rebuilt"])
     with app.app_context():
         try:
             _get_cached_dashboard()

@@ -72,6 +72,27 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(dryer["timestamp"], "2026-03-13T11:00:00.000001")
         self.assertEqual(dryer["usage_kwh"], 0.7)
 
+    def test_rebuild_latest_snapshot_uses_newest_timestamp(self):
+        conn = energy._connect()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                ("2026-03-13T11:00:00.000001", "A", 2, "Dryer", 0.7, 7.0),
+                ("2026-03-13T09:30:00", "A", None, "Dryer", 9.9, 99.0),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        rebuilt = energy.rebuild_latest_channel_snapshot()
+        latest = energy.get_latest("A")
+        dryer = next(row for row in latest if row["channel_name"] == "Dryer")
+        self.assertEqual(rebuilt, 1)
+        self.assertEqual(dryer["timestamp"], "2026-03-13T11:00:00.000001")
+        self.assertEqual(dryer["usage_kwh"], 0.7)
+
     def test_normalize_channel_name_trims_live_channel_whitespace(self):
         self.assertEqual(energy._normalize_channel_name("Well "), "Well")
         self.assertEqual(energy._normalize_channel_name(" Barn-Mains_A (kWatts) "), "Mains_A")

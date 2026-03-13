@@ -139,6 +139,15 @@ def ensure_table():
             source TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS latest_channel_snapshot (
+            device_gid TEXT NOT NULL,
+            channel_name TEXT NOT NULL,
+            channel_num TEXT,
+            usage_kwh REAL,
+            cost_cents REAL,
+            timestamp TEXT NOT NULL,
+            PRIMARY KEY (device_gid, channel_name)
+        );
 
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
@@ -253,6 +262,67 @@ def _save_device_capabilities_with_conn(
             datetime.now().isoformat(),
         ),
     )
+
+
+def _upsert_latest_snapshot_with_conn(
+    conn: sqlite3.Connection,
+    *,
+    device_gid: str,
+    channel_name: str,
+    channel_num,
+    usage_kwh: float,
+    cost_cents: float,
+    timestamp: str,
+) -> None:
+    conn.execute(
+        """INSERT INTO latest_channel_snapshot(
+               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
+           ) VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(device_gid, channel_name) DO UPDATE SET
+               channel_num=excluded.channel_num,
+               usage_kwh=excluded.usage_kwh,
+               cost_cents=excluded.cost_cents,
+               timestamp=excluded.timestamp
+           WHERE excluded.timestamp >= latest_channel_snapshot.timestamp""",
+        (str(device_gid), channel_name, None if channel_num is None else str(channel_num), usage_kwh, cost_cents, timestamp),
+    )
+
+
+def rebuild_latest_channel_snapshot() -> int:
+    conn = _connect()
+    c = conn.cursor()
+    rows = c.execute(
+        """SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
+           FROM (
+               SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                      ROW_NUMBER() OVER (
+                          PARTITION BY device_gid, channel_name
+                          ORDER BY timestamp DESC, id DESC
+                      ) AS rn
+               FROM readings
+           )
+           WHERE rn = 1"""
+    ).fetchall()
+    c.execute("DELETE FROM latest_channel_snapshot")
+    c.executemany(
+        """INSERT INTO latest_channel_snapshot(
+               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
+           ) VALUES (?, ?, ?, ?, ?, ?)""",
+        [
+            (
+                row["device_gid"],
+                row["channel_name"],
+                None if row["channel_num"] is None else str(row["channel_num"]),
+                row["usage_kwh"],
+                row["cost_cents"],
+                row["timestamp"],
+            )
+            for row in rows
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return len(rows)
 
 
 def get_device_capabilities(device_gid: str | None = None) -> dict | None:
@@ -505,6 +575,15 @@ def poll_and_store(vue, device_gids):
                    (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (now, gid, channelnum, channel_name, channel.usage, cost),
+            )
+            _upsert_latest_snapshot_with_conn(
+                conn,
+                device_gid=str(gid),
+                channel_name=channel_name,
+                channel_num=channelnum,
+                usage_kwh=channel.usage,
+                cost_cents=cost,
+                timestamp=now,
             )
         _save_device_capabilities_with_conn(
             conn,
@@ -787,20 +866,28 @@ def get_latest(device_gid: str | None = None):
         conn.close()
         return []
 
-    c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
-        FROM (
-            SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY channel_name
-                       ORDER BY timestamp DESC, id DESC
-                   ) AS rn
-            FROM readings
-            WHERE device_gid = ?
-        )
-        WHERE rn = 1
-        ORDER BY usage_kwh DESC""", (resolved_gid,))
-
+    c.execute(
+        """SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
+           FROM latest_channel_snapshot
+           WHERE device_gid = ?
+           ORDER BY usage_kwh DESC""",
+        (resolved_gid,),
+    )
     results = c.fetchall()
+    if not results:
+        c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
+            FROM (
+                SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY channel_name
+                           ORDER BY timestamp DESC, id DESC
+                       ) AS rn
+                FROM readings
+                WHERE device_gid = ?
+            )
+            WHERE rn = 1
+            ORDER BY usage_kwh DESC""", (resolved_gid,))
+        results = c.fetchall()
     conn.close()
     return [dict(row) for row in results]
 
@@ -1180,23 +1267,31 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
     )
     circuits = [dict(r) for r in c.fetchall()]
 
-    # Most recent single reading per channel (for "right now" watts estimate)
     c.execute(
         """SELECT channel_name, channel_num, usage_kwh, timestamp
-           FROM (
-               SELECT channel_name, channel_num, usage_kwh, timestamp,
-                      ROW_NUMBER() OVER (
-                          PARTITION BY channel_name
-                          ORDER BY timestamp DESC, id DESC
-                      ) AS rn
-            FROM readings
-            WHERE device_gid = ?
-           )
-           WHERE rn = 1
+           FROM latest_channel_snapshot
+           WHERE device_gid = ?
            ORDER BY usage_kwh DESC""",
         (resolved_gid,),
     )
     latest_readings = [dict(r) for r in c.fetchall()]
+    if not latest_readings:
+        c.execute(
+            """SELECT channel_name, channel_num, usage_kwh, timestamp
+               FROM (
+                   SELECT channel_name, channel_num, usage_kwh, timestamp,
+                          ROW_NUMBER() OVER (
+                              PARTITION BY channel_name
+                              ORDER BY timestamp DESC, id DESC
+                          ) AS rn
+                FROM readings
+                WHERE device_gid = ?
+               )
+               WHERE rn = 1
+               ORDER BY usage_kwh DESC""",
+            (resolved_gid,),
+        )
+        latest_readings = [dict(r) for r in c.fetchall()]
 
     conn.close()
 
@@ -1465,6 +1560,16 @@ def import_emporia_csv(
         )
         imported = conn.total_changes - before_changes
         skipped += len(rows_to_insert) - imported
+        for ts_iso, row_device_gid, channel_num, channel_name, usage_kwh, cost_cents in rows_to_insert:
+            _upsert_latest_snapshot_with_conn(
+                conn,
+                device_gid=str(row_device_gid),
+                channel_name=channel_name,
+                channel_num=channel_num,
+                usage_kwh=usage_kwh,
+                cost_cents=cost_cents,
+                timestamp=ts_iso,
+            )
 
     conn.commit()
     conn.close()
@@ -1539,6 +1644,30 @@ def fix_csv_kwatts_import() -> dict:
     conn.commit()
     conn.close()
     return {"fixed": fixed}
+
+
+def backfill_latest_channel_snapshot() -> dict:
+    """One-time rebuild of latest_channel_snapshot from existing readings."""
+    conn = _connect()
+    c = conn.cursor()
+    migration_name = "latest_channel_snapshot_backfill_v1"
+    already_applied = c.execute(
+        "SELECT 1 FROM migrations WHERE name = ?",
+        (migration_name,),
+    ).fetchone()
+    if already_applied:
+        conn.close()
+        return {"rebuilt": 0}
+    conn.close()
+    rebuilt = rebuild_latest_channel_snapshot()
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO migrations(name, applied_at) VALUES(?, ?)",
+        (migration_name, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"rebuilt": rebuilt}
 
 
 def get_log_entries(n: int = 200) -> list[dict]:
