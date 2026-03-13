@@ -19,6 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_NAME="$(basename "$SCRIPT_DIR")"
 APP_DIR="$SCRIPT_DIR/EnergyMonitorApp"
 SRC="$APP_DIR/Sources/main.swift"
 BIN="$APP_DIR/EnergyMonitorApp"
@@ -27,6 +28,7 @@ BUNDLE_BIN="$BUNDLE/Contents/MacOS/EnergyMonitorApp"
 VENV_PYTHON="$SCRIPT_DIR/venv/bin/python3"
 FLASK_LOG="$SCRIPT_DIR/flask.log"
 POLLER_LOG="/tmp/energymonitor-poller.log"
+POLLER_STATUS_FILE="$SCRIPT_DIR/poller_status.json"
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
 DO_OPEN=true
@@ -45,6 +47,18 @@ ok()   { echo "  ✓  $*"; }
 info() { echo "  →  $*"; }
 warn() { echo "  ⚠  $*"; }
 
+kill_matching_repo_processes() {
+  local pattern="$1"
+  local label="$2"
+  for PID in $(pgrep -f "$pattern" 2>/dev/null || true); do
+    local CMD
+    CMD=$(ps eww -p "$PID" -o command= 2>/dev/null || true)
+    if echo "$CMD" | grep -q "$REPO_NAME"; then
+      kill -9 "$PID" 2>/dev/null && ok "Killed $label (PID $PID)" || true
+    fi
+  done
+}
+
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║       Emporia Energy Monitor — build.sh      ║"
@@ -62,13 +76,11 @@ for PID in $(lsof -ti :5001 2>/dev/null); do
   fi
 done
 
-# Kill any running poller from this project
-for PID in $(pgrep -f "$SCRIPT_DIR/venv/bin/python3" 2>/dev/null || true); do
-  CMD=$(ps -p "$PID" -o command= 2>/dev/null || true)
-  if echo "$CMD" | grep -q "energy\.py"; then
-    kill -9 "$PID" 2>/dev/null && ok "Killed poller (PID $PID)" || true
-  fi
-done
+kill_matching_repo_processes "web.py" "Flask"
+
+# Kill any running poller or wrapper from this repo, including stale clones
+kill_matching_repo_processes "energy.py" "poller"
+kill_matching_repo_processes "EnergyMonitorApp" "menu app"
 
 sleep 1
 
@@ -125,20 +137,27 @@ done
 # ── 5. Start poller (energy.py) ───────────────────────────────────────────────
 echo ""
 echo "[ 5 / 6 ]  Starting Emporia poller…"
-nohup "$VENV_PYTHON" energy.py >> "$POLLER_LOG" 2>&1 &
+rm -f "$POLLER_STATUS_FILE"
+nohup "$VENV_PYTHON" -u energy.py >> "$POLLER_LOG" 2>&1 &
 POLLER_PID=$!
 ok "Poller started (PID $POLLER_PID) — log: $POLLER_LOG"
 
-# Give poller a moment to write its first heartbeat
-sleep 2
-POLLER_STATUS=$(python3 -c "
+# Wait for the new poller heartbeat instead of reading a stale previous run
+POLLER_STATUS="starting…"
+for i in $(seq 1 15); do
+  POLLER_STATUS=$(python3 -c "
 import json
 try:
-    d = json.load(open('$SCRIPT_DIR/poller_status.json'))
+    d = json.load(open('$POLLER_STATUS_FILE'))
     print('ok' if d.get('ok') else 'error: ' + (d.get('error') or 'unknown'))
 except:
     print('starting…')
 " 2>/dev/null || echo "starting…")
+  if [ "$POLLER_STATUS" != "starting…" ]; then
+    break
+  fi
+  sleep 1
+done
 ok "Poller status: $POLLER_STATUS"
 
 # ── 6. Open the app ───────────────────────────────────────────────────────────
