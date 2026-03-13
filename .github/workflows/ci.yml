@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create virtualenv
+        run: python3 -m venv venv
+
+      - name: Install dependencies
+        run: venv/bin/python3 -m pip install -r requirements.lock
+
+      - name: Syntax check
+        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py
+
+      - name: Run unit tests
+        run: venv/bin/python3 -m unittest discover -s tests -v
+
+      - name: Smoke test Flask routes
+        run: |
+          venv/bin/python3 - <<'PY'
+          import web
+          client = web.app.test_client()
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log']:
+              response = client.get(path)
+              assert response.status_code == 200, f"{path}: {response.status_code}"
+          PY

@@ -2602,6 +2602,10 @@ def index():
                               "pct": (c["kwh"] / (ctx["current_kwh"] or 1)) * 100})
     top_circuits.sort(key=lambda x: x["watts"], reverse=True)
     top_circuits = top_circuits[:12]
+    top_live_circuits = [
+        {"channel_name": c["channel_name"], "display_name": c["channel_name"], "watts": c["watts"]}
+        for c in top_circuits
+    ]
 
     # 24h circuit breakdown (meta channels already excluded by get_summary)
     summary_24 = energy.get_summary(24)
@@ -2808,9 +2812,11 @@ def index():
         panel_invert_right=_invert_right,
         trend=trend,
         standby=standby,
+        standby_circuits=standby,
         standby_total_w=standby_total_w,
         safety_breakers=safety_breakers,
         danger_breakers=danger_breakers,
+        top_live_circuits=top_live_circuits,
         leg_a=leg_a, leg_b=leg_b,
         trend_dir=trend_dir, trend_color=trend_color, trend_avg=trend_avg,
         delta_yd=_delta_badge(ctx["vs_yesterday_pct"],  "yesterday", invert=True),
