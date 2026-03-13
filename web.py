@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.16"
+VERSION = "1.7.18"
 
 
 def _read_monthly_budget() -> float:
@@ -870,6 +870,7 @@ PANEL_FRAGMENT_HTML = """
     <div class="mains-card">
       <div class="mc-leg">{{ m.label }}</div>
       <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+      {% if m.live_estimated %}<div class="mc-kwh" style="margin-top:2px;">live watts estimated from slot layout</div>{% endif %}
       <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
     </div>
     {% endfor %}
@@ -1224,6 +1225,9 @@ DASH_HTML = """
               <div style="height:5px; background:var(--surface2); border-radius:3px; overflow:hidden;">
                 <div style="height:5px; width:{{ pct_a }}%; background:var(--olive-500); border-radius:3px;"></div>
               </div>
+              {% if leg_a.live_estimated or leg_b.live_estimated %}
+              <div class="card-meta">historical legs native; live balance estimated from slot layout</div>
+              {% endif %}
               {% else %}
               <div class="card-value" style="font-size:1rem;">—</div>
               <div class="card-meta">no leg data</div>
@@ -2813,29 +2817,16 @@ def _build_mains_cards(latest_map: dict[str, float], hours: int = 24) -> tuple[d
             "watts": watts,
             "kwh_24h": row.get("total_kwh", 0) or 0,
             "cost_24h": (row.get("total_cents", 0) or 0) / 100,
+            "live_estimated": False,
         })
 
     return total_card, leg_cards
 
 
-def _detect_service_feed(
-    latest_rows: list[dict],
+def _infer_live_leg_watts(
     latest_map: dict[str, float],
     layout: dict[int, dict],
-) -> tuple[dict | None, list[dict], str]:
-    capabilities = energy.get_device_capabilities()
-    total_main, native_legs = _build_mains_cards(latest_map, 24)
-    native_names = {row["label"] for row in native_legs}
-    if capabilities and capabilities.get("service_mode") == "three_phase_native":
-        return total_main, native_legs, "three_phase_native"
-    if capabilities and capabilities.get("service_mode") == "split_phase_native":
-        native_legs = [row for row in native_legs if row["label"] in {"Leg A", "Leg B"}]
-        return total_main, native_legs, "split_phase_native"
-    if {"Leg A", "Leg B", "Leg C"}.issubset(native_names):
-        return total_main, native_legs, "three_phase_native"
-    if {"Leg A", "Leg B"}.issubset(native_names):
-        return total_main, native_legs, "split_phase_native"
-
+) -> tuple[float, float, bool]:
     leg_a_watts = 0.0
     leg_b_watts = 0.0
     found = False
@@ -2853,13 +2844,54 @@ def _detect_service_feed(
         else:
             leg_b_watts += watts
         found = True
+    return leg_a_watts, leg_b_watts, found
 
-    if not found:
+
+def _detect_service_feed(
+    latest_rows: list[dict],
+    latest_map: dict[str, float],
+    layout: dict[int, dict],
+) -> tuple[dict | None, list[dict], str]:
+    capabilities = energy.get_device_capabilities()
+    total_main, native_legs = _build_mains_cards(latest_map, 24)
+    native_names = {row["label"] for row in native_legs}
+    inferred_a, inferred_b, inferred_found = _infer_live_leg_watts(latest_map, layout)
+    latest_rows_by_name = {row["channel_name"]: row for row in latest_rows}
+    live_has_native_legs = all(
+        _reading_fresh(latest_rows_by_name.get(name))
+        for name in ("Mains_A", "Mains_B")
+    )
+    if capabilities and capabilities.get("service_mode") == "three_phase_native":
+        return total_main, native_legs, "three_phase_native"
+    if capabilities and capabilities.get("service_mode") == "split_phase_native":
+        native_legs = [row for row in native_legs if row["label"] in {"Leg A", "Leg B"}]
+        if native_legs and live_has_native_legs:
+            return total_main, native_legs, "split_phase_native"
+        if native_legs:
+            for row in native_legs:
+                if row["label"] == "Leg A" and inferred_found:
+                    row["watts"] = inferred_a
+                    row["live_estimated"] = True
+                elif row["label"] == "Leg B" and inferred_found:
+                    row["watts"] = inferred_b
+                    row["live_estimated"] = True
+        elif inferred_found:
+            native_legs = [
+                {"label": "Leg A", "is_total": False, "watts": inferred_a, "kwh_24h": 0, "cost_24h": 0, "live_estimated": True},
+                {"label": "Leg B", "is_total": False, "watts": inferred_b, "kwh_24h": 0, "cost_24h": 0, "live_estimated": True},
+            ]
+        return total_main, native_legs, "split_phase_native"
+    if {"Leg A", "Leg B", "Leg C"}.issubset(native_names):
+        return total_main, native_legs, "three_phase_native"
+    if {"Leg A", "Leg B"}.issubset(native_names):
+        return total_main, native_legs, "split_phase_native"
+
+    if not inferred_found:
         return total_main, native_legs, "aggregate_only"
 
     inferred_legs = [
-        {"label": "Leg A (est.)", "is_total": False, "watts": leg_a_watts, "kwh_24h": 0, "cost_24h": 0},
-        {"label": "Leg B (est.)", "is_total": False, "watts": leg_b_watts, "kwh_24h": 0, "cost_24h": 0},
+        {"label": "Leg A (est.)", "is_total": False, "watts": inferred_a, "kwh_24h": 0, "cost_24h": 0, "live_estimated": True},
+        {"label": "Leg B (est.)", "is_total": False, "watts": inferred_b, "kwh_24h": 0, "cost_24h": 0, "live_estimated": True},
     ]
     return total_main, inferred_legs, "split_phase_inferred"
 

@@ -158,6 +158,59 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(capabilities["has_mains_b"], 1)
         self.assertEqual(capabilities["mains_c_no_ct"], 1)
 
+    def test_native_split_phase_mode_can_estimate_live_leg_watts(self):
+        conn = energy._connect()
+        ts = energy.datetime.now().replace(microsecond=0).isoformat()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (ts, "A", "1,2,3", "Main", 1.0, 10.0),
+                (ts, "A", 1, "Dryer", 0.3, 3.0),
+                (ts, "A", 2, "HVAC", 0.2, 2.0),
+            ],
+        )
+        conn.executemany(
+            """INSERT INTO circuit_labels
+               (slot, channel_name, label, note, amps, poles)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (1, "Dryer", "Dryer", None, 30, 2),
+                (2, "HVAC", "HVAC", None, 20, 1),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        energy.save_device_capabilities(
+            "A",
+            service_mode="split_phase_native",
+            has_main=True,
+            has_mains_a=True,
+            has_mains_b=True,
+            has_mains_c=True,
+            mains_c_no_ct=True,
+            source="csv_import",
+        )
+        settings = Path("settings.json")
+        original = settings.read_text() if settings.exists() else None
+        try:
+            settings.write_text('{\n  "primary_device_gid": "A"\n}', encoding="utf-8")
+            with web.app.app_context():
+                total_main, legs, mode = web._detect_service_feed(
+                    energy.get_latest("A"),
+                    {r["channel_name"]: r["usage_kwh"] for r in energy.get_latest("A")},
+                    {row["slot"]: row for row in energy.get_panel_layout()},
+                )
+        finally:
+            if original is None:
+                settings.unlink(missing_ok=True)
+            else:
+                settings.write_text(original, encoding="utf-8")
+        self.assertEqual(mode, "split_phase_native")
+        self.assertEqual([row["label"] for row in legs], ["Leg A", "Leg B"])
+        self.assertTrue(all(row["live_estimated"] for row in legs))
+
     def test_fix_csv_kwatts_import_runs_only_once(self):
         conn = energy._connect()
         conn.execute(
