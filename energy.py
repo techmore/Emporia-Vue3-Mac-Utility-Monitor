@@ -514,6 +514,38 @@ def get_summary(hours=24, device_gid: str | None = None):
     return [dict(row) for row in results]
 
 
+def get_channel_totals(
+    channel_names: list[str], hours: int = 24, device_gid: str | None = None
+) -> list[dict]:
+    if not channel_names:
+        return []
+
+    conn = _connect()
+    c = conn.cursor()
+    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return []
+
+    placeholders = ",".join("?" for _ in channel_names)
+    c.execute(
+        f"""SELECT channel_name,
+                   SUM(usage_kwh) as total_kwh,
+                   SUM(cost_cents) as total_cents,
+                   COUNT(*) as readings
+            FROM readings
+            WHERE timestamp >= ?
+              AND device_gid = ?
+              AND channel_name IN ({placeholders})
+            GROUP BY channel_name""",
+        (since, resolved_gid, *channel_names),
+    )
+    results = c.fetchall()
+    conn.close()
+    return [dict(row) for row in results]
+
+
 def get_hourly_data(days=7, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()

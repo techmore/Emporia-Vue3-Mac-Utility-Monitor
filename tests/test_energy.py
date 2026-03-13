@@ -138,6 +138,25 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(next(r for r in latest if r["channel_name"] == "Main")["usage_kwh"], 1.0)
         self.assertEqual(context["current_kwh"], 1.0)
 
+    def test_get_channel_totals_includes_meta_channels(self):
+        conn = energy._connect()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                ("2026-03-13T11:00:00", "A", 1, "Mains_A", 0.5, 5.0),
+                ("2026-03-13T11:00:00", "A", 2, "Mains_B", 0.6, 6.0),
+                ("2026-03-13T11:00:00", "A", 3, "Dryer", 0.2, 2.0),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        totals = {r["channel_name"]: r for r in energy.get_channel_totals(["Mains_A", "Mains_B"], 24)}
+        self.assertEqual(totals["Mains_A"]["total_kwh"], 0.5)
+        self.assertEqual(totals["Mains_B"]["total_kwh"], 0.6)
+
 
 if __name__ == "__main__":
     unittest.main()

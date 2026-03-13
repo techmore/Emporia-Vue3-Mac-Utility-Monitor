@@ -2174,6 +2174,10 @@ def index():
 
     # Mains cards + breaker panel for dashboard panel view
     sum_24h_map = {r["channel_name"]: r for r in summary_24}
+    mains_24h_map = {
+        r["channel_name"]: r
+        for r in energy.get_channel_totals(["Mains_A", "Mains_B", "Mains_C"], 24)
+    }
     # Mains: Total first (from live Main channel), then Leg A / Leg B
     leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
     dash_mains = []
@@ -2187,9 +2191,9 @@ def index():
         "cost_24h": (main_24h or {}).get("total_cents", 0) / 100,
     })
     for name in ("Mains_A", "Mains_B", "Mains_C"):
-        if name not in sum_24h_map:
+        if name not in mains_24h_map:
             continue
-        r = sum_24h_map[name]
+        r = mains_24h_map[name]
         dash_mains.append({
             "label":    leg_labels[name],
             "is_total": False,
@@ -2363,6 +2367,10 @@ def circuits_page():
 
     # Per-period summaries
     sum_24h  = {r["channel_name"]: r for r in energy.get_summary(24)}
+    mains_24h = {
+        r["channel_name"]: r
+        for r in energy.get_channel_totals(["Mains_A", "Mains_B", "Mains_C"], 24)
+    }
     sum_week = {r["channel_name"]: r for r in energy.get_summary(24 * 7)}
     sum_mon  = {r["channel_name"]: r for r in energy.get_summary(24 * 30)}
 
@@ -2379,9 +2387,9 @@ def circuits_page():
         "cost_24h": (_main_24h_c or {}).get("total_cents", 0) / 100,
     }]
     for name in ("Mains_A", "Mains_B", "Mains_C"):
-        if name not in sum_24h:
+        if name not in mains_24h:
             continue
-        r = sum_24h[name]
+        r = mains_24h[name]
         mains.append({
             "label": leg_labels[name], "is_total": False,
             "watts":    _watts_estimate(latest_map.get(name, 0)),
