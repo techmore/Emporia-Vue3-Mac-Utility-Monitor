@@ -104,6 +104,60 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(second["imported"], 0)
         self.assertEqual(second["skipped"], 2)
 
+    def test_csv_import_persists_split_phase_capabilities(self):
+        csv_text = (
+            "Time Bucket (America/New_York),Barn-Mains_A (kWatts),Barn-Mains_B (kWatts),"
+            "Barn-Mains_C (kWatts),Barn-Circuit_5 (kWatts)\n"
+            "03/13/2026 10:00:00,1.5,1.2,No CT,0.1\n"
+        )
+        fd, csv_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        Path(csv_path).write_text(csv_text, encoding="utf-8")
+        try:
+            energy.import_emporia_csv(
+                csv_path,
+                device_gid="551741",
+                original_filename="8C9E94-Barn-1MIN.csv",
+            )
+        finally:
+            Path(csv_path).unlink(missing_ok=True)
+
+        capabilities = energy.get_device_capabilities("551741")
+        self.assertIsNotNone(capabilities)
+        self.assertEqual(capabilities["service_mode"], "split_phase_native")
+        self.assertEqual(capabilities["has_mains_a"], 1)
+        self.assertEqual(capabilities["has_mains_b"], 1)
+        self.assertEqual(capabilities["has_mains_c"], 1)
+        self.assertEqual(capabilities["mains_c_no_ct"], 1)
+
+    def test_live_poll_capabilities_do_not_downgrade_csv_capabilities(self):
+        energy.save_device_capabilities(
+            "551741",
+            service_mode="split_phase_native",
+            has_main=True,
+            has_mains_a=True,
+            has_mains_b=True,
+            has_mains_c=True,
+            mains_c_no_ct=True,
+            source="csv_import",
+        )
+        energy.save_device_capabilities(
+            "551741",
+            service_mode="aggregate_only",
+            has_main=True,
+            has_mains_a=False,
+            has_mains_b=False,
+            has_mains_c=False,
+            mains_c_no_ct=False,
+            source="live_poll",
+        )
+        capabilities = energy.get_device_capabilities("551741")
+        self.assertEqual(capabilities["service_mode"], "split_phase_native")
+        self.assertEqual(capabilities["source"], "csv_import")
+        self.assertEqual(capabilities["has_mains_a"], 1)
+        self.assertEqual(capabilities["has_mains_b"], 1)
+        self.assertEqual(capabilities["mains_c_no_ct"], 1)
+
     def test_fix_csv_kwatts_import_runs_only_once(self):
         conn = energy._connect()
         conn.execute(

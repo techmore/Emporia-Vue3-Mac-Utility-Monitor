@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.14"
+VERSION = "1.7.16"
 
 
 def _read_monthly_budget() -> float:
@@ -2823,8 +2823,14 @@ def _detect_service_feed(
     latest_map: dict[str, float],
     layout: dict[int, dict],
 ) -> tuple[dict | None, list[dict], str]:
+    capabilities = energy.get_device_capabilities()
     total_main, native_legs = _build_mains_cards(latest_map, 24)
     native_names = {row["label"] for row in native_legs}
+    if capabilities and capabilities.get("service_mode") == "three_phase_native":
+        return total_main, native_legs, "three_phase_native"
+    if capabilities and capabilities.get("service_mode") == "split_phase_native":
+        native_legs = [row for row in native_legs if row["label"] in {"Leg A", "Leg B"}]
+        return total_main, native_legs, "split_phase_native"
     if {"Leg A", "Leg B", "Leg C"}.issubset(native_names):
         return total_main, native_legs, "three_phase_native"
     if {"Leg A", "Leg B"}.issubset(native_names):

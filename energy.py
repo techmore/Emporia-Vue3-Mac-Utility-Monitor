@@ -124,6 +124,17 @@ def ensure_table():
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS device_capabilities (
+            device_gid TEXT PRIMARY KEY,
+            service_mode TEXT NOT NULL,
+            has_main INTEGER NOT NULL DEFAULT 0,
+            has_mains_a INTEGER NOT NULL DEFAULT 0,
+            has_mains_b INTEGER NOT NULL DEFAULT 0,
+            has_mains_c INTEGER NOT NULL DEFAULT 0,
+            mains_c_no_ct INTEGER NOT NULL DEFAULT 0,
+            source TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
 
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
@@ -153,6 +164,109 @@ def get_panel_layout() -> list[dict]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def save_device_capabilities(
+    device_gid: str,
+    *,
+    service_mode: str,
+    has_main: bool,
+    has_mains_a: bool,
+    has_mains_b: bool,
+    has_mains_c: bool,
+    mains_c_no_ct: bool,
+    source: str,
+) -> None:
+    conn = _connect()
+    _save_device_capabilities_with_conn(
+        conn,
+        device_gid=device_gid,
+        service_mode=service_mode,
+        has_main=has_main,
+        has_mains_a=has_mains_a,
+        has_mains_b=has_mains_b,
+        has_mains_c=has_mains_c,
+        mains_c_no_ct=mains_c_no_ct,
+        source=source,
+    )
+    conn.commit()
+    conn.close()
+
+
+def _save_device_capabilities_with_conn(
+    conn: sqlite3.Connection,
+    *,
+    device_gid: str,
+    service_mode: str,
+    has_main: bool,
+    has_mains_a: bool,
+    has_mains_b: bool,
+    has_mains_c: bool,
+    mains_c_no_ct: bool,
+    source: str,
+) -> None:
+    existing = conn.execute(
+        """SELECT service_mode, has_main, has_mains_a, has_mains_b,
+                  has_mains_c, mains_c_no_ct, source
+           FROM device_capabilities
+           WHERE device_gid = ?""",
+        (str(device_gid),),
+    ).fetchone()
+    if existing:
+        if _service_mode_rank(existing["service_mode"]) > _service_mode_rank(service_mode):
+            service_mode = existing["service_mode"]
+        if existing["source"] == "csv_import" and source == "live_poll":
+            source = existing["source"]
+        has_main = has_main or bool(existing["has_main"])
+        has_mains_a = has_mains_a or bool(existing["has_mains_a"])
+        has_mains_b = has_mains_b or bool(existing["has_mains_b"])
+        has_mains_c = has_mains_c or bool(existing["has_mains_c"])
+        mains_c_no_ct = mains_c_no_ct or bool(existing["mains_c_no_ct"])
+
+    conn.execute(
+        """INSERT INTO device_capabilities(
+               device_gid, service_mode, has_main, has_mains_a, has_mains_b,
+               has_mains_c, mains_c_no_ct, source, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(device_gid) DO UPDATE SET
+               service_mode=excluded.service_mode,
+               has_main=excluded.has_main,
+               has_mains_a=excluded.has_mains_a,
+               has_mains_b=excluded.has_mains_b,
+               has_mains_c=excluded.has_mains_c,
+               mains_c_no_ct=excluded.mains_c_no_ct,
+               source=excluded.source,
+               updated_at=excluded.updated_at""",
+        (
+            str(device_gid),
+            service_mode,
+            int(has_main),
+            int(has_mains_a),
+            int(has_mains_b),
+            int(has_mains_c),
+            int(mains_c_no_ct),
+            source,
+            datetime.now().isoformat(),
+        ),
+    )
+
+
+def get_device_capabilities(device_gid: str | None = None) -> dict | None:
+    conn = _connect()
+    c = conn.cursor()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return None
+    row = c.execute(
+        """SELECT device_gid, service_mode, has_main, has_mains_a, has_mains_b,
+                  has_mains_c, mains_c_no_ct, source, updated_at
+           FROM device_capabilities
+           WHERE device_gid = ?""",
+        (resolved_gid,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def save_panel_slot(slot: int, channel_name: str | None, label: str | None,
@@ -337,10 +451,24 @@ def poll_and_store(vue, device_gids):
     now = datetime.now().isoformat()
 
     for gid, device in usage_dict.items():
+        capability = {
+            "has_main": False,
+            "has_mains_a": False,
+            "has_mains_b": False,
+            "has_mains_c": False,
+        }
         for channelnum, channel in device.channels.items():
             if channel.usage is None:
                 continue
             channel_name = _normalize_channel_name(channel.name)
+            if channel_name == "Main":
+                capability["has_main"] = True
+            elif channel_name == "Mains_A":
+                capability["has_mains_a"] = True
+            elif channel_name == "Mains_B":
+                capability["has_mains_b"] = True
+            elif channel_name == "Mains_C":
+                capability["has_mains_c"] = True
 
             cost = channel.usage * RATE_CENTS
 
@@ -350,6 +478,17 @@ def poll_and_store(vue, device_gids):
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (now, gid, channelnum, channel_name, channel.usage, cost),
             )
+        _save_device_capabilities_with_conn(
+            conn,
+            device_gid=str(gid),
+            service_mode=_classify_service_mode(**capability),
+            has_main=capability["has_main"],
+            has_mains_a=capability["has_mains_a"],
+            has_mains_b=capability["has_mains_b"],
+            has_mains_c=capability["has_mains_c"],
+            mains_c_no_ct=False,
+            source="live_poll",
+        )
 
     # Prune old rows to keep the database from growing unboundedly.
     cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
@@ -1057,6 +1196,33 @@ def _clean_csv_channel_name(col: str) -> str:
     return name
 
 
+def _classify_service_mode(
+    *,
+    has_main: bool,
+    has_mains_a: bool,
+    has_mains_b: bool,
+    has_mains_c: bool,
+    mains_c_no_ct: bool = False,
+) -> str:
+    if has_mains_a and has_mains_b and has_mains_c and not mains_c_no_ct:
+        return "three_phase_native"
+    if has_mains_a and has_mains_b:
+        return "split_phase_native"
+    if has_main:
+        return "aggregate_only"
+    return "unknown"
+
+
+def _service_mode_rank(mode: str) -> int:
+    return {
+        "unknown": 0,
+        "aggregate_only": 1,
+        "split_phase_inferred": 2,
+        "split_phase_native": 3,
+        "three_phase_native": 4,
+    }.get(mode, 0)
+
+
 def import_emporia_csv(
     filepath: str,
     device_gid: str | None = None,
@@ -1098,6 +1264,13 @@ def import_emporia_csv(
     c = conn.cursor()
     imported = skipped = errors = 0
     detected_unit: str | None = None
+    capability = {
+        "has_main": False,
+        "has_mains_a": False,
+        "has_mains_b": False,
+        "has_mains_c": False,
+        "mains_c_no_ct": False,
+    }
 
     with open(filepath, newline="", encoding="utf-8-sig") as f:
         reader = csv_mod.DictReader(f)
@@ -1116,7 +1289,16 @@ def import_emporia_csv(
             is_kwatts = "(kWatts)" in col or "(kW)" in col
             if detected_unit is None:
                 detected_unit = "kWatts" if is_kwatts else "kWhs"
-            channel_cols.append((col, _clean_csv_channel_name(col), is_kwatts))
+            channel_name = _clean_csv_channel_name(col)
+            if channel_name == "Main":
+                capability["has_main"] = True
+            elif channel_name == "Mains_A":
+                capability["has_mains_a"] = True
+            elif channel_name == "Mains_B":
+                capability["has_mains_b"] = True
+            elif channel_name == "Mains_C":
+                capability["has_mains_c"] = True
+            channel_cols.append((col, channel_name, is_kwatts))
 
         # Conversion factor for kWatts columns: kWh = kW × (interval_minutes / 60)
         # Fall back to assuming 1MIN if interval not parseable from filename
@@ -1140,6 +1322,8 @@ def import_emporia_csv(
             for col, channel_name, is_kwatts in channel_cols:
                 val = row.get(col, "").strip()
                 if not val or val.lower() == "no ct":
+                    if channel_name == "Mains_C" and val.lower() == "no ct":
+                        capability["mains_c_no_ct"] = True
                     skipped += 1
                     continue
                 try:
@@ -1168,6 +1352,22 @@ def import_emporia_csv(
 
     conn.commit()
     conn.close()
+    save_device_capabilities(
+        str(device_gid),
+        service_mode=_classify_service_mode(
+            has_main=capability["has_main"],
+            has_mains_a=capability["has_mains_a"],
+            has_mains_b=capability["has_mains_b"],
+            has_mains_c=capability["has_mains_c"],
+            mains_c_no_ct=capability["mains_c_no_ct"],
+        ),
+        has_main=capability["has_main"],
+        has_mains_a=capability["has_mains_a"],
+        has_mains_b=capability["has_mains_b"],
+        has_mains_c=capability["has_mains_c"],
+        mains_c_no_ct=capability["mains_c_no_ct"],
+        source="csv_import",
+    )
     return {
         "imported": imported,
         "skipped": skipped,
