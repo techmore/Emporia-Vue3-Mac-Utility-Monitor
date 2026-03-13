@@ -8,7 +8,6 @@ from flask import Flask, jsonify, redirect, render_template_string, Response, re
 from jinja2 import select_autoescape
 from werkzeug.exceptions import RequestEntityTooLarge
 import json
-import logging
 import math
 import os
 import time
@@ -23,7 +22,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.41"
+VERSION = "2.0.0"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -886,7 +885,7 @@ def _build_live_dashboard_payload() -> dict:
 def _delta_badge(pct, label: str, invert: bool = False) -> str:
     """Return an HTML delta badge. invert=True means lower is better."""
     if pct is None:
-        return f'<span class="delta nodata">no prior data</span>'
+        return '<span class="delta nodata">no prior data</span>'
     arrow = "↑" if pct > 0 else "↓"
     if invert:
         cls = "up" if pct > 0 else ("flat" if pct == 0 else "down")
@@ -3204,6 +3203,12 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     main_now = next((r for r in ctx["latest"] if r["channel_name"] == "Main"), None)
     current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
     summary_24_map = {row["channel_name"]: row for row in summary_24}
+    circuits_24 = [
+        row for row in summary_24
+        if row["channel_name"] not in _MAINS_NAMES
+        and row["channel_name"] not in _SKIP_NAMES
+    ]
+    total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
     top_circuits = []
     for row in ctx["circuits"]:
         name = row["channel_name"]
@@ -3226,12 +3231,6 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         for row in top_circuits
     ]
 
-    circuits_24 = [
-        row for row in summary_24
-        if row["channel_name"] not in _MAINS_NAMES
-        and row["channel_name"] not in _SKIP_NAMES
-    ]
-    total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
     for row in circuits_24:
         row["pct"] = row["total_kwh"] / total_kwh_24 * 100
     biggest_circuit = max(circuits_24, key=lambda row: row["total_kwh"]) if circuits_24 else None
@@ -3718,11 +3717,9 @@ def circuit_detail(circuit_name, period="day"):
     # Per-circuit context comparison using same window as the period
     window_map = {"hour": 60, "day": 60*24, "week": 60*24*7, "month": 60*24*30}
     wmin = window_map.get(period, 60*24)
-    ctx = energy.get_now_vs_context(wmin)
     # Override circuit-level context (main get_now_vs_context queries Main channel)
     # Build a simple circuit-specific context
     from datetime import datetime, timedelta
-    import sqlite3 as _sq
     _conn = energy._connect()
     _c    = _conn.cursor()
     _now  = datetime.now()

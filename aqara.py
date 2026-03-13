@@ -22,7 +22,6 @@ Regions:
 import hashlib
 import hmac
 import json
-import os
 import time
 import uuid
 from pathlib import Path

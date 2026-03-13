@@ -1118,11 +1118,9 @@ def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
     elif period == "year":
         since = (now - timedelta(days=365 * 3)).isoformat()
         group_by = "strftime('%Y', timestamp)"
-        fmt = "%Y"
     else:
         since = (now - timedelta(days=7)).isoformat()
         group_by = "strftime('%Y-%m-%d', timestamp)"
-        fmt = "%Y-%m-%d"
 
     c.execute(
         f"""SELECT {group_by} as period,
