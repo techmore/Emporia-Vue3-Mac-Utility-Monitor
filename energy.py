@@ -113,6 +113,10 @@ def ensure_table():
             ON readings(channel_name);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
             ON readings(device_gid, timestamp, channel_name);
+        CREATE TABLE IF NOT EXISTS migrations (
+            name TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        );
 
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
@@ -1047,6 +1051,14 @@ def fix_csv_kwatts_import() -> dict:
     """
     conn = _connect()
     c = conn.cursor()
+    migration_name = "fix_csv_kwatts_import_v1"
+    already_applied = c.execute(
+        "SELECT 1 FROM migrations WHERE name = ?",
+        (migration_name,),
+    ).fetchone()
+    if already_applied:
+        conn.close()
+        return {"fixed": 0}
     # Rows from CSV import: exact-second timestamps (no '.' in timestamp string)
     # Exclude the real live device (551741) which should never have exact timestamps
     c.execute(
@@ -1057,6 +1069,10 @@ def fix_csv_kwatts_import() -> dict:
              AND device_gid != '551741'""",
     )
     fixed = c.rowcount
+    c.execute(
+        "INSERT INTO migrations(name, applied_at) VALUES(?, ?)",
+        (migration_name, datetime.now().isoformat()),
+    )
     conn.commit()
     conn.close()
     return {"fixed": fixed}
