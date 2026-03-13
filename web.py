@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.33"
+VERSION = "1.7.34"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1338,30 +1338,6 @@ DASH_HTML = """
               {% endfor %}
               </div>
             </div>
-          </div>
-
-          <!-- Row 5: Standby / vampire loads -->
-          <div class="card">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-              <div class="card-label">Standby Loads <span style="font-weight:400; color:var(--text-light);">(1–50 W always-on)</span></div>
-              {% if standby %}
-              <div style="font-size:0.8rem; font-weight:700; color:var(--text);">{{ standby|length }} circuits · {{ "%.0f"|format(standby_total_w) }} W total</div>
-              {% endif %}
-            </div>
-            {% if standby %}
-            {% for s in standby[:5] %}
-            <div style="display:flex; justify-content:space-between; padding:2px 0;
-                        border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
-              <span style="font-size:0.8rem; color:var(--text);">{{ s.name }}</span>
-              <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
-            </div>
-            {% endfor %}
-            {% if standby|length > 5 %}
-            <div style="font-size:0.75rem; color:var(--text-light); margin-top:4px;">+ {{ standby|length - 5 }} more</div>
-            {% endif %}
-            {% else %}
-            <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No standby loads detected</div>
-            {% endif %}
           </div>
 
           <!-- Row 6: Best day / Worst day -->
