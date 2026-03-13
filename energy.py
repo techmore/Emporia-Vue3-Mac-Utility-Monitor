@@ -312,6 +312,22 @@ def get_active_device_gid(device_gid: str | None = None) -> str | None:
     return gid
 
 
+def get_latest_timestamp(device_gid: str | None = None) -> str | None:
+    """Return the newest reading timestamp for the resolved device."""
+    conn = _connect()
+    c = conn.cursor()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return None
+    row = c.execute(
+        "SELECT MAX(timestamp) AS latest_timestamp FROM readings WHERE device_gid = ?",
+        (resolved_gid,),
+    ).fetchone()
+    conn.close()
+    return row["latest_timestamp"] if row and row["latest_timestamp"] else None
+
+
 def _resolve_device_gid(c: sqlite3.Cursor, device_gid: str | None = None) -> str | None:
     if device_gid and device_gid != _GHOST_DEVICE:
         return device_gid

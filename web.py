@@ -23,9 +23,8 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.23"
-_DASHBOARD_CACHE_TTL = 10.0
-_dashboard_cache: dict[str, object] = {"expires_at": 0.0, "common": None, "context": None}
+VERSION = "1.7.24"
+_dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
 def _read_monthly_budget() -> float:
@@ -2841,18 +2840,21 @@ def _common():
 
 
 def _get_cached_dashboard() -> tuple[dict, dict]:
-    now = time.time()
+    active_device_gid = energy.get_active_device_gid()
+    latest_timestamp = energy.get_latest_timestamp(active_device_gid)
     if (
         _dashboard_cache["common"] is not None
         and _dashboard_cache["context"] is not None
-        and now < float(_dashboard_cache["expires_at"])
+        and _dashboard_cache["active_device_gid"] == active_device_gid
+        and _dashboard_cache["latest_timestamp"] == latest_timestamp
     ):
         return _dashboard_cache["common"], _dashboard_cache["context"]
 
     common = _common()
     context = _build_dashboard_context(common["panel_label"], common["active_device_gid"])
     _dashboard_cache.update({
-        "expires_at": now + _DASHBOARD_CACHE_TTL,
+        "latest_timestamp": latest_timestamp,
+        "active_device_gid": active_device_gid,
         "common": common,
         "context": context,
     })
