@@ -864,6 +864,7 @@ def get_peak_usage(device_gid: str | None = None):
         FROM readings
         WHERE timestamp >= ?
           AND device_gid = ?
+          AND channel_name = 'Main'
         GROUP BY hour
         ORDER BY avg_kwh DESC
         LIMIT 5""", (since, resolved_gid))
@@ -876,6 +877,7 @@ def get_peak_usage(device_gid: str | None = None):
         FROM readings
         WHERE timestamp >= ?
           AND device_gid = ?
+          AND channel_name = 'Main'
         GROUP BY day_of_week
         ORDER BY avg_kwh DESC
         LIMIT 5""", (since, resolved_gid))

@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.24"
+VERSION = "1.7.25"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -2951,11 +2951,17 @@ def _seed_layout_from_latest(
     return seeded
 
 
-def _build_mains_cards(latest_map: dict[str, float], hours: int = 24) -> tuple[dict | None, list[dict]]:
-    main_total = energy.get_main_total(hours) or {}
+def _build_mains_cards(
+    latest_map: dict[str, float],
+    hours: int = 24,
+    active_device_gid: str | None = None,
+) -> tuple[dict | None, list[dict]]:
+    main_total = energy.get_main_total(hours, active_device_gid) or {}
     mains_totals = {
         row["channel_name"]: row
-        for row in energy.get_channel_totals(["Mains_A", "Mains_B", "Mains_C"], hours)
+        for row in energy.get_channel_totals(
+            ["Mains_A", "Mains_B", "Mains_C"], hours, active_device_gid
+        )
     }
     leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
 
@@ -3015,9 +3021,10 @@ def _detect_service_feed(
     latest_rows: list[dict],
     latest_map: dict[str, float],
     layout: dict[int, dict],
+    active_device_gid: str | None = None,
 ) -> tuple[dict | None, list[dict], str]:
-    capabilities = energy.get_device_capabilities()
-    total_main, native_legs = _build_mains_cards(latest_map, 24)
+    capabilities = energy.get_device_capabilities(active_device_gid)
+    total_main, native_legs = _build_mains_cards(latest_map, 24, active_device_gid)
     native_names = {row["label"] for row in native_legs}
     inferred_a, inferred_b, inferred_found = _infer_live_leg_watts(latest_map, layout)
     latest_rows_by_name = {row["channel_name"]: row for row in latest_rows}
@@ -3121,7 +3128,9 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         ordered,
         minimum_slots=_load_panel_slots(),
     )
-    total_main, mains_legs, service_mode = _detect_service_feed(ctx["latest"], latest_map, layout)
+    total_main, mains_legs, service_mode = _detect_service_feed(
+        ctx["latest"], latest_map, layout, active_device_gid
+    )
     dash_mains = ([total_main] if total_main else []) + mains_legs
     max_w = max((_watts_estimate(latest_map.get(name, 0)) for name in ordered), default=1) or 1
     live_watts = {name: _watts_estimate(latest_map.get(name, 0)) for name in ordered}
@@ -3416,13 +3425,13 @@ def recommendations_page():
 @app.route("/circuits")
 def circuits_page():
     com = _common()
-    latest_rows = energy.get_latest()
+    latest_rows = energy.get_latest(com["active_device_gid"])
     latest_map = {r["channel_name"]: r["usage_kwh"] for r in latest_rows}
 
     # Per-period summaries
-    sum_24h  = {r["channel_name"]: r for r in energy.get_summary(24)}
-    sum_week = {r["channel_name"]: r for r in energy.get_summary(24 * 7)}
-    sum_mon  = {r["channel_name"]: r for r in energy.get_summary(24 * 30)}
+    sum_24h  = {r["channel_name"]: r for r in energy.get_summary(24, com["active_device_gid"])}
+    sum_week = {r["channel_name"]: r for r in energy.get_summary(24 * 7, com["active_device_gid"])}
+    sum_mon  = {r["channel_name"]: r for r in energy.get_summary(24 * 30, com["active_device_gid"])}
 
     # ── Circuit slots — use saved panel layout if present ─────────────────
     layout = {row["slot"]: row for row in energy.get_panel_layout()}
@@ -3437,7 +3446,9 @@ def circuits_page():
         all_circuits,
         minimum_slots=_load_panel_slots(),
     )
-    total_main, mains_legs, service_mode = _detect_service_feed(latest_rows, latest_map, layout)
+    total_main, mains_legs, service_mode = _detect_service_feed(
+        latest_rows, latest_map, layout, com["active_device_gid"]
+    )
     mains = ([total_main] if total_main else []) + mains_legs
 
     max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in all_circuits), default=1) or 1
