@@ -368,10 +368,14 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .breaker-watts {
   font-size: 0.7rem; color: var(--olive-400); margin-top: 2px;
 }
+.breaker-bars {
+  width: 44px; flex-shrink: 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+  align-items: flex-end; height: 32px;
+}
 .breaker-bar-wrap {
-  width: 36px; flex-shrink: 0;
   background: var(--olive-800); border-radius: 3px; height: 32px;
-  display: flex; align-items: flex-end; overflow: hidden;
+  display: flex; align-items: flex-end; overflow: hidden; position: relative;
 }
 .breaker-bar {
   width: 100%; background: var(--olive-500); border-radius: 3px;
@@ -379,6 +383,13 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 .breaker.active-high .breaker-bar { background: var(--amber); }
 .breaker.active-heat .breaker-bar { background: var(--red); }
+.breaker-safe .breaker-bar { background: #4ade80; }
+.breaker-safe.warn .breaker-bar { background: #f97316; }
+.breaker-safe.danger .breaker-bar { background: #ef4444; }
+.breaker-safe::after {
+  content: ''; position: absolute; bottom: 80%; left: 0; width: 100%; height: 1px;
+  background: rgba(255,255,255,0.35);
+}
 .breaker.empty { opacity: 0.35; cursor: default; pointer-events: none; }
 .breaker-note-tip {
   position: absolute; bottom: calc(100% + 6px); left: 50%;
@@ -398,6 +409,12 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .breaker:hover .breaker-note-tip { opacity: 1; }
 .breaker { position: relative; }
 .breaker-amps { font-size: 0.6rem; color: var(--olive-500); margin-top: 1px; }
+.breaker-bar-labels {
+  width: 44px; flex-shrink: 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+  font-size: 0.5rem; color: var(--olive-500); text-transform: uppercase;
+  letter-spacing: 0.06em; margin-top: 2px;
+}
 
 /* ── Breaker safety zones ── */
 .breaker-load-row {
@@ -974,7 +991,17 @@ DASH_HTML = """
                 </div>
                 {% endif %}
               </div>
-              <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
+              <div>
+                <div class="breaker-bars">
+                  <div class="breaker-bar-wrap" title="Relative share of current panel load">
+                    <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
+                  </div>
+                  <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="Continuous-load safety vs 80% of breaker rating">
+                    <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
+                  </div>
+                </div>
+                <div class="breaker-bar-labels"><span>Load</span><span>Safe</span></div>
+              </div>
               {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
             </a>
             {% else %}
@@ -1507,7 +1534,17 @@ CIRCUITS_HTML = """
           </div>
           {% endif %}
         </div>
-        <div class="breaker-bar-wrap"><div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div></div>
+              <div>
+                <div class="breaker-bars">
+                  <div class="breaker-bar-wrap" title="Relative share of current panel load">
+                    <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
+                  </div>
+                  <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="Continuous-load safety vs 80% of breaker rating">
+                    <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
+                  </div>
+                </div>
+                <div class="breaker-bar-labels"><span>Load</span><span>Safe</span></div>
+              </div>
         {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
       </a>
       {% else %}
@@ -2221,7 +2258,8 @@ def index():
     for slot in range(1, max(len(ordered) + 1, max(layout.keys(), default=0) + 1)):
         row   = layout.get(slot, {})
         name  = row.get("channel_name")
-        rated_amps = row.get("amps")
+        configured_amps = row.get("amps")
+        rated_amps = configured_amps or 15
         poles = row.get("poles") or 1
         voltage = 240 if poles == 2 else 120
         watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
@@ -2229,29 +2267,34 @@ def index():
         # Safety zone vs rated breaker amps
         if rated_amps and rated_amps > 0 and watts > 0:
             amps_now  = watts / voltage
+            safe_limit_amps = rated_amps * 0.8
             load_pct  = amps_now / rated_amps * 100
-            if load_pct >= 100:
+            safe_pct  = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
+            if safe_pct >= 100:
                 sz_cls = "sz-danger";   load_cls = "load-danger";   fill_cls = "fill-danger"
-            elif load_pct >= 80:
+            elif safe_pct >= 80:
                 sz_cls = "sz-caution";  load_cls = "load-caution";  fill_cls = "fill-caution"
-            elif load_pct >= 60:
+            elif safe_pct >= 60:
                 sz_cls = "sz-moderate"; load_cls = "load-moderate"; fill_cls = "fill-moderate"
             else:
                 sz_cls = "";            load_cls = "load-normal";   fill_cls = "fill-normal"
             load_bar_w = min(100, load_pct)  # % width of load bar
+            safe_bar_pct = min(100, safe_pct)
+            safe_cls = "danger" if safe_pct >= 100 else ("warn" if safe_pct >= 80 else "")
             load_label = f"{amps_now:.1f}/{rated_amps}A"
         else:
             sz_cls = ""; load_cls = ""; fill_cls = "fill-normal"
-            load_bar_w = 0; load_label = ""
+            load_bar_w = 0; load_label = ""; safe_bar_pct = 0; safe_cls = ""
         is_peak = bool(name and watts >= _peak_threshold and watts > 0)
         cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         dash_breakers.append({
             "slot": slot, "channel_name": name,
             "label": row.get("label") or name or "—",
-            "note": row.get("note"), "amps": rated_amps, "poles": poles,
+            "note": row.get("note"), "amps": configured_amps or 15, "poles": poles,
             "watts": watts, "bar_pct": bar, "cls": cls.strip(),
             "load_cls": load_cls, "fill_cls": fill_cls,
             "load_bar_w": load_bar_w, "load_label": load_label,
+            "safe_bar_pct": safe_bar_pct, "safe_cls": safe_cls,
             "is_peak": is_peak,
         })
 
@@ -2426,27 +2469,32 @@ def circuits_page():
     for slot in range(1, panel_slots + 1):
         row = layout.get(slot, {})
         name  = row.get("channel_name")
-        rated_amps = row.get("amps")
+        configured_amps = row.get("amps")
+        rated_amps = configured_amps or 15
         poles = row.get("poles") or 1
         voltage = 240 if poles == 2 else 120
         watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
         bar   = min(100, watts / max_w * 100)
         if rated_amps and rated_amps > 0 and watts > 0:
             amps_now  = watts / voltage
+            safe_limit_amps = rated_amps * 0.8
             load_pct  = amps_now / rated_amps * 100
-            if load_pct >= 100:
+            safe_pct  = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
+            if safe_pct >= 100:
                 sz_cls = "sz-danger";   load_cls = "load-danger";   fill_cls = "fill-danger"
-            elif load_pct >= 80:
+            elif safe_pct >= 80:
                 sz_cls = "sz-caution";  load_cls = "load-caution";  fill_cls = "fill-caution"
-            elif load_pct >= 60:
+            elif safe_pct >= 60:
                 sz_cls = "sz-moderate"; load_cls = "load-moderate"; fill_cls = "fill-moderate"
             else:
                 sz_cls = "";            load_cls = "load-normal";   fill_cls = "fill-normal"
             load_bar_w = min(100, load_pct)
+            safe_bar_pct = min(100, safe_pct)
+            safe_cls = "danger" if safe_pct >= 100 else ("warn" if safe_pct >= 80 else "")
             load_label = f"{amps_now:.1f}/{rated_amps}A"
         else:
             sz_cls = ""; load_cls = ""; fill_cls = "fill-normal"
-            load_bar_w = 0; load_label = ""
+            load_bar_w = 0; load_label = ""; safe_bar_pct = 0; safe_cls = ""
         is_peak = bool(name and watts >= _peak_thr_c and watts > 0)
         cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         breakers.append({
@@ -2454,7 +2502,7 @@ def circuits_page():
             "channel_name": name,
             "label":        row.get("label") or name or "—",
             "note":         row.get("note"),
-            "amps":         rated_amps,
+            "amps":         configured_amps or 15,
             "poles":        poles,
             "watts":        watts,
             "bar_pct":      bar,
@@ -2463,6 +2511,8 @@ def circuits_page():
             "fill_cls":     fill_cls,
             "load_bar_w":   load_bar_w,
             "load_label":   load_label,
+            "safe_bar_pct": safe_bar_pct,
+            "safe_cls":     safe_cls,
             "is_peak":      is_peak,
         })
 
