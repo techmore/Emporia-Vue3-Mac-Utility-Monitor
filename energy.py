@@ -587,15 +587,16 @@ def get_peak_usage():
     """Find peak usage times."""
     conn = _connect()
     c = conn.cursor()
+    since = (datetime.now() - timedelta(days=30)).isoformat()
 
     c.execute("""SELECT 
         strftime('%H', timestamp) as hour,
         AVG(usage_kwh) as avg_kwh
         FROM readings
-        WHERE timestamp >= datetime('now', '-30 days')
+        WHERE timestamp >= ?
         GROUP BY hour
         ORDER BY avg_kwh DESC
-        LIMIT 5""")
+        LIMIT 5""", (since,))
 
     peak_hours = c.fetchall()
 
@@ -603,10 +604,10 @@ def get_peak_usage():
         strftime('%w', timestamp) as day_of_week,
         AVG(usage_kwh) as avg_kwh
         FROM readings
-        WHERE timestamp >= datetime('now', '-30 days')
+        WHERE timestamp >= ?
         GROUP BY day_of_week
         ORDER BY avg_kwh DESC
-        LIMIT 5""")
+        LIMIT 5""", (since,))
 
     peak_days = c.fetchall()
     conn.close()
