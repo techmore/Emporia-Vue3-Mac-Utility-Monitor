@@ -433,17 +433,19 @@ def get_summary(hours=24):
     since = (datetime.now() - timedelta(hours=hours)).isoformat()
 
     # Exclude the ghost device (device 81134 always reports 0 W, pollutes sums)
+    meta_placeholders = ",".join("?" for _ in META_CHANNELS)
     c.execute(
-        """SELECT channel_name,
+        f"""SELECT channel_name,
         SUM(usage_kwh) as total_kwh,
         SUM(cost_cents) as total_cents,
         COUNT(*) as readings
         FROM readings
         WHERE timestamp >= ?
           AND device_gid != ?
+          AND channel_name NOT IN ({meta_placeholders})
         GROUP BY channel_name
         ORDER BY total_kwh DESC""",
-        (since, _GHOST_DEVICE),
+        (since, _GHOST_DEVICE, *META_CHANNELS),
     )
 
     results = c.fetchall()
@@ -464,9 +466,11 @@ def get_hourly_data(days=7):
         SUM(cost_cents) as total_cents
         FROM readings
         WHERE timestamp >= ?
+          AND channel_name = 'Main'
+          AND device_gid != ?
         GROUP BY hour
         ORDER BY hour""",
-        (since,),
+        (since, _GHOST_DEVICE),
     )
 
     results = c.fetchall()
@@ -487,9 +491,11 @@ def get_daily_data(days=30):
         SUM(cost_cents) as total_cents
         FROM readings
         WHERE timestamp >= ?
+          AND channel_name = 'Main'
+          AND device_gid != ?
         GROUP BY day
         ORDER BY day""",
-        (since,),
+        (since, _GHOST_DEVICE),
     )
 
     results = c.fetchall()
@@ -502,8 +508,15 @@ def get_latest():
     c = conn.cursor()
 
     c.execute("""SELECT channel_name, usage_kwh, cost_cents, timestamp
-        FROM readings
-        WHERE id IN (SELECT MAX(id) FROM readings GROUP BY channel_name)
+        FROM (
+            SELECT channel_name, usage_kwh, cost_cents, timestamp,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY channel_name
+                       ORDER BY timestamp DESC, id DESC
+                   ) AS rn
+            FROM readings
+        )
+        WHERE rn = 1
         ORDER BY usage_kwh DESC""")
 
     results = c.fetchall()
@@ -760,8 +773,15 @@ def get_now_vs_context(window_minutes: int = 60) -> dict:
     # Most recent single reading per channel (for "right now" watts estimate)
     c.execute(
         """SELECT channel_name, usage_kwh, timestamp
-           FROM readings
-           WHERE id IN (SELECT MAX(id) FROM readings GROUP BY channel_name)
+           FROM (
+               SELECT channel_name, usage_kwh, timestamp,
+                      ROW_NUMBER() OVER (
+                          PARTITION BY channel_name
+                          ORDER BY timestamp DESC, id DESC
+                      ) AS rn
+               FROM readings
+           )
+           WHERE rn = 1
            ORDER BY usage_kwh DESC"""
     )
     latest_readings = [dict(r) for r in c.fetchall()]
