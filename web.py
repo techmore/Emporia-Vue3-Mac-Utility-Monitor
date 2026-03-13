@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.39"
+VERSION = "1.7.40"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -211,18 +211,18 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   background: var(--olive-950);
   color: var(--olive-50);
   border-radius: 16px;
-  padding: 1.75rem 2rem;
-  margin-top: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.1rem;
 }
 .now-panel .watts-big {
   font-family: 'Instrument Serif', serif;
-  font-size: 3.5rem; line-height: 1;
+  font-size: 2.75rem; line-height: 1;
   color: var(--olive-50);
 }
 .now-panel .watts-unit { font-size: 1.1rem; color: var(--olive-300); }
 .now-panel .context-row {
   display: flex; flex-wrap: wrap; gap: 1rem;
-  margin-top: 1rem; padding-top: 1rem;
+  margin-top: 0.7rem; padding-top: 0.75rem;
   border-top: 1px solid var(--olive-800);
 }
 .now-panel .ctx-item { flex: 1; min-width: 120px; }
@@ -256,7 +256,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   background: color-mix(in oklab, var(--olive-950) 88%, transparent);
   border: 1px solid var(--olive-800);
   border-radius: 14px;
-  padding: 0.85rem 1rem 0.65rem;
+  padding: 0.65rem 0.85rem 0.5rem;
 }
 .banner-chart-head {
   display: flex;
@@ -266,7 +266,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   margin-bottom: 0.45rem;
 }
 .banner-chart-title {
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--olive-300);
@@ -279,11 +279,11 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 .banner-chart-rows {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 .banner-chart-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 62px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
 }
@@ -735,7 +735,7 @@ NAV_HTML = """
     </div>
     <div style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
       <span style="font-size:0.65rem; color:var(--stone-400); font-variant-numeric:tabular-nums;">v{{ version }}</span>
-      <a href="/log" id="nav-status-link" style="display:flex; align-items:center; gap:6px; text-decoration:none; color:inherit;">
+      <a href="/log" id="nav-status-link" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
         <span class="status-dot {{ status_cls }}" id="nav-status-dot"></span>
         <span id="nav-status-label">{{ status_label }}</span>
       </a>
@@ -1060,20 +1060,20 @@ DASH_HTML = """
   <style>
   .banner-forecast {
     background: var(--olive-800); border: 1px solid var(--olive-700); border-radius: 12px;
-    padding: 0.75rem 0.9rem; min-width: 0; flex: 1 1 360px; color: var(--olive-50);
+    padding: 0.55rem 0.75rem; min-width: 0; flex: 1 1 340px; color: var(--olive-50);
   }
   .banner-forecast-head {
-    display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:0.45rem;
+    display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:0.3rem;
   }
   .banner-forecast-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--olive-300); }
-  .banner-forecast-sub { font-size:0.72rem; color:var(--olive-300); }
+  .banner-forecast-sub { font-size:0.66rem; color:var(--olive-300); }
   .banner-forecast-days { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:6px; }
-  .banner-forecast-day { background: rgba(255,255,255,0.08); border-radius:10px; padding:0.45rem 0.35rem; text-align:center; min-width:0; }
+  .banner-forecast-day { background: rgba(255,255,255,0.08); border-radius:10px; padding:0.32rem 0.28rem; text-align:center; min-width:0; }
   .banner-forecast-day.today { background: var(--olive-800); color: var(--olive-50); }
   .banner-forecast-day.today .banner-forecast-date, .banner-forecast-day.today .banner-forecast-low { color: var(--olive-300); }
   .banner-forecast-label { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--olive-300); }
   .banner-forecast-date { font-size:0.66rem; color:var(--olive-400); margin-top:1px; }
-  .banner-forecast-hi { font-size:0.92rem; font-weight:700; line-height:1.1; margin-top:4px; }
+  .banner-forecast-hi { font-size:0.82rem; font-weight:700; line-height:1.1; margin-top:4px; }
   .banner-forecast-low { font-size:0.72rem; color:var(--olive-300); line-height:1.1; }
   .banner-forecast-line { height:3px; border-radius:999px; margin-top:6px; background: rgba(255,255,255,0.12); }
   .banner-forecast-line.heat { background: rgba(220,60,40,0.72); }
@@ -1240,15 +1240,12 @@ DASH_HTML = """
 
   <!-- ── Active Circuits (multi-view) ─────────────────────────────────── -->
   <div class="section">
-    <div class="section-head">
-      <h2>Active Circuits</h2>
-      <div style="display:flex; align-items:center; gap:10px;">
-        <span class="section-sub">Last {{ ctx.window_minutes }} min</span>
-        <div class="view-toggle" id="viewToggle">
-          <button class="vt-btn" data-view="panel" title="Breaker panel">⊞</button>
-          <button class="vt-btn" data-view="bars" title="Bar list">≡</button>
-          <button class="vt-btn" data-view="grid" title="Card grid">▦</button>
-        </div>
+    <div class="circuit-toolbar">
+      <div class="circuit-toolbar-title">Active Circuits · Last {{ ctx.window_minutes }} min</div>
+      <div class="view-toggle" id="viewToggle" aria-label="Circuit view modes">
+        <button class="vt-btn" data-view="panel" title="Breaker panel">⊞</button>
+        <button class="vt-btn" data-view="bars" title="Bar list">≡</button>
+        <button class="vt-btn" data-view="grid" title="Card grid">▦</button>
       </div>
     </div>
 
@@ -1372,6 +1369,8 @@ DASH_HTML = """
   }
   .vt-btn.active { background:var(--olive-800); color:var(--olive-50); }
   .vt-btn:hover:not(.active) { background:var(--border); }
+.circuit-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:0.8rem; }
+.circuit-toolbar-title { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-light); }
   </style>
   <script>
   (function(){
