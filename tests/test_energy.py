@@ -197,11 +197,15 @@ class EnergyTests(unittest.TestCase):
         body = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn("Service Feed", body)
+        self.assertIn("Leg A", body)
+        self.assertIn("Leg B", body)
         self.assertIn("Bus bar", body)
         self.assertIn("Circuit Breakers", body)
         self.assertIn("Top Active Circuits", body)
         self.assertIn("Recommendations", body)
         self.assertGreaterEqual(body.count('class="breaker '), 2)
+        self.assertLess(body.index("Service Feed"), body.index("Bus bar"))
         self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
         self.assertLess(body.index('data-panel-section="digital-panel"'), body.index('data-panel-section="sidebar-metrics"'))
 
@@ -214,10 +218,12 @@ class EnergyTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Action Center", body)
+        self.assertIn("Service Feed", body)
         self.assertIn("Safety Watch", body)
         self.assertIn("Live Heavy Hitters", body)
         self.assertIn("Always-On Loads", body)
         self.assertIn("Bus bar", body)
+        self.assertLess(body.index("Service Feed"), body.index("Bus bar"))
         self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
 
     def test_secondary_pages_render_expected_sections(self):
