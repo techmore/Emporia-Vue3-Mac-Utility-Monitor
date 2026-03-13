@@ -22,7 +22,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.5"
+VERSION = "1.7.6"
 
 
 def _read_monthly_budget() -> float:
@@ -331,8 +331,22 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .mains-card .mc-leg  { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--olive-400); margin-bottom: 4px; }
 .mains-card .mc-w    { font-family: 'Instrument Serif', serif; font-size: 2rem; line-height: 1; color: var(--olive-50); }
 .mains-card .mc-kwh  { font-size: 0.78rem; color: var(--olive-300); margin-top: 4px; }
+.panel-breaker-head {
+  margin-bottom: 1rem;
+}
+.panel-breaker-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--olive-500);
+  text-align: center;
+  margin-bottom: 0.45rem;
+}
 .panel-bus {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
 }
 .panel-bus-line {
   flex: 1; height: 2px; background: var(--olive-700);
@@ -755,10 +769,13 @@ PANEL_FRAGMENT_HTML = """
     </div>
   {% endif %}
   {% endfor %}
-  <div class="panel-bus">
-    <div class="panel-bus-line"></div>
-    <div class="panel-bus-label">{{ bus_label }}</div>
-    <div class="panel-bus-line"></div>
+  <div class="panel-breaker-head">
+    <div class="panel-breaker-label">Circuit Breakers</div>
+    <div class="panel-bus" aria-label="Bus bar divider">
+      <div class="panel-bus-line"></div>
+      <div class="panel-bus-label">{{ bus_label }}</div>
+      <div class="panel-bus-line"></div>
+    </div>
   </div>
   {% endif %}
   {%- macro render_breaker_shared(b) %}
@@ -801,7 +818,7 @@ PANEL_FRAGMENT_HTML = """
     </div>
     {% endif %}
   {%- endmacro %}
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+  <div class="panel-grid" data-panel-section="breakers">
     <div style="display:flex; flex-direction:column; gap:6px;">
       {% for b in breakers_left %}{{ render_breaker_shared(b) }}{% endfor %}
     </div>

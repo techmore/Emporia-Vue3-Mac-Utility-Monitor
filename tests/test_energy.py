@@ -198,9 +198,11 @@ class EnergyTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Bus bar", body)
+        self.assertIn("Circuit Breakers", body)
         self.assertIn("Top Active Circuits", body)
         self.assertIn("Recommendations", body)
         self.assertGreaterEqual(body.count('class="breaker '), 2)
+        self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
 
     def test_circuits_route_renders_action_center_and_panel(self):
         self._seed_ui_data()
@@ -215,6 +217,7 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("Live Heavy Hitters", body)
         self.assertIn("Always-On Loads", body)
         self.assertIn("Bus bar", body)
+        self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
 
     def test_secondary_pages_render_expected_sections(self):
         self._seed_ui_data()
