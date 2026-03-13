@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.36"
+VERSION = "1.7.37"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1423,26 +1423,6 @@ DASH_HTML = """
               </div>
             </div>
             {% endfor %}
-          </div>
-          {% endif %}
-
-          <!-- Row 10: Biggest 24h load -->
-          {% if biggest_circuit %}
-          <div class="card">
-            <div class="card-label">Biggest 24h Load</div>
-            <div style="display:flex; align-items:baseline; justify-content:space-between; margin-top:4px;">
-              <a href="/circuit/{{ biggest_circuit.channel_name|urlencode }}"
-                 style="font-size:1.1rem; font-weight:700; color:var(--text); text-decoration:none;">
-                {{ biggest_circuit.channel_name }}
-              </a>
-              <span style="font-size:0.82rem; color:var(--text-light);">
-                {{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh &bull; {{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total
-              </span>
-            </div>
-            <div style="height:5px; background:var(--surface2); border-radius:3px; margin-top:6px;">
-              <div style="height:5px; border-radius:3px; width:{{ biggest_circuit.pct|round(1) }}%;
-                background:{{ '#f87171' if biggest_circuit.pct > 40 else ('#fbbf24' if biggest_circuit.pct > 20 else 'var(--olive-500)') }};"></div>
-            </div>
           </div>
           {% endif %}
 
