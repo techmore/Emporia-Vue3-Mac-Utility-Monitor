@@ -236,6 +236,22 @@ class EnergyTests(unittest.TestCase):
             for snippet in snippets:
                 self.assertIn(snippet, body, f"{snippet} missing from {path}")
 
+    def test_live_event_stream_and_dashboard_payload(self):
+        self._seed_ui_data()
+        client = web.app.test_client()
+
+        dashboard = client.get("/api/live-dashboard")
+        self.assertEqual(dashboard.status_code, 200)
+        payload = dashboard.get_json()
+        self.assertIn("current_watts", payload)
+        self.assertIn("top_circuits", payload)
+
+        stream = client.get("/api/events", buffered=False)
+        first_chunk = next(stream.response).decode("utf-8")
+        self.assertIn("event: update", first_chunk)
+        self.assertIn("\"dashboard\":", first_chunk)
+        self.assertIn("\"status\":", first_chunk)
+
     def test_partial_panel_layout_still_renders_unmapped_circuits(self):
         conn = energy._connect()
         now = energy.datetime.now().replace(microsecond=0).isoformat()

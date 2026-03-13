@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import time
 import energy
 
 app = Flask(__name__)
@@ -22,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.8"
+VERSION = "1.7.9"
 
 
 def _read_monthly_budget() -> float:
@@ -687,6 +688,21 @@ NAV_HTML = """
 </nav>
 <script>
 (function() {
+  function getEnergyEventSource() {
+    if (!window.__energyEventSource) {
+      window.__energyEventSource = new EventSource('/api/events');
+    }
+    return window.__energyEventSource;
+  }
+  window.subscribeEnergyEvents = function(handler) {
+    const source = getEnergyEventSource();
+    source.addEventListener('update', function(event) {
+      try {
+        handler(JSON.parse(event.data));
+      } catch (err) {}
+    });
+    return source;
+  };
   function fmtNavStatus(s) {
     const age = s.age_secs;
     if (s.ok && s.poller_running) {
@@ -701,18 +717,17 @@ NAV_HTML = """
     }
     return { cls: 'dead', label: 'Offline' };
   }
-  function refreshNavStatus() {
-    fetch('/api/poller-status').then(r => r.json()).then(s => {
-      const dot   = document.getElementById('nav-status-dot');
-      const label = document.getElementById('nav-status-label');
-      if (!dot || !label) return;
-      const st = fmtNavStatus(s);
-      dot.className = 'status-dot ' + st.cls;
-      label.textContent = st.label;
-    }).catch(() => {});
+  function applyNavStatus(s) {
+    const dot   = document.getElementById('nav-status-dot');
+    const label = document.getElementById('nav-status-label');
+    if (!dot || !label) return;
+    const st = fmtNavStatus(s);
+    dot.className = 'status-dot ' + st.cls;
+    label.textContent = st.label;
   }
-  refreshNavStatus();
-  setInterval(refreshNavStatus, 30000);
+  window.subscribeEnergyEvents(function(payload) {
+    if (payload && payload.status) applyNavStatus(payload.status);
+  });
 })();
 </script>
 """
@@ -741,6 +756,53 @@ def _status(last_ts: str):
         return "dead", f"Offline · {h:.0f}h ago", h
     except Exception:
         return "dead", "Unknown", 999
+
+
+def _poller_status_snapshot() -> dict:
+    status = energy.read_poller_status()
+    last_ts = status.get("timestamp")
+    age_secs = None
+    if last_ts:
+        try:
+            age_secs = int((datetime.now() - datetime.fromisoformat(last_ts[:19])).total_seconds())
+        except Exception:
+            pass
+    status["age_secs"] = age_secs
+    status["poller_running"] = age_secs is not None and age_secs < 180
+    return status
+
+
+def _build_live_dashboard_payload() -> dict:
+    ctx = energy.get_now_vs_context(60)
+    latest_map = {row["channel_name"]: row["usage_kwh"] for row in ctx["latest"]}
+    main_now = next((row for row in ctx["latest"] if row["channel_name"] == "Main"), None)
+    current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
+    top_circuits = []
+    for row in ctx["circuits"]:
+        name = row["channel_name"]
+        if name in _MAINS_NAMES or name in _SKIP_NAMES or str(name).isdigit():
+            continue
+        top_circuits.append({
+            "channel_name": name,
+            "watts": _watts_estimate(latest_map.get(name, 0)),
+            "pct": (row["kwh"] / (ctx["current_kwh"] or 1)) * 100,
+        })
+    top_circuits.sort(key=lambda row: row["watts"], reverse=True)
+    summary_24 = energy.get_summary(24)
+    main_24h = energy.get_main_total(24)
+    total_24h = main_24h or {
+        "total_kwh": sum(row["total_kwh"] for row in summary_24),
+        "total_cents": sum(row["total_cents"] for row in summary_24),
+    }
+    latest_ts = ctx["latest"][0]["timestamp"] if ctx["latest"] else None
+    return {
+        "latest_timestamp": latest_ts,
+        "current_watts": round(current_watts, 1),
+        "current_kwh": round(ctx["current_kwh"] or 0, 3),
+        "monthly_projected": round((total_24h["total_kwh"] or 0) * 30 * RATE, 3),
+        "cost_per_hour": round(current_watts / 1000 * RATE, 2),
+        "top_circuits": top_circuits[:12],
+    }
 
 
 def _delta_badge(pct, label: str, invert: bool = False) -> str:
@@ -994,12 +1056,12 @@ DASH_HTML = """
           Right Now &mdash; {{ ctx.window_minutes }}-min window
         </div>
         <div class="watts-big">
-          {{ "%.1f"|format(current_watts) }}
+          <span id="live-current-watts">{{ "%.1f"|format(current_watts) }}</span>
           <span class="watts-unit">W</span>
         </div>
         <div style="font-size:0.85rem; color:var(--olive-300); margin-top:0.3rem;">
-          {{ "%.3f"|format(ctx.current_kwh or 0) }} kWh &bull;
-          ${{ "%.3f"|format((ctx.current_kwh or 0) * 30 * 24 * rate) }} projected/mo
+          <span id="live-window-kwh">{{ "%.3f"|format(ctx.current_kwh or 0) }}</span> kWh &bull;
+          $<span id="live-projected-month">{{ "%.3f"|format((ctx.current_kwh or 0) * 30 * 24 * rate) }}</span> projected/mo
         </div>
       </div>
 
@@ -1118,7 +1180,7 @@ DASH_HTML = """
           <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">Cost Right Now</div>
-              <div class="card-value">${{ "%.2f"|format(cost_per_hour) }}<span class="unit">/hr</span></div>
+              <div class="card-value">$<span id="live-cost-per-hour">{{ "%.2f"|format(cost_per_hour) }}</span><span class="unit">/hr</span></div>
               <div class="card-meta">{{ "%.0f"|format(current_watts) }} W at ${{ "%.4f"|format(rate) }}/kWh</div>
             </div>
             <div class="card">
@@ -1189,6 +1251,7 @@ DASH_HTML = """
           <!-- Row 4: Top active circuits mini-list -->
           <div class="card">
             <div class="card-label" style="margin-bottom:8px;">Top Active Circuits</div>
+            <div id="live-top-circuits-list">
             {% for c in top_circuits[:3] %}
             <div style="display:flex; align-items:center; gap:8px; padding:3px 0;
                         border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
@@ -1206,6 +1269,7 @@ DASH_HTML = """
             {% else %}
             <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>
             {% endfor %}
+            </div>
           </div>
 
           <!-- Row 5: Standby / vampire loads -->
@@ -1388,6 +1452,46 @@ DASH_HTML = """
       btn.addEventListener('click', () => show(btn.dataset.view));
     });
     show(saved);
+
+    function renderTopCircuits(circuits) {
+      const list = document.getElementById('live-top-circuits-list');
+      if (!list) return;
+      if (!circuits.length) {
+        list.innerHTML = '<div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>';
+        return;
+      }
+      list.innerHTML = circuits.slice(0, 3).map((circuit, index) => `
+        <div style="display:flex; align-items:center; gap:8px; padding:3px 0;
+                    border-bottom:${index < Math.min(circuits.length, 3) - 1 ? '1px solid var(--border)' : 'none'};">
+          <div style="flex:1; font-size:0.82rem; font-weight:500; color:var(--text);
+                      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            <a href="/circuit/${encodeURIComponent(circuit.channel_name)}" style="color:inherit; text-decoration:none;">${circuit.channel_name}</a>
+          </div>
+          <div style="font-size:0.82rem; font-weight:700; color:var(--text); min-width:48px; text-align:right;">${Math.round(circuit.watts)} W</div>
+          <div style="width:56px; height:5px; background:var(--surface2); border-radius:3px; flex-shrink:0;">
+            <div style="height:5px; border-radius:3px; width:${Math.max(0, Math.min(100, circuit.pct)).toFixed(1)}%;
+              background:${circuit.pct >= 40 ? '#f87171' : (circuit.pct >= 20 ? '#fbbf24' : 'var(--olive-500)')};"></div>
+          </div>
+          <div style="font-size:0.72rem; color:var(--text-light); min-width:30px; text-align:right;">${Math.round(circuit.pct)}%</div>
+        </div>
+      `).join('');
+    }
+
+    let lastLiveTimestamp = null;
+    window.subscribeEnergyEvents(function(payload) {
+      const dashboard = payload && payload.dashboard;
+      if (!dashboard || dashboard.latest_timestamp === lastLiveTimestamp) return;
+      lastLiveTimestamp = dashboard.latest_timestamp;
+      const watts = document.getElementById('live-current-watts');
+      const kwh = document.getElementById('live-window-kwh');
+      const projected = document.getElementById('live-projected-month');
+      const cost = document.getElementById('live-cost-per-hour');
+      if (watts) watts.textContent = Number(dashboard.current_watts || 0).toFixed(1);
+      if (kwh) kwh.textContent = Number(dashboard.current_kwh || 0).toFixed(3);
+      if (projected) projected.textContent = Number(dashboard.monthly_projected || 0).toFixed(3);
+      if (cost) cost.textContent = Number(dashboard.cost_per_hour || 0).toFixed(2);
+      renderTopCircuits(dashboard.top_circuits || []);
+    });
   })();
   </script>
 
@@ -2281,7 +2385,7 @@ LOG_HTML = """
 <div class="page">
   <div class="section-head" style="margin-top:1.5rem;">
     <h2>Poller Log</h2>
-    <span class="section-sub">Last {{ entries|length }} poll cycles &bull; auto-refreshes every 30s</span>
+    <span class="section-sub">Last {{ entries|length }} poll cycles &bull; updates live via SSE</span>
   </div>
 
   <!-- ── Poller Health Card ─────────────────────────────────────────────── -->
@@ -2384,6 +2488,13 @@ function fmtAge(secs) {
 
 function refreshStatus() {
   fetch('/api/poller-status').then(r=>r.json()).then(d => {
+    applyStatus(d);
+  }).catch(() => {
+    document.getElementById('ph-label').textContent = 'Could not reach Flask API';
+  });
+}
+
+function applyStatus(d) {
     const dot   = document.getElementById('ph-dot');
     const label = document.getElementById('ph-label');
     const last  = document.getElementById('ph-last');
@@ -2430,9 +2541,6 @@ function refreshStatus() {
       errEl.style.color = 'var(--text-light)';
       banner.style.display = 'none';
     }
-  }).catch(() => {
-    document.getElementById('ph-label').textContent = 'Could not reach Flask API';
-  });
 }
 
 function requestReconnect() {
@@ -2452,7 +2560,6 @@ function sendReconnect() {
     msg.style.display = 'block';
     msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
     msg.textContent = d.ok ? ('✓ ' + d.message) : ('✗ ' + d.error);
-    if (d.ok) setTimeout(refreshStatus, 5000);
   }).catch(e => {
     msg.style.display = 'block';
     msg.style.color = 'var(--red)';
@@ -2461,8 +2568,9 @@ function sendReconnect() {
 }
 
 refreshStatus();
-setInterval(refreshStatus, 15000);
-setTimeout(() => location.reload(), 30000);
+window.subscribeEnergyEvents(function(payload) {
+  if (payload && payload.status) applyStatus(payload.status);
+});
 </script>
 """
 
@@ -3305,24 +3413,39 @@ def api_version():
     return jsonify({"version": VERSION})
 
 
+@app.route("/api/events")
+def api_events():
+    def event_stream():
+        last_payload = None
+        while True:
+            payload = {
+                "status": _poller_status_snapshot(),
+                "dashboard": _build_live_dashboard_payload(),
+            }
+            encoded = json.dumps(payload, separators=(",", ":"))
+            if encoded != last_payload:
+                yield f"event: update\ndata: {encoded}\n\n"
+                last_payload = encoded
+            else:
+                yield ": keep-alive\n\n"
+            time.sleep(5)
+
+    return Response(
+        event_stream(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.route("/api/poller-status")
 def api_poller_status():
     """Return the live heartbeat written by the energy.py poller process."""
-    import json as _json, os as _os, time as _time
-    status = energy.read_poller_status()
-    # Calculate how many seconds ago the last heartbeat was
-    last_ts = status.get("timestamp")
-    age_secs = None
-    if last_ts:
-        try:
-            from datetime import datetime as _dt
-            age_secs = int((_dt.now() - _dt.fromisoformat(last_ts[:19])).total_seconds())
-        except Exception:
-            pass
-    status["age_secs"] = age_secs
-    # Poller is considered "running" if heartbeat is < 3 minutes old
-    status["poller_running"] = age_secs is not None and age_secs < 180
-    return jsonify(status)
+    return jsonify(_poller_status_snapshot())
+
+
+@app.route("/api/live-dashboard")
+def api_live_dashboard():
+    return jsonify(_build_live_dashboard_payload())
 
 
 @app.route("/api/poller-reconnect", methods=["POST"])
