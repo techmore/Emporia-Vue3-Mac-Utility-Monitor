@@ -620,9 +620,9 @@ def get_latest(device_gid: str | None = None):
         conn.close()
         return []
 
-    c.execute("""SELECT channel_name, usage_kwh, cost_cents, timestamp
+    c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
         FROM (
-            SELECT channel_name, usage_kwh, cost_cents, timestamp,
+            SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
                    ROW_NUMBER() OVER (
                        PARTITION BY channel_name
                        ORDER BY timestamp DESC, id DESC
@@ -937,13 +937,13 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
 
     # Most recent single reading per channel (for "right now" watts estimate)
     c.execute(
-        """SELECT channel_name, usage_kwh, timestamp
+        """SELECT channel_name, channel_num, usage_kwh, timestamp
            FROM (
-               SELECT channel_name, usage_kwh, timestamp,
+               SELECT channel_name, channel_num, usage_kwh, timestamp,
                       ROW_NUMBER() OVER (
-                       PARTITION BY channel_name
-                       ORDER BY timestamp DESC, id DESC
-                   ) AS rn
+                          PARTITION BY channel_name
+                          ORDER BY timestamp DESC, id DESC
+                      ) AS rn
             FROM readings
             WHERE device_gid = ?
            )

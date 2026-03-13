@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.13"
+VERSION = "1.7.14"
 
 
 def _read_monthly_budget() -> float:
@@ -2749,6 +2749,40 @@ def _normalize_panel_layout(layout: dict[int, dict], channel_names: list[str], m
     return normalized, panel_slots
 
 
+def _seed_layout_from_latest(
+    layout: dict[int, dict],
+    latest_rows: list[dict],
+    channel_names: list[str],
+) -> dict[int, dict]:
+    seeded = {slot: dict(row) for slot, row in layout.items()}
+    assigned = {row.get("channel_name") for row in seeded.values() if row.get("channel_name")}
+    eligible = set(channel_names)
+    for row in latest_rows:
+        name = row.get("channel_name")
+        raw_slot = row.get("channel_num")
+        if name not in eligible or name in assigned:
+            continue
+        try:
+            slot = int(raw_slot)
+        except (TypeError, ValueError):
+            continue
+        if slot < 1:
+            continue
+        current = seeded.get(slot)
+        if current and current.get("channel_name") and current.get("channel_name") != name:
+            continue
+        seeded[slot] = {
+            "slot": slot,
+            "channel_name": name,
+            "label": current.get("label") if current else None,
+            "note": current.get("note") if current else None,
+            "amps": current.get("amps") if current else None,
+            "poles": current.get("poles") if current else 1,
+        }
+        assigned.add(name)
+    return seeded
+
+
 def _build_mains_cards(latest_map: dict[str, float], hours: int = 24) -> tuple[dict | None, list[dict]]:
     main_total = energy.get_main_total(hours) or {}
     mains_totals = {
@@ -2782,6 +2816,46 @@ def _build_mains_cards(latest_map: dict[str, float], hours: int = 24) -> tuple[d
         })
 
     return total_card, leg_cards
+
+
+def _detect_service_feed(
+    latest_rows: list[dict],
+    latest_map: dict[str, float],
+    layout: dict[int, dict],
+) -> tuple[dict | None, list[dict], str]:
+    total_main, native_legs = _build_mains_cards(latest_map, 24)
+    native_names = {row["label"] for row in native_legs}
+    if {"Leg A", "Leg B", "Leg C"}.issubset(native_names):
+        return total_main, native_legs, "three_phase_native"
+    if {"Leg A", "Leg B"}.issubset(native_names):
+        return total_main, native_legs, "split_phase_native"
+
+    leg_a_watts = 0.0
+    leg_b_watts = 0.0
+    found = False
+    for slot, row in layout.items():
+        name = row.get("channel_name")
+        if not name or name in _MAINS_NAMES or name in _SKIP_NAMES:
+            continue
+        watts = _watts_estimate(latest_map.get(name, 0))
+        poles = row.get("poles") or 1
+        if poles == 2:
+            leg_a_watts += watts / 2
+            leg_b_watts += watts / 2
+        elif slot % 2 == 1:
+            leg_a_watts += watts
+        else:
+            leg_b_watts += watts
+        found = True
+
+    if not found:
+        return total_main, native_legs, "aggregate_only"
+
+    inferred_legs = [
+        {"label": "Leg A (est.)", "is_total": False, "watts": leg_a_watts, "kwh_24h": 0, "cost_24h": 0},
+        {"label": "Leg B (est.)", "is_total": False, "watts": leg_b_watts, "kwh_24h": 0, "cost_24h": 0},
+    ]
+    return total_main, inferred_legs, "split_phase_inferred"
 
 
 def _build_dashboard_context(panel_label: str) -> dict:
@@ -2831,9 +2905,6 @@ def _build_dashboard_context(panel_label: str) -> dict:
     budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
 
     summary_24_map = {row["channel_name"]: row for row in summary_24}
-    total_main, mains_legs = _build_mains_cards(latest_map, 24)
-    dash_mains = ([total_main] if total_main else []) + mains_legs
-
     layout = {row["slot"]: row for row in energy.get_panel_layout()}
     ordered = sorted(
         [
@@ -2842,11 +2913,14 @@ def _build_dashboard_context(panel_label: str) -> dict:
         ],
         key=lambda name: (name.startswith("Circuit_"), name),
     )
+    layout = _seed_layout_from_latest(layout, ctx["latest"], ordered)
     layout, dashboard_panel_slots = _normalize_panel_layout(
         layout,
         ordered,
         minimum_slots=_load_panel_slots(),
     )
+    total_main, mains_legs, service_mode = _detect_service_feed(ctx["latest"], latest_map, layout)
+    dash_mains = ([total_main] if total_main else []) + mains_legs
     max_w = max((_watts_estimate(latest_map.get(name, 0)) for name in ordered), default=1) or 1
     live_watts = {name: _watts_estimate(latest_map.get(name, 0)) for name in ordered}
     sorted_watts = sorted(live_watts.values(), reverse=True)
@@ -2930,8 +3004,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
     ]
     standby.sort(key=lambda row: row["watts"], reverse=True)
     leg_rows = mains_legs
-    mains_a_row = next((row for row in ctx["latest"] if row["channel_name"] == "Mains_A"), None)
-    legs_fresh = _reading_fresh(mains_a_row)
+    legs_fresh = bool(leg_rows)
 
     slope = (trend or {}).get("slope") or 0
 
@@ -2970,6 +3043,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
         "danger_breakers": [row for row in dash_breakers if row.get("safe_cls") == "danger"],
         "leg_a": leg_rows[0] if len(leg_rows) > 0 and legs_fresh else None,
         "leg_b": leg_rows[1] if len(leg_rows) > 1 and legs_fresh else None,
+        "service_mode": service_mode,
         "slope": slope,
         "trend_dir": "↑ rising" if slope > 0.05 else ("↓ falling" if slope < -0.05 else "→ steady"),
         "trend_color": "#f87171" if slope > 0.05 else ("#81c784" if slope < -0.05 else "var(--text-light)"),
@@ -3148,9 +3222,6 @@ def circuits_page():
     sum_week = {r["channel_name"]: r for r in energy.get_summary(24 * 7)}
     sum_mon  = {r["channel_name"]: r for r in energy.get_summary(24 * 30)}
 
-    total_main, mains_legs = _build_mains_cards(latest_map, 24)
-    mains = ([total_main] if total_main else []) + mains_legs
-
     # ── Circuit slots — use saved panel layout if present ─────────────────
     layout = {row["slot"]: row for row in energy.get_panel_layout()}
 
@@ -3158,11 +3229,14 @@ def circuits_page():
         n for n in sum_24h
         if n not in _MAINS_NAMES and n not in _SKIP_NAMES
     ], key=lambda n: (n.startswith("Circuit_"), n))
+    layout = _seed_layout_from_latest(layout, latest_rows, all_circuits)
     layout, panel_slots = _normalize_panel_layout(
         layout,
         all_circuits,
         minimum_slots=_load_panel_slots(),
     )
+    total_main, mains_legs, service_mode = _detect_service_feed(latest_rows, latest_map, layout)
+    mains = ([total_main] if total_main else []) + mains_legs
 
     max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in all_circuits), default=1) or 1
     _live_w_c = {n: _watts_estimate(latest_map.get(n, 0)) for n in all_circuits}
