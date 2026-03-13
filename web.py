@@ -726,6 +726,128 @@ def _render(template: str, **ctx):
     )
 
 
+PANEL_FRAGMENT_HTML = """
+<div class="panel-wrap" style="margin-top:0;">
+  {% if mains %}
+  <div class="panel-label">{{ panel_label_text }}</div>
+  {% for m in mains %}
+  {% if m.is_total %}
+  <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
+    <div class="mc-leg">{{ m.label }}</div>
+    <div class="mc-w" style="font-size:{{ total_font_size }}rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:{{ total_unit_size }}rem;color:var(--olive-300)">W</span>
+      <span style="font-size:{{ total_rate_size }}rem; color:var(--olive-300); margin-left:{{ total_rate_margin }}px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1)) }}/kWh</span>
+    </div>
+    <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
+  </div>
+  <div class="panel-mains" style="margin-bottom:10px;">
+  {% elif loop.last %}
+    <div class="mains-card">
+      <div class="mc-leg">{{ m.label }}</div>
+      <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+    </div>
+  </div>
+  {% else %}
+    <div class="mains-card">
+      <div class="mc-leg">{{ m.label }}</div>
+      <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+    </div>
+  {% endif %}
+  {% endfor %}
+  <div class="panel-bus">
+    <div class="panel-bus-line"></div>
+    <div class="panel-bus-label">{{ bus_label }}</div>
+    <div class="panel-bus-line"></div>
+  </div>
+  {% endif %}
+  {%- macro render_breaker_shared(b) %}
+    {% if b.channel_name %}
+    <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
+      {% if b.is_peak %}<div class="breaker-peak-badge">⚡ top</div>{% endif %}
+      <div class="breaker-num">{{ b.slot }}</div>
+      <div class="breaker-body">
+        <div class="breaker-name">{{ b.label }}</div>
+        <div class="breaker-watts">
+          {{ "%.0f"|format(b.watts) }} W
+          {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
+        </div>
+        {% if b.load_label %}
+        <div class="breaker-load-row">
+          <div class="breaker-load-bar-wrap">
+            <div class="breaker-load-bar-fill {{ b.fill_cls }}" style="width:{{ b.load_bar_w }}%"></div>
+          </div>
+          <span class="breaker-load-text {{ b.load_cls }}">{{ b.load_label }}</span>
+        </div>
+        {% endif %}
+      </div>
+      <div>
+        <div class="breaker-bars">
+          <div class="breaker-bar-wrap" title="Relative share of current panel load">
+            <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
+          </div>
+          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="Continuous-load safety vs 80% of breaker rating">
+            <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
+          </div>
+        </div>
+        <div class="breaker-bar-labels"><span>Load</span><span>Safe</span></div>
+      </div>
+      {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
+    </a>
+    {% else %}
+    <div class="breaker empty">
+      <div class="breaker-num">{{ b.slot }}</div>
+      <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
+    </div>
+    {% endif %}
+  {%- endmacro %}
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+    <div style="display:flex; flex-direction:column; gap:6px;">
+      {% for b in breakers_left %}{{ render_breaker_shared(b) }}{% endfor %}
+    </div>
+    <div style="display:flex; flex-direction:column; gap:6px;">
+      {% for b in breakers_right %}{{ render_breaker_shared(b) }}{% endfor %}
+    </div>
+  </div>
+  {% if edit_href %}
+  <div style="text-align:right; margin-top:0.75rem;">
+    <a href="{{ edit_href }}" style="font-size:0.75rem; color:var(--olive-400); text-decoration:none;">
+      ✏️ Edit panel layout
+    </a>
+  </div>
+  {% endif %}
+</div>
+"""
+
+
+def _render_panel_fragment(
+    mains: list[dict],
+    breakers_left: list[dict],
+    breakers_right: list[dict],
+    *,
+    panel_label_text: str,
+    bus_label: str,
+    edit_href: str | None = None,
+    total_font_size: float = 2.2,
+    total_unit_size: float = 0.9,
+    total_rate_size: float = 0.8,
+    total_rate_margin: int = 10,
+) -> str:
+    return render_template_string(
+        PANEL_FRAGMENT_HTML,
+        mains=mains,
+        breakers_left=breakers_left,
+        breakers_right=breakers_right,
+        panel_label_text=panel_label_text,
+        bus_label=bus_label,
+        edit_href=edit_href,
+        total_font_size=total_font_size,
+        total_unit_size=total_unit_size,
+        total_rate_size=total_rate_size,
+        total_rate_margin=total_rate_margin,
+    )
+
+
 def _parse_nonnegative_float(value, field: str, *, allow_zero: bool = True) -> float:
     try:
         parsed = float(value)
@@ -943,86 +1065,7 @@ DASH_HTML = """
     <div id="view-panel" style="display:none;">
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; align-items:start;">
 
-        <!-- Left: breaker panel -->
-        <div class="panel-wrap" style="margin-top:0;">
-          {% if dash_mains %}
-          <div class="panel-label">{{ panel_label }} — Live</div>
-          {% for m in dash_mains %}
-          {% if m.is_total %}
-          <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
-            <div class="mc-leg">{{ m.label }}</div>
-            <div class="mc-w" style="font-size:2.2rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:0.9rem;color:var(--olive-300)">W</span>
-              <span style="font-size:0.8rem; color:var(--olive-300); margin-left:10px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1)) }}/kWh</span>
-            </div>
-            <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
-          </div>
-          <div class="panel-mains" style="margin-bottom:10px;">
-          {% elif loop.last %}
-            <div class="mains-card">
-              <div class="mc-leg">{{ m.label }}</div>
-              <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-              <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
-            </div>
-          </div>
-          {% else %}
-            <div class="mains-card">
-              <div class="mc-leg">{{ m.label }}</div>
-              <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-              <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
-            </div>
-          {% endif %}
-          {% endfor %}
-          <div class="panel-bus"><div class="panel-bus-line"></div><div class="panel-bus-label">Bus bar</div><div class="panel-bus-line"></div></div>
-          {% endif %}
-          {%- macro render_breaker(b) %}
-            {% if b.channel_name %}
-            <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
-              {% if b.is_peak %}<div class="breaker-peak-badge">⚡ top</div>{% endif %}
-              <div class="breaker-num">{{ b.slot }}</div>
-              <div class="breaker-body">
-                <div class="breaker-name">{{ b.label }}</div>
-                <div class="breaker-watts">
-                  {{ "%.0f"|format(b.watts) }} W
-                  {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
-                </div>
-                {% if b.load_label %}
-                <div class="breaker-load-row">
-                  <div class="breaker-load-bar-wrap">
-                    <div class="breaker-load-bar-fill {{ b.fill_cls }}" style="width:{{ b.load_bar_w }}%"></div>
-                  </div>
-                  <span class="breaker-load-text {{ b.load_cls }}">{{ b.load_label }}</span>
-                </div>
-                {% endif %}
-              </div>
-              <div>
-                <div class="breaker-bars">
-                  <div class="breaker-bar-wrap" title="Relative share of current panel load">
-                    <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
-                  </div>
-                  <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="Continuous-load safety vs 80% of breaker rating">
-                    <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
-                  </div>
-                </div>
-                <div class="breaker-bar-labels"><span>Load</span><span>Safe</span></div>
-              </div>
-              {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
-            </a>
-            {% else %}
-            <div class="breaker empty">
-              <div class="breaker-num">{{ b.slot }}</div>
-              <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
-            </div>
-            {% endif %}
-          {%- endmacro %}
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-            <div style="display:flex; flex-direction:column; gap:6px;">
-              {% for b in breakers_left %}{{ render_breaker(b) }}{% endfor %}
-            </div>
-            <div style="display:flex; flex-direction:column; gap:6px;">
-              {% for b in breakers_right %}{{ render_breaker(b) }}{% endfor %}
-            </div>
-          </div>
-        </div>
+        {{ panel_fragment|safe }}
 
         <!-- Right: 2-column metrics grid -->
         <div style="display:flex; flex-direction:column; gap:10px;">
@@ -1853,97 +1896,7 @@ RECOMMENDATIONS_HTML = """
 CIRCUITS_HTML = """
 <div class="page">
 
-  <!-- ── Panel totals ──────────────────────────────────────────────────── -->
-  <div class="panel-wrap">
-    <div class="panel-label">{{ panel_label }}</div>
-    {% for m in mains %}
-    {% if m.is_total %}
-    <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
-      <div class="mc-leg">{{ m.label }}</div>
-      <div class="mc-w" style="font-size:2.5rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-300)">W</span>
-        <span style="font-size:0.9rem; color:var(--olive-300); margin-left:12px;">${{ "%.4f"|format(m.cost_24h / (m.kwh_24h or 1)) }}/kWh</span>
-      </div>
-      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
-    </div>
-    <div class="panel-mains" style="margin-bottom:10px;">
-    {% elif loop.last %}
-      <div class="mains-card">
-        <div class="mc-leg">{{ m.label }}</div>
-        <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
-      </div>
-    </div>
-    {% else %}
-      <div class="mains-card">
-        <div class="mc-leg">{{ m.label }}</div>
-        <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-        <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
-      </div>
-    {% endif %}
-    {% endfor %}
-
-    <div class="panel-bus">
-      <div class="panel-bus-line"></div>
-      <div class="panel-bus-label">Bus bar &bull; {{ panel_slots }} slots</div>
-      <div class="panel-bus-line"></div>
-    </div>
-
-    <!-- Two-column breaker grid — left = odd slots, right = even slots -->
-    {%- macro render_breaker_c(b) %}
-      {% if b.channel_name %}
-      <a class="breaker {{ b.cls }}" href="/circuit/{{ b.channel_name|urlencode }}">
-        {% if b.is_peak %}<div class="breaker-peak-badge">⚡ top</div>{% endif %}
-        <div class="breaker-num">{{ b.slot }}</div>
-        <div class="breaker-body">
-          <div class="breaker-name">{{ b.label }}</div>
-          <div class="breaker-watts">
-            {{ "%.0f"|format(b.watts) }} W
-            {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
-          </div>
-          {% if b.load_label %}
-          <div class="breaker-load-row">
-            <div class="breaker-load-bar-wrap">
-              <div class="breaker-load-bar-fill {{ b.fill_cls }}" style="width:{{ b.load_bar_w }}%"></div>
-            </div>
-            <span class="breaker-load-text {{ b.load_cls }}">{{ b.load_label }}</span>
-          </div>
-          {% endif %}
-        </div>
-              <div>
-                <div class="breaker-bars">
-                  <div class="breaker-bar-wrap" title="Relative share of current panel load">
-                    <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
-                  </div>
-                  <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="Continuous-load safety vs 80% of breaker rating">
-                    <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
-                  </div>
-                </div>
-                <div class="breaker-bar-labels"><span>Load</span><span>Safe</span></div>
-              </div>
-        {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
-      </a>
-      {% else %}
-      <div class="breaker empty">
-        <div class="breaker-num">{{ b.slot }}</div>
-        <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
-      </div>
-      {% endif %}
-    {%- endmacro %}
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-      <div style="display:flex; flex-direction:column; gap:6px;">
-        {% for b in breakers_left %}{{ render_breaker_c(b) }}{% endfor %}
-      </div>
-      <div style="display:flex; flex-direction:column; gap:6px;">
-        {% for b in breakers_right %}{{ render_breaker_c(b) }}{% endfor %}
-      </div>
-    </div>
-
-    <div style="text-align:right; margin-top:0.75rem;">
-      <a href="/panel" style="font-size:0.75rem; color:var(--olive-400); text-decoration:none;">
-        ✏️ Edit panel layout
-      </a>
-    </div>
-  </div>
+  {{ panel_fragment|safe }}
 
   <!-- ── Action center ─────────────────────────────────────────────────── -->
   <div class="section">
@@ -2793,6 +2746,13 @@ def index():
     return _render(
         DASH_HTML,
         active_page="dashboard",
+        panel_fragment=_render_panel_fragment(
+            dash_mains,
+            breakers_left,
+            breakers_right,
+            panel_label_text=f"{com['panel_label']} — Live",
+            bus_label="Bus bar",
+        ),
         ctx=ctx,
         current_watts=current_watts,
         cost_per_hour=cost_per_hour,
@@ -3148,6 +3108,18 @@ def circuits_page():
     if _pinv2.get("invert_right", False): breakers_right = list(reversed(breakers_right))
 
     return _render(CIRCUITS_HTML, active_page="circuits",
+                   panel_fragment=_render_panel_fragment(
+                       mains,
+                       breakers_left,
+                       breakers_right,
+                       panel_label_text=com["panel_label"],
+                       bus_label=f"Bus bar • {panel_slots} slots",
+                       edit_href="/panel",
+                       total_font_size=2.5,
+                       total_unit_size=1.0,
+                       total_rate_size=0.9,
+                       total_rate_margin=12,
+                   ),
                    mains=mains, breakers=breakers,
                    breakers_left=breakers_left, breakers_right=breakers_right,
                    usage_rows=usage_rows,
