@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.35"
+VERSION = "1.7.36"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1054,23 +1054,23 @@ DASH_HTML = """
 
   <style>
   .banner-forecast {
-    background: var(--olive-200); border: 1px solid var(--olive-300); border-radius: 12px;
-    padding: 0.75rem 0.9rem; min-width: 0; flex: 1 1 360px; color: var(--olive-950);
+    background: var(--olive-800); border: 1px solid var(--olive-700); border-radius: 12px;
+    padding: 0.75rem 0.9rem; min-width: 0; flex: 1 1 360px; color: var(--olive-50);
   }
   .banner-forecast-head {
     display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:0.45rem;
   }
-  .banner-forecast-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--olive-700); }
-  .banner-forecast-sub { font-size:0.72rem; color:var(--olive-700); }
+  .banner-forecast-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--olive-300); }
+  .banner-forecast-sub { font-size:0.72rem; color:var(--olive-300); }
   .banner-forecast-days { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:6px; }
-  .banner-forecast-day { background: rgba(255,255,255,0.28); border-radius:10px; padding:0.45rem 0.35rem; text-align:center; min-width:0; }
+  .banner-forecast-day { background: rgba(255,255,255,0.08); border-radius:10px; padding:0.45rem 0.35rem; text-align:center; min-width:0; }
   .banner-forecast-day.today { background: var(--olive-800); color: var(--olive-50); }
   .banner-forecast-day.today .banner-forecast-date, .banner-forecast-day.today .banner-forecast-low { color: var(--olive-300); }
-  .banner-forecast-label { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--olive-700); }
-  .banner-forecast-date { font-size:0.66rem; color:var(--olive-600); margin-top:1px; }
+  .banner-forecast-label { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--olive-300); }
+  .banner-forecast-date { font-size:0.66rem; color:var(--olive-400); margin-top:1px; }
   .banner-forecast-hi { font-size:0.92rem; font-weight:700; line-height:1.1; margin-top:4px; }
-  .banner-forecast-low { font-size:0.72rem; color:var(--olive-700); line-height:1.1; }
-  .banner-forecast-line { height:3px; border-radius:999px; margin-top:6px; background: rgba(110,117,75,0.18); }
+  .banner-forecast-low { font-size:0.72rem; color:var(--olive-300); line-height:1.1; }
+  .banner-forecast-line { height:3px; border-radius:999px; margin-top:6px; background: rgba(255,255,255,0.12); }
   .banner-forecast-line.heat { background: rgba(220,60,40,0.72); }
   .banner-forecast-line.cool { background: rgba(60,140,220,0.72); }
   </style>
@@ -4362,12 +4362,12 @@ SETTINGS_HTML = """
           <div style="display:flex; gap:2rem; flex-wrap:wrap; margin-bottom:0.85rem;">
             <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
               <input type="checkbox" id="invertLeft" {% if panel_invert_left %}checked{% endif %}
-                     style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
+                     style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-300);">
               Invert left column (odd slots)
             </label>
             <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
               <input type="checkbox" id="invertRight" {% if panel_invert_right %}checked{% endif %}
-                     style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-700);">
+                     style="width:16px; height:16px; cursor:pointer; accent-color:var(--olive-300);">
               Invert right column (even slots)
             </label>
           </div>
@@ -4863,7 +4863,7 @@ AQARA_HTML = """
       </p>
       <ol style="font-size:0.8rem; color:var(--text-light); margin:0; padding-left:1.25rem; line-height:2;">
         <li>Create a developer account &amp; app → copy <strong>App ID</strong>, <strong>App Key</strong>, <strong>Key ID</strong></li>
-        <li>Enter credentials in <a href="/settings" style="color:var(--olive-700);">Settings → Aqara Integration</a></li>
+        <li>Enter credentials in <a href="/settings" style="color:var(--olive-300);">Settings → Aqara Integration</a></li>
         <li>Click <strong>Authorize</strong> to link your account via OAuth</li>
         <li>Return here — sensors will appear automatically</li>
       </ol>
