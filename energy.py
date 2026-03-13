@@ -3,6 +3,7 @@ import os
 import json
 import time
 import sqlite3
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 import pyemvue
@@ -13,6 +14,12 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
 DB_RETENTION_DAYS = int(os.environ.get("DB_RETENTION_DAYS", "365"))
 POLLER_STATUS_FILE = os.environ.get("POLLER_STATUS_FILE", "poller_status.json")
 RECONNECT_FLAG_FILE = "reconnect.flag"
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
@@ -241,7 +248,7 @@ def migrate_channel_names():
             "UPDATE readings SET channel_name = ? WHERE channel_name = ?", updates
         )
         conn.commit()
-        print(f"[migrate] renamed {len(updates)} channel name(s)")
+        logger.info("[migrate] renamed %s channel name(s)", len(updates))
     conn.close()
     return len(updates)
 
@@ -261,12 +268,12 @@ def login_vue():
     username = os.environ.get("EMPORIA_EMAIL")    or cfg.get("emporia_email")
     password = os.environ.get("EMPORIA_PASSWORD") or cfg.get("emporia_password")
 
-    print(f"Attempting login with user: {username}")
+    logger.info("Attempting login with user: %s", username)
 
     if os.path.exists(token_file):
         with open(token_file) as f:
             data = json.load(f)
-            print("Using existing tokens from keys.json")
+            logger.info("Using existing tokens from keys.json")
             vue.login(
                 id_token=data.get("idToken"),
                 access_token=data.get("accessToken"),
@@ -279,14 +286,14 @@ def login_vue():
                 "No keys.json and no credentials available. "
                 "Enter your Emporia email & password via the Reconnect panel on /log."
             )
-        print("Logging in with username/password...")
+        logger.info("Logging in with username/password...")
         try:
             result = vue.login(
                 username=username, password=password, token_storage_file=token_file
             )
         except Exception as e:
             raise RuntimeError(f"Login failed: {type(e).__name__}: {e}") from e
-        print(f"Login result: {result}")
+        logger.info("Login result: %s", result)
         if not result:
             raise RuntimeError(
                 "Login returned False — check credentials or Emporia API availability."
@@ -342,7 +349,7 @@ def poll_and_store(vue, device_gids):
 
     conn.commit()
     conn.close()
-    print(f"[{now}] Recorded readings")
+    logger.info("[%s] Recorded readings", now)
 
 
 def run_continuous():
@@ -354,9 +361,9 @@ def run_continuous():
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
-    print(f"Starting continuous polling every {POLL_INTERVAL} seconds")
-    print(f"Rate: ${RATE_CENTS / 100:.4f}/kWh")
-    print(f"Database: {DB_PATH}")
+    logger.info("Starting continuous polling every %s seconds", POLL_INTERVAL)
+    logger.info("Rate: $%.4f/kWh", RATE_CENTS / 100)
+    logger.info("Database: %s", DB_PATH)
 
     # ── Initial login — stay alive even if first login fails ─────────────
     vue = None
@@ -368,18 +375,18 @@ def run_continuous():
     try:
         vue = login_vue()
         device_gids, _ = get_devices_with_channels(vue)
-        print(f"Found {len(device_gids)} device(s)")
+        logger.info("Found %s device(s)", len(device_gids))
         write_poller_status(True, consecutive_errors=0)
     except Exception as e:
         err = f"Startup login failed: {e}"
-        print(err)
+        logger.exception(err)
         write_poller_status(False, error=err + " — use /log reconnect panel to re-authenticate.",
                             consecutive_errors=0)
 
     while True:
         # ── Check for a reconnect request from the Flask UI ───────────────
         if os.path.exists(RECONNECT_FLAG_FILE):
-            print("Reconnect flag detected — attempting re-login...")
+            logger.info("Reconnect flag detected — attempting re-login...")
             try:
                 os.remove(RECONNECT_FLAG_FILE)
             except Exception:
@@ -395,12 +402,12 @@ def run_continuous():
             try:
                 vue = login_vue()
                 device_gids, _ = get_devices_with_channels(vue)
-                print(f"Reconnected — {len(device_gids)} device(s)")
+                logger.info("Reconnected — %s device(s)", len(device_gids))
                 consecutive_errors = 0
                 write_poller_status(True, consecutive_errors=0)
             except Exception as e:
                 err = f"Reconnect failed: {e}"
-                print(err)
+                logger.exception(err)
                 write_poller_status(False, error=err, consecutive_errors=consecutive_errors)
 
         # ── Normal poll (skip if no client yet) ───────────────────────────
@@ -418,14 +425,14 @@ def run_continuous():
         except Exception as e:
             consecutive_errors += 1
             err_str = f"{type(e).__name__}: {e}"
-            print(f"[Poll error #{consecutive_errors}] {err_str}")
+            logger.warning("[Poll error #%s] %s", consecutive_errors, err_str)
             write_poller_status(False, error=err_str, consecutive_errors=consecutive_errors)
 
             # Auto re-login after enough consecutive failures (expired tokens etc.)
             if consecutive_errors >= MAX_ERRORS_BEFORE_RELOGIN:
                 backoff = RELOGIN_BACKOFF[min(consecutive_errors - MAX_ERRORS_BEFORE_RELOGIN,
                                               len(RELOGIN_BACKOFF) - 1)]
-                print(f"Auto re-login attempt (backoff {backoff}s)…")
+                logger.warning("Auto re-login attempt (backoff %ss)…", backoff)
                 time.sleep(backoff)
                 try:
                     cfg = _load_settings()
@@ -434,12 +441,12 @@ def run_continuous():
                         os.remove("keys.json")
                     vue = login_vue()
                     device_gids, _ = get_devices_with_channels(vue)
-                    print(f"Auto re-login OK — {len(device_gids)} device(s)")
+                    logger.info("Auto re-login OK — %s device(s)", len(device_gids))
                     consecutive_errors = 0
                     write_poller_status(True, consecutive_errors=0)
                 except Exception as re_e:
                     reauth_err = f"Auto re-login failed: {re_e}"
-                    print(reauth_err)
+                    logger.exception(reauth_err)
                     write_poller_status(False, error=reauth_err,
                                         consecutive_errors=consecutive_errors)
 

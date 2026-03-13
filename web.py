@@ -3702,13 +3702,16 @@ def handle_large_upload(_exc):
 
 
 if __name__ == "__main__":
-    print(f"Energy Monitor — http://localhost:5001")
-    print(f"Rate: ${RATE:.4f}/kWh  Budget: ${MONTHLY_BUDGET:.0f}/mo")
+    app.logger.info("Energy Monitor — http://localhost:5001")
+    app.logger.info("Rate: $%.4f/kWh  Budget: $%.0f/mo", RATE, MONTHLY_BUDGET)
     n = energy.migrate_channel_names()
     if n:
-        print(f"[startup] migrated {n} channel name(s)")
+        app.logger.info("[startup] migrated %s channel name(s)", n)
     # One-time migration: fix kWatts CSV rows stored without unit conversion
     csv_fix = energy.fix_csv_kwatts_import()
     if csv_fix["fixed"]:
-        print(f"[startup] fixed {csv_fix['fixed']:,} CSV kWatts rows (÷60 unit correction)")
+        app.logger.info(
+            "[startup] fixed %s CSV kWatts rows (÷60 unit correction)",
+            f"{csv_fix['fixed']:,}",
+        )
     app.run(debug=False, host=os.environ.get("FLASK_HOST", "127.0.0.1"), port=5001)
