@@ -1338,6 +1338,49 @@ DASH_HTML = """
     </div>
   </div>
 
+  <!-- ── Action center ─────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Action Center</h2>
+      <span class="section-sub">What needs attention right now</span>
+    </div>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
+        {% for b in safety_breakers[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
+          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
+        {% for c in top_live_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
+        {% for s in standby_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
   <!-- ── Trend banner ─────────────────────────────────────────────────── -->
   {% if trend.slope is not none %}
   <div class="section">
@@ -1796,6 +1839,49 @@ CIRCUITS_HTML = """
       <a href="/panel" style="font-size:0.75rem; color:var(--olive-400); text-decoration:none;">
         ✏️ Edit panel layout
       </a>
+    </div>
+  </div>
+
+  <!-- ── Action center ─────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Action Center</h2>
+      <span class="section-sub">What needs attention right now</span>
+    </div>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
+        {% for b in safety_breakers[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
+          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
+        {% for c in top_live_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
+        {% endfor %}
+      </div>
+      <div class="card">
+        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
+        {% for s in standby_circuits[:4] %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
+          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
+        {% endfor %}
+      </div>
     </div>
   </div>
 
@@ -2701,7 +2787,8 @@ def guide_page():
 @app.route("/circuits")
 def circuits_page():
     com = _common()
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in energy.get_latest()}
+    latest_rows = energy.get_latest()
+    latest_map = {r["channel_name"]: r["usage_kwh"] for r in latest_rows}
 
     # Per-period summaries
     sum_24h  = {r["channel_name"]: r for r in energy.get_summary(24)}
@@ -2811,6 +2898,9 @@ def circuits_page():
             "is_peak":      is_peak,
         })
 
+    safety_breakers = [b for b in breakers if b.get("safe_cls") in ("warn", "danger")]
+    safety_breakers.sort(key=lambda b: (b.get("safe_cls") != "danger", -b.get("safe_bar_pct", 0)))
+
     # ── Usage table rows ──────────────────────────────────────────────────
     max_day   = max((sum_24h.get(n,  {}).get("total_kwh", 0) for n in all_circuits), default=1) or 1
     max_week  = max((sum_week.get(n, {}).get("total_kwh", 0) for n in all_circuits), default=1) or 1
@@ -2838,6 +2928,27 @@ def circuits_page():
             "month_bar": int(mk / max_month * 48),
         })
     usage_rows.sort(key=lambda r: r["day_kwh"], reverse=True)
+    usage_row_map = {r["channel_name"]: r for r in usage_rows}
+    top_live_circuits = []
+    for row in latest_rows:
+        name = row["channel_name"]
+        if name in _MAINS_NAMES or name in _SKIP_NAMES or str(name).isdigit():
+            continue
+        top_live_circuits.append({
+            "channel_name": name,
+            "display_name": usage_row_map.get(name, {}).get("display_name", name),
+            "watts": _watts_estimate(row["usage_kwh"]),
+        })
+    top_live_circuits.sort(key=lambda r: r["watts"], reverse=True)
+
+    standby_circuits = [
+        {"name": usage_row_map.get(name, {}).get("display_name", name), "watts": watts}
+        for name, watts in ((n, _watts_estimate(kwh)) for n, kwh in latest_map.items())
+        if name not in _MAINS_NAMES and name not in _SKIP_NAMES
+        and not str(name).isdigit()
+        and 1 <= watts <= 50
+    ]
+    standby_circuits.sort(key=lambda r: r["watts"], reverse=True)
 
     # Split breakers into left (odd) / right (even) columns with invert support
     import json as _json2
@@ -2857,6 +2968,9 @@ def circuits_page():
                    mains=mains, breakers=breakers,
                    breakers_left=breakers_left, breakers_right=breakers_right,
                    usage_rows=usage_rows,
+                   safety_breakers=safety_breakers,
+                   top_live_circuits=top_live_circuits,
+                   standby_circuits=standby_circuits,
                    panel_slots=panel_slots, **com)
 
 
