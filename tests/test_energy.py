@@ -355,7 +355,6 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("todayRowChart", body)
         self.assertIn("yesterdayRowChart", body)
         self.assertIn("Top Active Circuits", body)
-        self.assertIn("Recommendations", body)
         self.assertGreaterEqual(body.count('class="breaker '), 2)
         self.assertLess(body.index("Service Feed"), body.index("Bus bar"))
         self.assertLess(body.index("Bus bar"), body.index('data-panel-section="breakers"'))
@@ -394,9 +393,9 @@ class EnergyTests(unittest.TestCase):
         client = web.app.test_client()
 
         expectations = {
-            "/reports": ["24h Cost", "Peak Today", "Biggest 24h Load"],
+            "/reports": ["24h Cost", "Peak Today", "Biggest 24h Load", "Next Best Actions"],
             "/guide": ["First-Time Setup", "Metric Meanings", "Panel view"],
-            "/recommendations": ["Next Best Actions", "Shortcuts", "When To Call An Electrician"],
+            "/settings": ["Settings", "Reports & Recommendations", "Circuits", "Import", "Aqara", "Log"],
         }
         for path, snippets in expectations.items():
             response = client.get(path)
@@ -404,6 +403,13 @@ class EnergyTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, path)
             for snippet in snippets:
                 self.assertIn(snippet, body, f"{snippet} missing from {path}")
+
+
+    def test_recommendations_redirects_to_reports_section(self):
+        client = web.app.test_client()
+        response = client.get("/recommendations")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("/reports#recommendations"))
 
     def test_live_event_stream_and_dashboard_payload(self):
         self._seed_ui_data()

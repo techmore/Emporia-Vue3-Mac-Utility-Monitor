@@ -4,7 +4,7 @@ Energy Monitor — Flask web server
 Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
 from datetime import datetime
-from flask import Flask, jsonify, render_template_string, Response, request
+from flask import Flask, jsonify, redirect, render_template_string, Response, request
 from jinja2 import select_autoescape
 from werkzeug.exceptions import RequestEntityTooLarge
 import json
@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.27"
+VERSION = "1.7.28"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -724,13 +724,8 @@ NAV_HTML = """
     <div class="nav-links">
       <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
-      <a href="/recommendations" class="{{ 'active' if active_page == 'recommendations' else '' }}">Recommendations</a>
-      <a href="/circuits" class="{{ 'active' if active_page == 'circuits' else '' }}">Circuits</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
-      <a href="/log" class="{{ 'active' if active_page == 'log' else '' }}">Log</a>
-      <a href="/import" class="{{ 'active' if active_page == 'import' else '' }}">Import</a>
-      <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>
     <div style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
@@ -1904,6 +1899,71 @@ REPORTS_HTML = """
       <div class="card-label">Standby Loads</div>
       <div class="card-value">{{ standby|length }}</div>
       <div class="card-meta">{{ "%.0f"|format(standby_total_w) }} W always-on</div>
+    </div>
+  </div>
+
+  <div id="recommendations" class="card" style="margin-bottom:14px;">
+    <div class="section-head" style="margin-bottom:0.9rem;">
+      <div>
+        <div class="eyebrow">Recommendations</div>
+        <h2 style="margin:0.15rem 0 0.2rem;">Next Best Actions</h2>
+      </div>
+      <span class="section-sub">Budget, safety, and standby review in one place</span>
+    </div>
+    <div class="grid-3" style="margin-bottom:14px;">
+      <div class="card">
+        <div class="card-label">Budget Check</div>
+        <div class="card-value">{{ "%.0f"|format(budget_pct) }}<span class="unit">%</span></div>
+        <div class="card-meta">of monthly budget projected</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Safety Watch</div>
+        <div class="card-value">{{ safety_breakers|length }}</div>
+        <div class="card-meta">breakers near the 80% line</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Always-On Load</div>
+        <div class="card-value">{{ "%.0f"|format(standby_total_w) }}<span class="unit">W</span></div>
+        <div class="card-meta">{{ standby|length }} standby candidates</div>
+      </div>
+    </div>
+    <div style="display:grid; grid-template-columns:1.15fr 1fr; gap:14px; align-items:start;">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Recommended Reviews</div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          {% for item in recommendations %}
+          <div style="padding:10px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+              <div>
+                <div style="font-size:0.9rem; font-weight:700; color:var(--text);">{{ item.title }}</div>
+                <div style="font-size:0.82rem; color:var(--text-light); margin-top:3px;">{{ item.body }}</div>
+              </div>
+              <a href="{{ item.href }}" style="white-space:nowrap; text-decoration:none; color:var(--accent); font-size:0.82rem; font-weight:600;">Open →</a>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="card">
+          <div class="card-label" style="margin-bottom:8px;">Quick Tips</div>
+          <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.88rem; line-height:1.55;">
+            <div><strong>Rate audit</strong>: confirm your utility rate in Settings after a bill change or seasonal tariff adjustment.</div>
+            <div><strong>Continuous loads</strong>: anything near the 80% line should be reviewed for breaker sizing and real duty cycle.</div>
+            <div><strong>Standby loads</strong>: the easiest savings often come from small always-on devices that never turn off.</div>
+            <div><strong>Historical review</strong>: use the rest of this page to compare this month against last month before making rate or budget changes.</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-label" style="margin-bottom:8px;">When To Call An Electrician</div>
+          <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.88rem; line-height:1.55;">
+            <div>Repeated breaker trips</div>
+            <div>Persistent loads near breaker limits</div>
+            <div>Unexplained panel imbalance</div>
+            <div>Heat, discoloration, or odor at outlets or panel gear</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -3323,6 +3383,42 @@ def reports_page():
     ]
     standby.sort(key=lambda x: x["watts"], reverse=True)
     standby_total_w = sum(s["watts"] for s in standby)
+    safety_breakers = []
+    layout = {row["slot"]: row for row in energy.get_panel_layout()}
+    for row in latest:
+        name = row["channel_name"]
+        watts = _watts_estimate(row["usage_kwh"])
+        panel_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
+        if not panel_row or name in _MAINS_NAMES or not watts:
+            continue
+        amps = panel_row.get("amps") or 15
+        poles = panel_row.get("poles") or 1
+        voltage = 240 if poles == 2 else 120
+        amps_now = watts / voltage
+        safe_pct = amps_now / (amps * 0.8) * 100 if amps else 0
+        if safe_pct >= 80:
+            safety_breakers.append({
+                "label": panel_row.get("label") or name,
+                "safe_pct": safe_pct,
+            })
+    safety_breakers.sort(key=lambda x: x["safe_pct"], reverse=True)
+    recommendations = [
+        {
+            "title": "Audit utility rate",
+            "body": "Confirm rate and monthly budget after any bill or provider change.",
+            "href": "/settings",
+        },
+        {
+            "title": "Inspect breaker safety",
+            "body": "Look at circuits nearest the 80% line and confirm breaker sizing and expected duty cycle.",
+            "href": "/circuits",
+        },
+        {
+            "title": "Refresh historical context",
+            "body": "Import historical CSV data if recent trends look sparse or recently reset.",
+            "href": "/import",
+        },
+    ]
     mc = energy.get_month_comparison()
     monthly_projected = (total_24h["total_kwh"] or 0) * 30 * RATE
     budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
@@ -3335,6 +3431,8 @@ def reports_page():
         peak_24h=peak_24h,
         standby=standby,
         standby_total_w=standby_total_w,
+        safety_breakers=safety_breakers,
+        recommendations=recommendations,
         month_comparison={"this_month": mc["this_month"], "last_month": mc["last_month"]},
         trend=trend,
         peak_usage=peak_usage,
@@ -3350,76 +3448,7 @@ def guide_page():
 
 @app.route("/recommendations")
 def recommendations_page():
-    com = _common()
-    ctx = energy.get_now_vs_context(60)
-    summary_24 = energy.get_summary(24)
-    main_24h = energy.get_main_total(24)
-    total_24h = main_24h or {
-        "total_kwh": sum(r["total_kwh"] for r in summary_24),
-        "total_cents": sum(r["total_cents"] for r in summary_24),
-    }
-    monthly_projected = (total_24h["total_kwh"] or 0) * 30 * RATE
-    budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
-
-    layout = {row["slot"]: row for row in energy.get_panel_layout()}
-    safety_breakers = []
-    standby = []
-    for row in ctx["latest"]:
-        name = row["channel_name"]
-        watts = _watts_estimate(row["usage_kwh"])
-        if name not in _MAINS_NAMES and name not in _SKIP_NAMES and 1 <= watts <= 50:
-            slot_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
-            standby.append({"name": (slot_row or {}).get("label") or name, "watts": watts})
-        panel_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
-        if not panel_row or name in _MAINS_NAMES or not watts:
-            continue
-        amps = panel_row.get("amps") or 15
-        poles = panel_row.get("poles") or 1
-        voltage = 240 if poles == 2 else 120
-        amps_now = watts / voltage
-        safe_pct = amps_now / (amps * 0.8) * 100 if amps else 0
-        if safe_pct >= 80:
-            safety_breakers.append({
-                "label": panel_row.get("label") or name,
-                "safe_pct": safe_pct,
-            })
-    standby.sort(key=lambda x: x["watts"], reverse=True)
-    standby_total_w = sum(s["watts"] for s in standby)
-    safety_breakers.sort(key=lambda x: x["safe_pct"], reverse=True)
-
-    recommendations = [
-        {
-            "title": "Audit utility rate",
-            "body": "Confirm rate and monthly budget after any bill or provider change.",
-            "href": "/settings",
-        },
-        {
-            "title": "Review monthly trend",
-            "body": "Use Reports to compare this month against last month before adjusting habits or budget.",
-            "href": "/reports",
-        },
-        {
-            "title": "Inspect breaker safety",
-            "body": "Look at circuits nearest the 80% line and confirm breaker sizing and expected duty cycle.",
-            "href": "/circuits",
-        },
-        {
-            "title": "Refresh historical context",
-            "body": "Import historical CSV data if recent trends look sparse or recently reset.",
-            "href": "/import",
-        },
-    ]
-
-    return _render(
-        RECOMMENDATIONS_HTML,
-        active_page="recommendations",
-        budget_pct=budget_pct,
-        safety_breakers=safety_breakers,
-        standby=standby,
-        standby_total_w=standby_total_w,
-        recommendations=recommendations,
-        **com,
-    )
+    return redirect("/reports#recommendations", code=302)
 
 
 @app.route("/circuits")
@@ -3572,7 +3601,7 @@ def circuits_page():
     if _pinv2.get("invert_left",  False): breakers_left  = list(reversed(breakers_left))
     if _pinv2.get("invert_right", False): breakers_right = list(reversed(breakers_right))
 
-    return _render(CIRCUITS_HTML, active_page="circuits",
+    return _render(CIRCUITS_HTML, active_page="settings",
                    panel_fragment=_render_panel_fragment(
                        total_main,
                        mains_legs,
@@ -3672,7 +3701,7 @@ def trends_page():
 def log_page():
     com     = _common()
     entries = energy.get_log_entries(200)
-    return _render(LOG_HTML, active_page="log", entries=entries, **com)
+    return _render(LOG_HTML, active_page="settings", entries=entries, **com)
 
 
 # ── REST API ──────────────────────────────────────────────────────────────────
@@ -3948,6 +3977,28 @@ SETTINGS_HTML = """
         <span class="sys-dot {{ 'ok' if has_tokens else 'warn' }}"></span>
         <div><div class="sys-name">Emporia Vue</div><div class="sys-sub">Energy Monitor</div></div>
       </button>
+
+      <div class="sys-nav-group" style="margin-top:0.4rem;">Workspace</div>
+      <a class="sys-link" href="/reports#recommendations">
+        <span class="sys-dot ok"></span>
+        <div><div class="sys-name">Reports & Recommendations</div><div class="sys-sub">Usage, costs, next actions</div></div>
+      </a>
+      <a class="sys-link" href="/circuits">
+        <span class="sys-dot ok"></span>
+        <div><div class="sys-name">Circuits</div><div class="sys-sub">Panel, safety, live loads</div></div>
+      </a>
+      <a class="sys-link" href="/import">
+        <span class="sys-dot ok"></span>
+        <div><div class="sys-name">Import</div><div class="sys-sub">Historical CSV ingest</div></div>
+      </a>
+      <a class="sys-link" href="/aqara">
+        <span class="sys-dot {{ 'ok' if aqara_configured else 'soon' }}"></span>
+        <div><div class="sys-name">Aqara</div><div class="sys-sub">Sensors and integration</div></div>
+      </a>
+      <a class="sys-link" href="/log">
+        <span class="sys-dot ok"></span>
+        <div><div class="sys-name">Log</div><div class="sys-sub">Poller health and history</div></div>
+      </a>
 
       <div class="sys-nav-group" style="margin-top:0.4rem;">Planned</div>
       <button class="sys-link" onclick="showPanel('aqara',this)">
@@ -4676,7 +4727,7 @@ def aqara_page():
         except Exception as e:
             error = str(e)
     cfg = _aqara._load_aqara_config()
-    return _render(AQARA_HTML, active_page="aqara",
+    return _render(AQARA_HTML, active_page="settings",
                    aqara_configured=configured,
                    sensors=sensors,
                    aqara_error=error,
@@ -4708,6 +4759,7 @@ def settings_page():
                    known_devices=energy.get_known_devices(),
                    aqara_app_id=aq.get("app_id", ""),
                    aqara_key_id=aq.get("key_id", ""),
+                   aqara_configured=bool(aq.get("app_id") and aq.get("key_id")),
                    panel_invert_left=pinv.get("invert_left", False),
                    panel_invert_right=pinv.get("invert_right", False),
                    kasa_host=kasa.get("host", ""),
@@ -4797,7 +4849,7 @@ def api_save_panel_display():
 @app.route("/import")
 def import_page():
     com = _common()
-    return _render(IMPORT_HTML, active_page="import", **com)
+    return _render(IMPORT_HTML, active_page="settings", **com)
 
 
 @app.route("/api/import-csv", methods=["POST"])
