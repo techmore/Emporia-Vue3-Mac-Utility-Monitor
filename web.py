@@ -610,6 +610,7 @@ NAV_HTML = """
     <div class="nav-links">
       <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
+      <a href="/recommendations" class="{{ 'active' if active_page == 'recommendations' else '' }}">Recommendations</a>
       <a href="/circuits" class="{{ 'active' if active_page == 'circuits' else '' }}">Circuits</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
@@ -1744,6 +1745,104 @@ GUIDE_HTML = """
 </div>
 """
 
+RECOMMENDATIONS_HTML = """
+<div class="page">
+  <div class="section-head" style="margin-bottom:1rem;">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div style="width:42px; height:42px; border-radius:12px; background:var(--olive-800); color:var(--olive-50); display:flex; align-items:center; justify-content:center; font-size:1.2rem;">⚡</div>
+      <div>
+        <div class="eyebrow">Recommendations</div>
+        <h1 style="margin:0.15rem 0 0.2rem;">Next Best Actions</h1>
+        <p style="margin:0; color:var(--text-light); max-width:760px;">
+          Practical electrical, cost, and monitoring suggestions based on the data already shown in the app.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-3" style="margin-bottom:14px;">
+    <div class="card">
+      <div class="card-label">Budget Check</div>
+      <div class="card-value">{{ "%.0f"|format(budget_pct) }}<span class="unit">%</span></div>
+      <div class="card-meta">of monthly budget projected</div>
+      <div style="margin-top:10px; font-size:0.84rem; color:var(--text);">
+        {% if budget_pct >= 100 %}Projection is over budget. Review reports and top circuits today.{% elif budget_pct >= 80 %}Projection is getting tight. Check standby loads and heavy hitters this week.{% else %}Projection is inside budget. Keep an eye on large continuous loads.{% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">Safety Watch</div>
+      <div class="card-value">{{ safety_breakers|length }}</div>
+      <div class="card-meta">breakers near the 80% line</div>
+      <div style="margin-top:10px; font-size:0.84rem; color:var(--text);">
+        {% if safety_breakers %}Start with {{ safety_breakers[0].label }} and confirm breaker rating, expected load, and duty cycle.{% else %}No immediate breaker-capacity warnings are active right now.{% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">Always-On Load</div>
+      <div class="card-value">{{ "%.0f"|format(standby_total_w) }}<span class="unit">W</span></div>
+      <div class="card-meta">{{ standby|length }} standby candidates</div>
+      <div style="margin-top:10px; font-size:0.84rem; color:var(--text);">
+        Prioritize anything that stays on constantly and does not need to.
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:14px; align-items:start;">
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Recommended Reviews</div>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          {% for item in recommendations %}
+          <div style="padding:10px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+              <div>
+                <div style="font-size:0.9rem; font-weight:700; color:var(--text);">{{ item.title }}</div>
+                <div style="font-size:0.82rem; color:var(--text-light); margin-top:3px;">{{ item.body }}</div>
+              </div>
+              <a href="{{ item.href }}" style="white-space:nowrap; text-decoration:none; color:var(--accent); font-size:0.82rem; font-weight:600;">Open →</a>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Quick Tips</div>
+        <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.88rem; line-height:1.55;">
+          <div><strong>Rate audit</strong>: confirm your utility rate in Settings after a bill change or seasonal tariff adjustment.</div>
+          <div><strong>Continuous loads</strong>: anything near the 80% line should be reviewed for breaker sizing and real duty cycle.</div>
+          <div><strong>Standby loads</strong>: the easiest savings often come from small always-on devices that never turn off.</div>
+          <div><strong>Historical review</strong>: use Reports to compare this month against last month before making rate or budget changes.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Shortcuts</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <a href="/settings" style="text-decoration:none; color:var(--text);">Audit rate and budget →</a>
+          <a href="/reports" style="text-decoration:none; color:var(--text);">Review cost and usage history →</a>
+          <a href="/circuits" style="text-decoration:none; color:var(--text);">Inspect breaker safety and live loads →</a>
+          <a href="/import" style="text-decoration:none; color:var(--text);">Import / export historical data →</a>
+          <a href="/guide" style="text-decoration:none; color:var(--text);">Open setup and metric guide →</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">When To Call An Electrician</div>
+        <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.88rem; line-height:1.55;">
+          <div>Repeated breaker trips</div>
+          <div>Persistent loads near breaker limits</div>
+          <div>Unexplained panel imbalance</div>
+          <div>Heat, discoloration, or odor at outlets or panel gear</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+"""
+
 
 # ── Circuits list template ────────────────────────────────────────────────────
 
@@ -2782,6 +2881,80 @@ def reports_page():
 @app.route("/guide")
 def guide_page():
     return _render(GUIDE_HTML, active_page="guide", **_common())
+
+
+@app.route("/recommendations")
+def recommendations_page():
+    com = _common()
+    ctx = energy.get_now_vs_context(60)
+    summary_24 = energy.get_summary(24)
+    main_24h = energy.get_main_total(24)
+    total_24h = main_24h or {
+        "total_kwh": sum(r["total_kwh"] for r in summary_24),
+        "total_cents": sum(r["total_cents"] for r in summary_24),
+    }
+    monthly_projected = (total_24h["total_kwh"] or 0) * 30 * RATE
+    budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
+
+    layout = {row["slot"]: row for row in energy.get_panel_layout()}
+    safety_breakers = []
+    standby = []
+    for row in ctx["latest"]:
+        name = row["channel_name"]
+        watts = _watts_estimate(row["usage_kwh"])
+        if name not in _MAINS_NAMES and name not in _SKIP_NAMES and not str(name).isdigit() and 1 <= watts <= 50:
+            slot_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
+            standby.append({"name": (slot_row or {}).get("label") or name, "watts": watts})
+        panel_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
+        if not panel_row or name in _MAINS_NAMES or not watts:
+            continue
+        amps = panel_row.get("amps") or 15
+        poles = panel_row.get("poles") or 1
+        voltage = 240 if poles == 2 else 120
+        amps_now = watts / voltage
+        safe_pct = amps_now / (amps * 0.8) * 100 if amps else 0
+        if safe_pct >= 80:
+            safety_breakers.append({
+                "label": panel_row.get("label") or name,
+                "safe_pct": safe_pct,
+            })
+    standby.sort(key=lambda x: x["watts"], reverse=True)
+    standby_total_w = sum(s["watts"] for s in standby)
+    safety_breakers.sort(key=lambda x: x["safe_pct"], reverse=True)
+
+    recommendations = [
+        {
+            "title": "Audit utility rate",
+            "body": "Confirm rate and monthly budget after any bill or provider change.",
+            "href": "/settings",
+        },
+        {
+            "title": "Review monthly trend",
+            "body": "Use Reports to compare this month against last month before adjusting habits or budget.",
+            "href": "/reports",
+        },
+        {
+            "title": "Inspect breaker safety",
+            "body": "Look at circuits nearest the 80% line and confirm breaker sizing and expected duty cycle.",
+            "href": "/circuits",
+        },
+        {
+            "title": "Refresh historical context",
+            "body": "Import historical CSV data if recent trends look sparse or recently reset.",
+            "href": "/import",
+        },
+    ]
+
+    return _render(
+        RECOMMENDATIONS_HTML,
+        active_page="recommendations",
+        budget_pct=budget_pct,
+        safety_breakers=safety_breakers,
+        standby=standby,
+        standby_total_w=standby_total_w,
+        recommendations=recommendations,
+        **com,
+    )
 
 
 @app.route("/circuits")
