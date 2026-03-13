@@ -2667,8 +2667,7 @@ def api_poller_reconnect():
         cfg["emporia_email"] = email
         if pwd:
             cfg["emporia_password"] = pwd
-        with open("settings.json", "w") as _f:
-            _json.dump(cfg, _f, indent=2)
+        energy._write_json_file("settings.json", cfg)
     # Write the flag file — poller checks for it each loop iteration
     try:
         with open(energy.RECONNECT_FLAG_FILE, "w") as _f:
@@ -3605,8 +3604,7 @@ def api_save_credentials():
         # Delete cached tokens so poller re-authenticates on restart
         if _os.path.exists("keys.json"):
             _os.remove("keys.json")
-    with open("settings.json", "w") as f:
-        _json.dump(cfg, f, indent=2)
+    energy._write_json_file("settings.json", cfg)
     return jsonify({"ok": True})
 
 
@@ -3633,8 +3631,7 @@ def api_save_config():
             )
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    with open("settings.json", "w") as f:
-        _json.dump(cfg, f, indent=2)
+    energy._write_json_file("settings.json", cfg)
     _refresh_runtime_config()
     return jsonify({"ok": True})
 
@@ -3662,8 +3659,7 @@ def api_save_panel_display():
         "invert_left":  bool(data.get("invert_left",  False)),
         "invert_right": bool(data.get("invert_right", False)),
     }
-    with open("settings.json", "w") as f:
-        _json.dump(cfg, f, indent=2)
+    energy._write_json_file("settings.json", cfg)
     return jsonify({"ok": True})
 
 

@@ -58,7 +58,9 @@ def _save_aqara_config(cfg: dict):
     except Exception:
         raw = {}
     raw.setdefault("aqara", {}).update(cfg)
-    SETTINGS_FILE.write_text(json.dumps(raw, indent=2))
+    import energy
+
+    energy._write_json_file(SETTINGS_FILE, raw)
 
 
 def is_configured() -> bool:

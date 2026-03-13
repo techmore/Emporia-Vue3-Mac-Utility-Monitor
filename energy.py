@@ -70,6 +70,19 @@ _KWATTS_INTERVAL_MINUTES: dict[str, float] = {
 }
 
 
+def _chmod_owner_only(path: str | Path) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
+def _write_json_file(path: str | Path, data: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    _chmod_owner_only(path)
+
+
 def _connect() -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with row_factory set."""
     conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -173,8 +186,7 @@ def save_device_labels(labels: dict[str, str]):
     """Merge device_labels into settings.json."""
     cfg = _load_settings()
     cfg["device_labels"] = {k: v for k, v in labels.items() if isinstance(v, str)}
-    with open("settings.json", "w") as f:
-        json.dump(cfg, f, indent=2)
+    _write_json_file("settings.json", cfg)
 
 
 def migrate_channel_names():
@@ -248,6 +260,8 @@ def login_vue():
             raise RuntimeError(
                 "Login returned False — check credentials or Emporia API availability."
             )
+    if os.path.exists(token_file):
+        _chmod_owner_only(token_file)
     return vue
 
 
