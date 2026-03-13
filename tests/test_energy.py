@@ -1,0 +1,143 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import energy
+import web
+
+
+class EnergyTests(unittest.TestCase):
+    def setUp(self):
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        Path(db_path).unlink(missing_ok=True)
+        self.db_path = db_path
+        self.original_db_path = energy.DB_PATH
+        energy.DB_PATH = db_path
+        energy.ensure_table()
+
+    def tearDown(self):
+        energy.DB_PATH = self.original_db_path
+        Path(self.db_path).unlink(missing_ok=True)
+
+    def test_get_latest_uses_newest_timestamp_not_last_inserted_id(self):
+        conn = energy._connect()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                ("2026-03-13T11:00:00.000001", "551741", 2, "Dryer", 0.7, 7.0),
+                ("2026-03-13T09:30:00", "IMPORT", None, "Dryer", 9.9, 99.0),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        latest = energy.get_latest()
+        dryer = next(row for row in latest if row["channel_name"] == "Dryer")
+        self.assertEqual(dryer["timestamp"], "2026-03-13T11:00:00.000001")
+        self.assertEqual(dryer["usage_kwh"], 0.7)
+
+    def test_import_emporia_csv_skips_duplicates_via_unique_index(self):
+        csv_text = (
+            "Time Bucket (America/New_York),Barn-Dryer (kWhs)\n"
+            "03/13/2026 10:00:00,1.5\n"
+            "03/13/2026 11:00:00,1.6\n"
+        )
+        fd, csv_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        Path(csv_path).write_text(csv_text, encoding="utf-8")
+        try:
+            first = energy.import_emporia_csv(
+                csv_path,
+                device_gid="TEST",
+                original_filename="TEST-Panel-1MIN.csv",
+            )
+            second = energy.import_emporia_csv(
+                csv_path,
+                device_gid="TEST",
+                original_filename="TEST-Panel-1MIN.csv",
+            )
+        finally:
+            Path(csv_path).unlink(missing_ok=True)
+
+        self.assertEqual(first["imported"], 2)
+        self.assertEqual(first["skipped"], 0)
+        self.assertEqual(second["imported"], 0)
+        self.assertEqual(second["skipped"], 2)
+
+    def test_fix_csv_kwatts_import_runs_only_once(self):
+        conn = energy._connect()
+        conn.execute(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("2026-03-13T10:00:00", "IMPORT", None, "Dryer", 60.0, 6.0),
+        )
+        conn.commit()
+        conn.close()
+
+        first = energy.fix_csv_kwatts_import()
+        second = energy.fix_csv_kwatts_import()
+
+        conn = energy._connect()
+        row = conn.execute(
+            "SELECT usage_kwh, cost_cents FROM readings WHERE channel_name = 'Dryer'"
+        ).fetchone()
+        conn.close()
+
+        self.assertEqual(first["fixed"], 1)
+        self.assertEqual(second["fixed"], 0)
+        self.assertEqual(tuple(row), (1.0, 0.1))
+
+    def test_render_template_string_autoescapes_user_content(self):
+        with web.app.app_context():
+            rendered = web._render("{{ value }}", value="<script>alert(1)</script>")
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", rendered)
+        self.assertNotIn("<script>alert(1)</script>", rendered)
+
+    def test_queries_default_to_primary_device_gid(self):
+        conn = energy._connect()
+        now = energy.datetime.now()
+        a_time = now.replace(microsecond=0).isoformat()
+        b_time = (now + energy.timedelta(minutes=1)).replace(microsecond=0).isoformat()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (a_time, "A", 1, "Main", 1.0, 10.0),
+                (a_time, "A", 2, "Dryer", 0.3, 3.0),
+                (a_time, "B", 1, "Main", 9.0, 90.0),
+                (a_time, "B", 2, "Dryer", 4.0, 40.0),
+                (b_time, "B", 1, "Main", 10.0, 100.0),
+                (b_time, "B", 2, "Dryer", 5.0, 50.0),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        settings = Path('settings.json')
+        original = settings.read_text() if settings.exists() else None
+        try:
+            settings.write_text('{\n  "primary_device_gid": "A"\n}', encoding='utf-8')
+            summary = energy.get_summary(48)
+            hourly = energy.get_hourly_data(7)
+            latest = energy.get_latest()
+            context = energy.get_now_vs_context(60)
+        finally:
+            if original is None:
+                settings.unlink(missing_ok=True)
+            else:
+                settings.write_text(original, encoding='utf-8')
+
+        self.assertEqual(summary[0]["total_kwh"], 0.3)
+        self.assertEqual(hourly[0]["total_kwh"], 1.0)
+        self.assertEqual(next(r for r in latest if r["channel_name"] == "Main")["usage_kwh"], 1.0)
+        self.assertEqual(context["current_kwh"], 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

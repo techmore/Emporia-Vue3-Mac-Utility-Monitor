@@ -35,6 +35,8 @@ git clone https://github.com/techmore/Emporia-Vue3-Mac-Utility-Monitor.git
 cd Emporia-Vue3-Mac-Utility-Monitor
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
+# For reproducible installs, use the pinned lock file instead:
+venv/bin/python3 -m pip install -r requirements.lock
 ```
 
 ### 2. Build, start everything, and open the app
@@ -62,10 +64,10 @@ The build script is the single command for the full dev cycle. Run it any time y
 
 | Step | Action |
 |------|--------|
-| 1 | Kills any running Flask (port 5001) and poller from this project |
+| 1 | Kills any running Flask (default port `5001`) and poller from this project |
 | 2 | `git pull --ff-only` — always builds from latest |
 | 3 | Compiles `main.swift` → copies binary into `.app` bundle |
-| 4 | Starts `web.py` (Flask), waits for `:5001`, prints confirmed version |
+| 4 | Starts `web.py` (Flask), waits for the configured port, prints confirmed version |
 | 5 | Starts `energy.py` (poller), reads first heartbeat, prints `ok` or error |
 | 6 | Opens `EnergyMonitorApp.app` |
 
@@ -94,7 +96,7 @@ venv/bin/python3 energy.py daily 30      # daily data for last 30 days
 venv/bin/python3 energy.py latest        # latest readings per channel
 ```
 
-Dashboard: **http://localhost:5001**
+Dashboard: **http://localhost:5001** by default. Set `FLASK_PORT` to override.
 
 ---
 
@@ -169,6 +171,7 @@ POST /api/import-csv       # import Emporia CSV export
 ├── build.sh                # Full dev-cycle build script
 ├── setup_launch.sh         # LaunchAgent installer for auto-start
 ├── requirements.txt
+├── requirements.lock       # Pinned dependency set for reproducible installs
 ├── settings.json           # Runtime config (gitignored)
 ├── keys.json               # Emporia auth tokens (gitignored)
 ├── energy.db               # SQLite database (gitignored)

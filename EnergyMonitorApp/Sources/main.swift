@@ -48,7 +48,47 @@ private func resolveProjectRoot() -> URL {
 
 private let projectRoot   = resolveProjectRoot()
 private let venvPython    = projectRoot.appendingPathComponent("venv/bin/python3").path
-private let dashboardURL  = URL(string: "http://localhost:5001")!
+private let flaskPort     = ProcessInfo.processInfo.environment["FLASK_PORT"] ?? "5001"
+private let dashboardURL  = URL(string: "http://localhost:\(flaskPort)")!
+
+private func validateProjectRoot() -> String? {
+    let fm = FileManager.default
+    let requiredPaths = [
+        projectRoot.appendingPathComponent("web.py").path,
+        projectRoot.appendingPathComponent("energy.py").path,
+        projectRoot.appendingPathComponent("venv/bin/python3").path,
+    ]
+    for path in requiredPaths where !fm.fileExists(atPath: path) {
+        return "Missing required file: \(path)"
+    }
+
+    let certCheck = Process()
+    let out = Pipe()
+    certCheck.executableURL = URL(fileURLWithPath: venvPython)
+    certCheck.arguments = [
+        "-c",
+        "import certifi, os, sys; p = certifi.where(); sys.stdout.write(p if os.path.exists(p) else '')",
+    ]
+    certCheck.currentDirectoryURL = projectRoot
+    certCheck.standardOutput = out
+    certCheck.standardError = Pipe()
+
+    do {
+        try certCheck.run()
+        certCheck.waitUntilExit()
+        let certPath = String(
+            data: out.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if certCheck.terminationStatus != 0 || certPath.isEmpty {
+            return "The bundled project environment is invalid for \(projectRoot.path). Rebuild or launch the app from the current repository."
+        }
+    } catch {
+        return "Could not validate the project environment at \(projectRoot.path): \(error.localizedDescription)"
+    }
+
+    return nil
+}
 
 // ── Local IP helper ───────────────────────────────────────────────────────────
 
@@ -59,12 +99,20 @@ private func localNetworkIP() -> String? {
     var ptr = ifaddr
     while let current = ptr {
         let ifa = current.pointee
-        if ifa.ifa_addr.pointee.sa_family == UInt8(AF_INET) {
-            let name = String(cString: ifa.ifa_name)
-            if name.hasPrefix("en") {
-                var addr = ifa.ifa_addr.pointee
-                var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-                inet_ntop(AF_INET, &addr.sa_data.2, &buf, socklen_t(INET_ADDRSTRLEN))
+        guard let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else {
+            ptr = current.pointee.ifa_next
+            continue
+        }
+        let name = String(cString: ifa.ifa_name)
+        if name.hasPrefix("en") {
+            var ipv4 = UnsafeRawPointer(addr)
+                .assumingMemoryBound(to: sockaddr_in.self)
+                .pointee
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            let result = withUnsafePointer(to: &ipv4.sin_addr) {
+                inet_ntop(AF_INET, $0, &buf, socklen_t(INET_ADDRSTRLEN))
+            }
+            if result != nil {
                 let ip = String(cString: buf)
                 if ip != "0.0.0.0" { return ip }
             }
@@ -100,6 +148,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         print("Energy Monitor — project root: \(projectRoot.path)")
+        if let problem = validateProjectRoot() {
+            let alert = NSAlert()
+            alert.messageText = "Invalid project environment"
+            alert.informativeText = problem
+            alert.alertStyle = .critical
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            releaseLock()
+            NSApp.terminate(nil)
+            return
+        }
         NSApp.setActivationPolicy(.accessory)
         startFlaskServer()
         buildStatusItem()
@@ -168,7 +227,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func copyLocalURL() {
         let ip  = localNetworkIP() ?? "localhost"
-        let url = "http://\(ip):5001"
+        let url = "http://\(ip):\(flaskPort)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
         copyURLMenuItem?.title = "Copied!"
@@ -225,7 +284,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ── Live version fetch ────────────────────────────────────────────────
 
     private func fetchVersionFromFlask() {
-        guard let url = URL(string: "http://localhost:5001/api/version") else { return }
+        guard let url = URL(string: "http://localhost:\(flaskPort)/api/version") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -249,14 +308,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // ── Orphan cleanup ────────────────────────────────────────────────────────
 
-    /// Kill any process on port 5001 that is provably our own Flask (web.py from
-    /// this project's venv). Unrelated Flask apps on port 5001 are left alone.
+    /// Kill any process on the configured Flask port that is provably our own Flask
+    /// (web.py from this project's venv). Unrelated Flask apps are left alone.
     private func killOrphanedFlask() {
-        // Step 1: get PIDs listening on :5001
+        // Step 1: get PIDs listening on the configured port
         let lsof = Process()
         let lsofOut = Pipe()
         lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        lsof.arguments = ["-i", ":5001", "-t"]
+        lsof.arguments = ["-i", ":\(flaskPort)", "-t"]
         lsof.standardOutput = lsofOut
         lsof.standardError  = Pipe()
         guard (try? lsof.run()) != nil else { return }

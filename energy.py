@@ -3,6 +3,7 @@ import os
 import json
 import time
 import sqlite3
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 import pyemvue
@@ -13,6 +14,12 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
 DB_RETENTION_DAYS = int(os.environ.get("DB_RETENTION_DAYS", "365"))
 POLLER_STATUS_FILE = os.environ.get("POLLER_STATUS_FILE", "poller_status.json")
 RECONNECT_FLAG_FILE = "reconnect.flag"
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
@@ -70,10 +77,24 @@ _KWATTS_INTERVAL_MINUTES: dict[str, float] = {
 }
 
 
+def _chmod_owner_only(path: str | Path) -> None:
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
+def _write_json_file(path: str | Path, data: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+    _chmod_owner_only(path)
+
+
 def _connect() -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with row_factory set."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -97,6 +118,12 @@ def ensure_table():
             ON readings(device_gid, channel_num);
         CREATE INDEX IF NOT EXISTS idx_channel_name
             ON readings(channel_name);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
+            ON readings(device_gid, timestamp, channel_name);
+        CREATE TABLE IF NOT EXISTS migrations (
+            name TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        );
 
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
@@ -159,6 +186,31 @@ def get_known_devices() -> list[str]:
     return [r["device_gid"] for r in rows]
 
 
+def _resolve_device_gid(c: sqlite3.Cursor, device_gid: str | None = None) -> str | None:
+    if device_gid and device_gid != _GHOST_DEVICE:
+        return device_gid
+
+    preferred_gid = _load_settings().get("primary_device_gid")
+    if preferred_gid and preferred_gid != _GHOST_DEVICE:
+        row = c.execute(
+            "SELECT 1 FROM readings WHERE device_gid = ? LIMIT 1",
+            (preferred_gid,),
+        ).fetchone()
+        if row:
+            return preferred_gid
+
+    row = c.execute(
+        """SELECT device_gid
+           FROM readings
+           WHERE device_gid != ?
+           GROUP BY device_gid
+           ORDER BY MAX(timestamp) DESC
+           LIMIT 1""",
+        (_GHOST_DEVICE,),
+    ).fetchone()
+    return row["device_gid"] if row else None
+
+
 def get_device_labels() -> dict[str, str]:
     """Return {device_gid: label} from settings.json (missing keys → empty string)."""
     try:
@@ -172,8 +224,7 @@ def save_device_labels(labels: dict[str, str]):
     """Merge device_labels into settings.json."""
     cfg = _load_settings()
     cfg["device_labels"] = {k: v for k, v in labels.items() if isinstance(v, str)}
-    with open("settings.json", "w") as f:
-        json.dump(cfg, f, indent=2)
+    _write_json_file("settings.json", cfg)
 
 
 def migrate_channel_names():
@@ -197,7 +248,7 @@ def migrate_channel_names():
             "UPDATE readings SET channel_name = ? WHERE channel_name = ?", updates
         )
         conn.commit()
-        print(f"[migrate] renamed {len(updates)} channel name(s)")
+        logger.info("[migrate] renamed %s channel name(s)", len(updates))
     conn.close()
     return len(updates)
 
@@ -217,12 +268,12 @@ def login_vue():
     username = os.environ.get("EMPORIA_EMAIL")    or cfg.get("emporia_email")
     password = os.environ.get("EMPORIA_PASSWORD") or cfg.get("emporia_password")
 
-    print(f"Attempting login with user: {username}")
+    logger.info("Attempting login with user: %s", username)
 
     if os.path.exists(token_file):
         with open(token_file) as f:
             data = json.load(f)
-            print("Using existing tokens from keys.json")
+            logger.info("Using existing tokens from keys.json")
             vue.login(
                 id_token=data.get("idToken"),
                 access_token=data.get("accessToken"),
@@ -235,18 +286,20 @@ def login_vue():
                 "No keys.json and no credentials available. "
                 "Enter your Emporia email & password via the Reconnect panel on /log."
             )
-        print("Logging in with username/password...")
+        logger.info("Logging in with username/password...")
         try:
             result = vue.login(
                 username=username, password=password, token_storage_file=token_file
             )
         except Exception as e:
             raise RuntimeError(f"Login failed: {type(e).__name__}: {e}") from e
-        print(f"Login result: {result}")
+        logger.info("Login result: %s", result)
         if not result:
             raise RuntimeError(
                 "Login returned False — check credentials or Emporia API availability."
             )
+    if os.path.exists(token_file):
+        _chmod_owner_only(token_file)
     return vue
 
 
@@ -296,7 +349,7 @@ def poll_and_store(vue, device_gids):
 
     conn.commit()
     conn.close()
-    print(f"[{now}] Recorded readings")
+    logger.info("[%s] Recorded readings", now)
 
 
 def run_continuous():
@@ -308,9 +361,9 @@ def run_continuous():
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
-    print(f"Starting continuous polling every {POLL_INTERVAL} seconds")
-    print(f"Rate: ${RATE_CENTS / 100:.4f}/kWh")
-    print(f"Database: {DB_PATH}")
+    logger.info("Starting continuous polling every %s seconds", POLL_INTERVAL)
+    logger.info("Rate: $%.4f/kWh", RATE_CENTS / 100)
+    logger.info("Database: %s", DB_PATH)
 
     # ── Initial login — stay alive even if first login fails ─────────────
     vue = None
@@ -322,18 +375,18 @@ def run_continuous():
     try:
         vue = login_vue()
         device_gids, _ = get_devices_with_channels(vue)
-        print(f"Found {len(device_gids)} device(s)")
+        logger.info("Found %s device(s)", len(device_gids))
         write_poller_status(True, consecutive_errors=0)
     except Exception as e:
         err = f"Startup login failed: {e}"
-        print(err)
+        logger.exception(err)
         write_poller_status(False, error=err + " — use /log reconnect panel to re-authenticate.",
                             consecutive_errors=0)
 
     while True:
         # ── Check for a reconnect request from the Flask UI ───────────────
         if os.path.exists(RECONNECT_FLAG_FILE):
-            print("Reconnect flag detected — attempting re-login...")
+            logger.info("Reconnect flag detected — attempting re-login...")
             try:
                 os.remove(RECONNECT_FLAG_FILE)
             except Exception:
@@ -349,12 +402,12 @@ def run_continuous():
             try:
                 vue = login_vue()
                 device_gids, _ = get_devices_with_channels(vue)
-                print(f"Reconnected — {len(device_gids)} device(s)")
+                logger.info("Reconnected — %s device(s)", len(device_gids))
                 consecutive_errors = 0
                 write_poller_status(True, consecutive_errors=0)
             except Exception as e:
                 err = f"Reconnect failed: {e}"
-                print(err)
+                logger.exception(err)
                 write_poller_status(False, error=err, consecutive_errors=consecutive_errors)
 
         # ── Normal poll (skip if no client yet) ───────────────────────────
@@ -372,14 +425,14 @@ def run_continuous():
         except Exception as e:
             consecutive_errors += 1
             err_str = f"{type(e).__name__}: {e}"
-            print(f"[Poll error #{consecutive_errors}] {err_str}")
+            logger.warning("[Poll error #%s] %s", consecutive_errors, err_str)
             write_poller_status(False, error=err_str, consecutive_errors=consecutive_errors)
 
             # Auto re-login after enough consecutive failures (expired tokens etc.)
             if consecutive_errors >= MAX_ERRORS_BEFORE_RELOGIN:
                 backoff = RELOGIN_BACKOFF[min(consecutive_errors - MAX_ERRORS_BEFORE_RELOGIN,
                                               len(RELOGIN_BACKOFF) - 1)]
-                print(f"Auto re-login attempt (backoff {backoff}s)…")
+                logger.warning("Auto re-login attempt (backoff %ss)…", backoff)
                 time.sleep(backoff)
                 try:
                     cfg = _load_settings()
@@ -388,19 +441,19 @@ def run_continuous():
                         os.remove("keys.json")
                     vue = login_vue()
                     device_gids, _ = get_devices_with_channels(vue)
-                    print(f"Auto re-login OK — {len(device_gids)} device(s)")
+                    logger.info("Auto re-login OK — %s device(s)", len(device_gids))
                     consecutive_errors = 0
                     write_poller_status(True, consecutive_errors=0)
                 except Exception as re_e:
                     reauth_err = f"Auto re-login failed: {re_e}"
-                    print(reauth_err)
+                    logger.exception(reauth_err)
                     write_poller_status(False, error=reauth_err,
                                         consecutive_errors=consecutive_errors)
 
         time.sleep(POLL_INTERVAL)
 
 
-def get_main_total(hours: int = 24) -> dict | None:
+def get_main_total(hours: int = 24, device_gid: str | None = None) -> dict | None:
     """
     Return the Main channel total kWh and cost_cents for the last `hours` hours
     from the primary real device (551741).  Used for authoritative whole-house
@@ -409,14 +462,18 @@ def get_main_total(hours: int = 24) -> dict | None:
     conn = _connect()
     c = conn.cursor()
     since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return None
     c.execute(
         """SELECT SUM(usage_kwh) as total_kwh, SUM(cost_cents) as total_cents,
                   COUNT(*) as readings
            FROM readings
            WHERE channel_name = 'Main'
-             AND device_gid != ?
+             AND device_gid = ?
              AND timestamp >= ?""",
-        (_GHOST_DEVICE, since),
+        (resolved_gid, since),
     )
     row = c.fetchone()
     conn.close()
@@ -426,24 +483,30 @@ def get_main_total(hours: int = 24) -> dict | None:
     return None
 
 
-def get_summary(hours=24):
+def get_summary(hours=24, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
     since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return []
 
     # Exclude the ghost device (device 81134 always reports 0 W, pollutes sums)
+    meta_placeholders = ",".join("?" for _ in META_CHANNELS)
     c.execute(
-        """SELECT channel_name,
+        f"""SELECT channel_name,
         SUM(usage_kwh) as total_kwh,
         SUM(cost_cents) as total_cents,
         COUNT(*) as readings
         FROM readings
         WHERE timestamp >= ?
-          AND device_gid != ?
+          AND device_gid = ?
+          AND channel_name NOT IN ({meta_placeholders})
         GROUP BY channel_name
         ORDER BY total_kwh DESC""",
-        (since, _GHOST_DEVICE),
+        (since, resolved_gid, *META_CHANNELS),
     )
 
     results = c.fetchall()
@@ -451,11 +514,15 @@ def get_summary(hours=24):
     return [dict(row) for row in results]
 
 
-def get_hourly_data(days=7):
+def get_hourly_data(days=7, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
     since = (datetime.now() - timedelta(days=days)).isoformat()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return []
 
     c.execute(
         """SELECT 
@@ -464,9 +531,11 @@ def get_hourly_data(days=7):
         SUM(cost_cents) as total_cents
         FROM readings
         WHERE timestamp >= ?
+          AND channel_name = 'Main'
+          AND device_gid = ?
         GROUP BY hour
         ORDER BY hour""",
-        (since,),
+        (since, resolved_gid),
     )
 
     results = c.fetchall()
@@ -474,11 +543,15 @@ def get_hourly_data(days=7):
     return [dict(row) for row in results]
 
 
-def get_daily_data(days=30):
+def get_daily_data(days=30, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
     since = (datetime.now() - timedelta(days=days)).isoformat()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return []
 
     c.execute(
         """SELECT 
@@ -487,9 +560,11 @@ def get_daily_data(days=30):
         SUM(cost_cents) as total_cents
         FROM readings
         WHERE timestamp >= ?
+          AND channel_name = 'Main'
+          AND device_gid = ?
         GROUP BY day
         ORDER BY day""",
-        (since,),
+        (since, resolved_gid),
     )
 
     results = c.fetchall()
@@ -497,21 +572,33 @@ def get_daily_data(days=30):
     return [dict(row) for row in results]
 
 
-def get_latest():
+def get_latest(device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return []
 
     c.execute("""SELECT channel_name, usage_kwh, cost_cents, timestamp
-        FROM readings
-        WHERE id IN (SELECT MAX(id) FROM readings GROUP BY channel_name)
-        ORDER BY usage_kwh DESC""")
+        FROM (
+            SELECT channel_name, usage_kwh, cost_cents, timestamp,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY channel_name
+                       ORDER BY timestamp DESC, id DESC
+                   ) AS rn
+            FROM readings
+            WHERE device_gid = ?
+        )
+        WHERE rn = 1
+        ORDER BY usage_kwh DESC""", (resolved_gid,))
 
     results = c.fetchall()
     conn.close()
     return [dict(row) for row in results]
 
 
-def get_month_comparison():
+def get_month_comparison(device_gid: str | None = None):
     """Compare current month to previous month using Main channel only (avoids double-counting)."""
     conn = _connect()
     c = conn.cursor()
@@ -522,6 +609,11 @@ def get_month_comparison():
     # First day of last month
     last_month_start = (this_month_start - timedelta(days=1)).replace(day=1)
 
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return {"this_month": None, "last_month": None}
+
     c.execute(
         """SELECT
         strftime('%Y-%m', timestamp) as month,
@@ -530,9 +622,9 @@ def get_month_comparison():
         FROM readings
         WHERE timestamp >= ?
           AND channel_name = 'Main'
-          AND device_gid != ?
+          AND device_gid = ?
         GROUP BY month""",
-        (last_month_start.isoformat(), _GHOST_DEVICE),
+        (last_month_start.isoformat(), resolved_gid),
     )
 
     results = c.fetchall()
@@ -549,19 +641,25 @@ def get_month_comparison():
     }
 
 
-def get_peak_usage():
+def get_peak_usage(device_gid: str | None = None):
     """Find peak usage times."""
     conn = _connect()
     c = conn.cursor()
+    since = (datetime.now() - timedelta(days=30)).isoformat()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return {"peak_hours": [], "peak_days": []}
 
     c.execute("""SELECT 
         strftime('%H', timestamp) as hour,
         AVG(usage_kwh) as avg_kwh
         FROM readings
-        WHERE timestamp >= datetime('now', '-30 days')
+        WHERE timestamp >= ?
+          AND device_gid = ?
         GROUP BY hour
         ORDER BY avg_kwh DESC
-        LIMIT 5""")
+        LIMIT 5""", (since, resolved_gid))
 
     peak_hours = c.fetchall()
 
@@ -569,10 +667,11 @@ def get_peak_usage():
         strftime('%w', timestamp) as day_of_week,
         AVG(usage_kwh) as avg_kwh
         FROM readings
-        WHERE timestamp >= datetime('now', '-30 days')
+        WHERE timestamp >= ?
+          AND device_gid = ?
         GROUP BY day_of_week
         ORDER BY avg_kwh DESC
-        LIMIT 5""")
+        LIMIT 5""", (since, resolved_gid))
 
     peak_days = c.fetchall()
     conn.close()
@@ -596,26 +695,32 @@ def get_peak_usage():
     }
 
 
-def get_peak_24h() -> dict:
+def get_peak_24h(device_gid: str | None = None) -> dict:
     """Return the highest-demand timestamp in the last 24h (Main channel) and its watt estimate."""
     conn = _connect()
     c = conn.cursor()
     since = (datetime.now() - timedelta(hours=24)).isoformat()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return {"peak_watts": 0, "peak_time": None}
     # Sum all channels per timestamp to get total load, pick the max
     c.execute("""
         SELECT timestamp, SUM(usage_kwh) as total_kwh
         FROM readings
-        WHERE timestamp >= ? AND channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
+        WHERE timestamp >= ?
+          AND device_gid = ?
+          AND channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
         GROUP BY timestamp
         ORDER BY total_kwh DESC
         LIMIT 1
-    """, (since,))
+    """, (since, resolved_gid))
     row = c.fetchone()
     conn.close()
     if not row:
         return {"peak_watts": 0, "peak_time": None}
-    # Convert kWh per poll interval to watts
-    watts = (row["total_kwh"] or 0) * 1000 * (60 / POLL_INTERVAL)
+    # Poll data is requested at one-minute scale, so convert kWh/min to watts.
+    watts = (row["total_kwh"] or 0) * 60 * 1000
     ts = row["timestamp"]
     try:
         dt = datetime.fromisoformat(ts[:19])
@@ -628,11 +733,21 @@ def get_peak_24h() -> dict:
     return {"peak_watts": watts, "peak_time": time_label}
 
 
-def get_circuit_data(channel_name, period="day"):
+def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
     now = datetime.now()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return {"data": [], "total": {
+            "total_kwh": None,
+            "total_cents": None,
+            "readings": 0,
+            "first_reading": None,
+            "last_reading": None,
+        }}
 
     if period == "hour":
         since = (now - timedelta(hours=24)).isoformat()
@@ -664,10 +779,10 @@ def get_circuit_data(channel_name, period="day"):
         SUM(usage_kwh) as total_kwh,
         SUM(cost_cents) as total_cents
         FROM readings
-        WHERE channel_name = ? AND timestamp >= ?
+        WHERE channel_name = ? AND timestamp >= ? AND device_gid = ?
         GROUP BY period
         ORDER BY period""",
-        (channel_name, since),
+        (channel_name, since, resolved_gid),
     )
 
     results = c.fetchall()
@@ -681,8 +796,8 @@ def get_circuit_data(channel_name, period="day"):
         MIN(timestamp) as first_reading,
         MAX(timestamp) as last_reading
         FROM readings
-        WHERE channel_name = ? AND timestamp >= ?""",
-        (channel_name, since),
+        WHERE channel_name = ? AND timestamp >= ? AND device_gid = ?""",
+        (channel_name, since, resolved_gid),
     )
 
     total = dict(c.fetchone())
@@ -691,10 +806,14 @@ def get_circuit_data(channel_name, period="day"):
     return {"data": [dict(row) for row in results], "total": total}
 
 
-def get_monthly_projection():
+def get_monthly_projection(device_gid: str | None = None):
     """Most recent month's total using Main channel only (avoids double-counting)."""
     conn = _connect()
     c = conn.cursor()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return None
 
     c.execute("""SELECT
         strftime('%Y-%m', timestamp) as month,
@@ -702,10 +821,10 @@ def get_monthly_projection():
         SUM(cost_cents) as total_cents
         FROM readings
         WHERE channel_name = 'Main'
-          AND device_gid != ?
+          AND device_gid = ?
         GROUP BY month
         ORDER BY month DESC
-        LIMIT 1""", (_GHOST_DEVICE,))
+        LIMIT 1""", (resolved_gid,))
 
     result = c.fetchone()
     conn.close()
@@ -719,7 +838,7 @@ def _delta_pct(a, b):
     return round((a - b) / b * 100, 1)
 
 
-def get_now_vs_context(window_minutes: int = 60) -> dict:
+def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) -> dict:
     """
     Return the total kWh for the most recent `window_minutes` of readings,
     compared to the same window yesterday, one week ago, and one month ago.
@@ -728,14 +847,29 @@ def get_now_vs_context(window_minutes: int = 60) -> dict:
     conn = _connect()
     c = conn.cursor()
     now = datetime.now()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return {
+            "window_minutes": window_minutes,
+            "current_kwh": None,
+            "yesterday_kwh": None,
+            "last_week_kwh": None,
+            "last_month_kwh": None,
+            "vs_yesterday_pct": None,
+            "vs_last_week_pct": None,
+            "vs_last_month_pct": None,
+            "circuits": [],
+            "latest": [],
+        }
 
     def window_kwh(offset_days: float):
         start = (now - timedelta(days=offset_days, minutes=window_minutes)).isoformat()
         end = (now - timedelta(days=offset_days)).isoformat()
         c.execute(
             """SELECT SUM(usage_kwh) FROM readings
-               WHERE channel_name = 'Main' AND timestamp BETWEEN ? AND ?""",
-            (start, end),
+               WHERE channel_name = 'Main' AND timestamp BETWEEN ? AND ? AND device_gid = ?""",
+            (start, end, resolved_gid),
         )
         row = c.fetchone()
         return row[0] if row and row[0] is not None else None
@@ -750,19 +884,28 @@ def get_now_vs_context(window_minutes: int = 60) -> dict:
     c.execute(
         """SELECT channel_name, SUM(usage_kwh) as kwh, SUM(cost_cents) as cents
            FROM readings
-           WHERE timestamp >= ?
+           WHERE timestamp >= ? AND device_gid = ?
            GROUP BY channel_name
            ORDER BY kwh DESC""",
-        (since,),
+        (since, resolved_gid),
     )
     circuits = [dict(r) for r in c.fetchall()]
 
     # Most recent single reading per channel (for "right now" watts estimate)
     c.execute(
         """SELECT channel_name, usage_kwh, timestamp
-           FROM readings
-           WHERE id IN (SELECT MAX(id) FROM readings GROUP BY channel_name)
-           ORDER BY usage_kwh DESC"""
+           FROM (
+               SELECT channel_name, usage_kwh, timestamp,
+                      ROW_NUMBER() OVER (
+                       PARTITION BY channel_name
+                       ORDER BY timestamp DESC, id DESC
+                   ) AS rn
+            FROM readings
+            WHERE device_gid = ?
+           )
+           WHERE rn = 1
+           ORDER BY usage_kwh DESC""",
+        (resolved_gid,),
     )
     latest_readings = [dict(r) for r in c.fetchall()]
 
@@ -936,13 +1079,6 @@ def import_emporia_csv(
             interval_minutes = 1.0  # safe default; warn via returned dict
         kwatts_to_kwh = interval_minutes / 60.0
 
-        # Pre-fetch existing (timestamp, channel_name) combos scoped to this device
-        c.execute(
-            "SELECT timestamp, channel_name FROM readings WHERE device_gid = ?",
-            (device_gid,),
-        )
-        existing = {(r[0], r[1]) for r in c.fetchall()}
-
         rows_to_insert = []
         for row in reader:
             ts_raw = row.get(ts_col, "").strip()
@@ -967,26 +1103,23 @@ def import_emporia_csv(
                     errors += 1
                     continue
 
-                if (ts_iso, channel_name) in existing:
-                    skipped += 1
-                    continue
-
                 # Apply unit conversion
                 usage_kwh = raw_value * kwatts_to_kwh if is_kwatts else raw_value
                 cost_cents = usage_kwh * RATE_CENTS
                 rows_to_insert.append(
                     (ts_iso, device_gid, None, channel_name, usage_kwh, cost_cents)
                 )
-                existing.add((ts_iso, channel_name))  # prevent intra-file dupes
 
     if rows_to_insert:
+        before_changes = conn.total_changes
         c.executemany(
-            """INSERT INTO readings
+            """INSERT OR IGNORE INTO readings
                (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
                VALUES (?, ?, ?, ?, ?, ?)""",
             rows_to_insert,
         )
-        imported = len(rows_to_insert)
+        imported = conn.total_changes - before_changes
+        skipped += len(rows_to_insert) - imported
 
     conn.commit()
     conn.close()
@@ -1020,6 +1153,14 @@ def fix_csv_kwatts_import() -> dict:
     """
     conn = _connect()
     c = conn.cursor()
+    migration_name = "fix_csv_kwatts_import_v1"
+    already_applied = c.execute(
+        "SELECT 1 FROM migrations WHERE name = ?",
+        (migration_name,),
+    ).fetchone()
+    if already_applied:
+        conn.close()
+        return {"fixed": 0}
     # Rows from CSV import: exact-second timestamps (no '.' in timestamp string)
     # Exclude the real live device (551741) which should never have exact timestamps
     c.execute(
@@ -1030,6 +1171,10 @@ def fix_csv_kwatts_import() -> dict:
              AND device_gid != '551741'""",
     )
     fixed = c.rowcount
+    c.execute(
+        "INSERT INTO migrations(name, applied_at) VALUES(?, ?)",
+        (migration_name, datetime.now().isoformat()),
+    )
     conn.commit()
     conn.close()
     return {"fixed": fixed}
