@@ -50,6 +50,45 @@ private let projectRoot   = resolveProjectRoot()
 private let venvPython    = projectRoot.appendingPathComponent("venv/bin/python3").path
 private let dashboardURL  = URL(string: "http://localhost:5001")!
 
+private func validateProjectRoot() -> String? {
+    let fm = FileManager.default
+    let requiredPaths = [
+        projectRoot.appendingPathComponent("web.py").path,
+        projectRoot.appendingPathComponent("energy.py").path,
+        projectRoot.appendingPathComponent("venv/bin/python3").path,
+    ]
+    for path in requiredPaths where !fm.fileExists(atPath: path) {
+        return "Missing required file: \(path)"
+    }
+
+    let certCheck = Process()
+    let out = Pipe()
+    certCheck.executableURL = URL(fileURLWithPath: venvPython)
+    certCheck.arguments = [
+        "-c",
+        "import certifi, os, sys; p = certifi.where(); sys.stdout.write(p if os.path.exists(p) else '')",
+    ]
+    certCheck.currentDirectoryURL = projectRoot
+    certCheck.standardOutput = out
+    certCheck.standardError = Pipe()
+
+    do {
+        try certCheck.run()
+        certCheck.waitUntilExit()
+        let certPath = String(
+            data: out.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if certCheck.terminationStatus != 0 || certPath.isEmpty {
+            return "The bundled project environment is invalid for \(projectRoot.path). Rebuild or launch the app from the current repository."
+        }
+    } catch {
+        return "Could not validate the project environment at \(projectRoot.path): \(error.localizedDescription)"
+    }
+
+    return nil
+}
+
 // ── Local IP helper ───────────────────────────────────────────────────────────
 
 private func localNetworkIP() -> String? {
@@ -108,6 +147,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         print("Energy Monitor — project root: \(projectRoot.path)")
+        if let problem = validateProjectRoot() {
+            let alert = NSAlert()
+            alert.messageText = "Invalid project environment"
+            alert.informativeText = problem
+            alert.alertStyle = .critical
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            releaseLock()
+            NSApp.terminate(nil)
+            return
+        }
         NSApp.setActivationPolicy(.accessory)
         startFlaskServer()
         buildStatusItem()
