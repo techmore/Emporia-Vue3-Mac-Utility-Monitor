@@ -23,7 +23,9 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.20"
+VERSION = "1.7.23"
+_DASHBOARD_CACHE_TTL = 10.0
+_dashboard_cache: dict[str, object] = {"expires_at": 0.0, "common": None, "context": None}
 
 
 def _read_monthly_budget() -> float:
@@ -2824,7 +2826,8 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
 
 def _common():
     """Values needed by every page (status indicator + device labels)."""
-    latest = energy.get_latest()
+    active_device_gid = energy.get_active_device_gid()
+    latest = energy.get_latest(active_device_gid)
     last   = latest[0]["timestamp"] if latest else "N/A"
     cls, label, _ = _status(last)
     device_labels = energy.get_device_labels()
@@ -2833,7 +2836,27 @@ def _common():
     return {
         "last_updated": last, "status_cls": cls, "status_label": label,
         "version": VERSION, "device_labels": device_labels, "panel_label": panel_label,
+        "active_device_gid": active_device_gid,
     }
+
+
+def _get_cached_dashboard() -> tuple[dict, dict]:
+    now = time.time()
+    if (
+        _dashboard_cache["common"] is not None
+        and _dashboard_cache["context"] is not None
+        and now < float(_dashboard_cache["expires_at"])
+    ):
+        return _dashboard_cache["common"], _dashboard_cache["context"]
+
+    common = _common()
+    context = _build_dashboard_context(common["panel_label"], common["active_device_gid"])
+    _dashboard_cache.update({
+        "expires_at": now + _DASHBOARD_CACHE_TTL,
+        "common": common,
+        "context": context,
+    })
+    return common, context
 
 
 _MAINS_NAMES = {"Mains_A", "Mains_B", "Mains_C", "Main"}
@@ -3035,12 +3058,12 @@ def _detect_service_feed(
     return total_main, inferred_legs, "split_phase_inferred"
 
 
-def _build_dashboard_context(panel_label: str) -> dict:
-    ctx = energy.get_now_vs_context(60)
-    trend = energy.get_trend(14)
+def _build_dashboard_context(panel_label: str, active_device_gid: str | None = None) -> dict:
+    ctx = energy.get_now_vs_context(60, active_device_gid)
+    trend = energy.get_trend(14, active_device_gid)
     latest_map = {r["channel_name"]: r["usage_kwh"] for r in ctx["latest"]}
-    summary_24 = energy.get_summary(24)
-    main_24h = energy.get_main_total(24)
+    summary_24 = energy.get_summary(24, active_device_gid)
+    main_24h = energy.get_main_total(24, active_device_gid)
     total_24h = main_24h or {
         "total_kwh": sum(r["total_kwh"] for r in summary_24),
         "total_cents": sum(r["total_cents"] for r in summary_24),
@@ -3160,10 +3183,10 @@ def _build_dashboard_context(panel_label: str) -> dict:
     if panel_display.get("invert_right", False):
         breakers_right = list(reversed(breakers_right))
 
-    peak_usage = energy.get_peak_usage()
+    peak_usage = energy.get_peak_usage(active_device_gid)
     for row in peak_usage["peak_hours"]:
         row["hour_label"] = _format_hour(row["hour"])
-    month_comparison = energy.get_month_comparison()
+    month_comparison = energy.get_month_comparison(active_device_gid)
     if month_comparison["this_month"] and month_comparison["last_month"]:
         month_change = (
             (month_comparison["this_month"]["total_kwh"] or 0)
@@ -3198,15 +3221,15 @@ def _build_dashboard_context(panel_label: str) -> dict:
         "budget": int(MONTHLY_BUDGET),
         "budget_pct": budget_pct,
         "rate": RATE,
-        "daily_json": energy.get_daily_data(30),
-        "hourly_json": energy.get_hourly_data(7),
-        "intraday_comparison": energy.get_intraday_comparison(),
+        "daily_json": energy.get_daily_data(30, active_device_gid),
+        "hourly_json": energy.get_hourly_data(7, active_device_gid),
+        "intraday_comparison": energy.get_intraday_comparison(active_device_gid),
         "month_comparison": {
             "this_month": month_comparison["this_month"],
             "last_month": month_comparison["last_month"],
         },
         "peak_usage": peak_usage,
-        "peak_24h": energy.get_peak_24h(),
+        "peak_24h": energy.get_peak_24h(active_device_gid),
         "dash_mains": dash_mains,
         "dash_breakers": dash_breakers,
         "breakers_left": breakers_left,
@@ -3240,8 +3263,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
 
 @app.route("/")
 def index():
-    com = _common()
-    dashboard = _build_dashboard_context(com["panel_label"])
+    com, dashboard = _get_cached_dashboard()
     return _render(
         DASH_HTML,
         active_page="dashboard",
@@ -3717,7 +3739,15 @@ def api_poller_status():
 
 @app.route("/api/live-dashboard")
 def api_live_dashboard():
-    return jsonify(_build_live_dashboard_payload())
+    _com, dashboard = _get_cached_dashboard()
+    return jsonify({
+        "latest_timestamp": dashboard["ctx"]["latest"][0]["timestamp"] if dashboard["ctx"]["latest"] else None,
+        "current_watts": round(dashboard["current_watts"], 1),
+        "current_kwh": round(dashboard["ctx"]["current_kwh"] or 0, 3),
+        "monthly_projected": round(dashboard["monthly_projected"], 3),
+        "cost_per_hour": round(dashboard["cost_per_hour"], 2),
+        "top_circuits": dashboard["top_circuits"][:12],
+    })
 
 
 @app.route("/api/poller-reconnect", methods=["POST"])
@@ -4797,4 +4827,10 @@ if __name__ == "__main__":
             "[startup] fixed %s CSV kWatts rows (÷60 unit correction)",
             f"{csv_fix['fixed']:,}",
         )
+    with app.app_context():
+        try:
+            _get_cached_dashboard()
+            app.logger.info("[startup] prewarmed dashboard cache")
+        except Exception:
+            app.logger.exception("[startup] dashboard prewarm failed")
     app.run(debug=False, host=FLASK_HOST, port=FLASK_PORT)

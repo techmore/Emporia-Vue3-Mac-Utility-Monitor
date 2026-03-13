@@ -118,6 +118,10 @@ def ensure_table():
             ON readings(device_gid, channel_num);
         CREATE INDEX IF NOT EXISTS idx_channel_name
             ON readings(channel_name);
+        CREATE INDEX IF NOT EXISTS idx_device_timestamp
+            ON readings(device_gid, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_device_channel_timestamp
+            ON readings(device_gid, channel_name, timestamp);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
             ON readings(device_gid, timestamp, channel_name);
         CREATE TABLE IF NOT EXISTS migrations (
@@ -298,6 +302,14 @@ def get_known_devices() -> list[str]:
     ).fetchall()
     conn.close()
     return [r["device_gid"] for r in rows]
+
+
+def get_active_device_gid(device_gid: str | None = None) -> str | None:
+    """Resolve the effective device gid once so callers can reuse it across queries."""
+    conn = _connect()
+    gid = _resolve_device_gid(conn.cursor(), device_gid)
+    conn.close()
+    return gid
 
 
 def _resolve_device_gid(c: sqlite3.Cursor, device_gid: str | None = None) -> str | None:
@@ -1163,7 +1175,7 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
     }
 
 
-def get_trend(days_back: int = 14) -> dict:
+def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
     """
     Return daily totals for the last `days_back` days plus a simple
     linear trend slope (positive = usage rising, negative = falling).
@@ -1171,6 +1183,16 @@ def get_trend(days_back: int = 14) -> dict:
     """
     conn = _connect()
     c = conn.cursor()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return {
+            "daily": [],
+            "slope": None,
+            "avg_kwh": None,
+            "best_day": None,
+            "worst_day": None,
+        }
 
     since = (datetime.now() - timedelta(days=days_back)).isoformat()
     c.execute(
@@ -1178,10 +1200,10 @@ def get_trend(days_back: int = 14) -> dict:
                   SUM(usage_kwh) as total_kwh,
                   SUM(cost_cents) as total_cents
            FROM readings
-           WHERE channel_name = 'Main' AND timestamp >= ?
+           WHERE channel_name = 'Main' AND timestamp >= ? AND device_gid = ?
            GROUP BY day
            ORDER BY day""",
-        (since,),
+        (since, resolved_gid),
     )
     daily = [dict(r) for r in c.fetchall()]
     conn.close()
