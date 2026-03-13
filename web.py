@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.29"
+VERSION = "1.7.30"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1778,28 +1778,37 @@ function thinRowChart(id, labels, data, color) {
   });
 }
 
-oliveChart('dailyChart',
-  daily.map(d => d.day.slice(5)),
-  daily.map(d => d.total_kwh),
-  'oklch(35% 0.045 110)');
+if (document.getElementById('dailyChart')) {
+  oliveChart('dailyChart',
+    daily.map(d => d.day.slice(5)),
+    daily.map(d => d.total_kwh),
+    'oklch(35% 0.045 110)');
+}
 
-oliveChart('hourlyChart',
-  hourly.map(d => d.hour.slice(11,16)),
-  hourly.map(d => d.total_kwh),
-  'oklch(42% 0.055 110)');
+if (document.getElementById('hourlyChart')) {
+  oliveChart('hourlyChart',
+    hourly.map(d => d.hour.slice(11,16)),
+    hourly.map(d => d.total_kwh),
+    'oklch(42% 0.055 110)');
+}
 
-thinRowChart(
-  'todayRowChart',
-  intradayComparison.labels,
-  intradayComparison.today,
-  'oklch(35% 0.045 110)'
-);
-thinRowChart(
-  'yesterdayRowChart',
-  intradayComparison.labels,
-  intradayComparison.yesterday,
-  'oklch(55% 0.06 210)'
-);
+if (document.getElementById('todayRowChart')) {
+  thinRowChart(
+    'todayRowChart',
+    intradayComparison.labels,
+    intradayComparison.today,
+    'oklch(35% 0.045 110)'
+  );
+}
+if (document.getElementById('yesterdayRowChart')) {
+  thinRowChart(
+    'yesterdayRowChart',
+    intradayComparison.labels,
+    intradayComparison.yesterday,
+    'oklch(55% 0.06 210)'
+  );
+}
+
 
 // Auto-refresh the page every 60 s so "right now" stays current
 setTimeout(() => location.reload(), 60000);
