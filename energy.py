@@ -72,8 +72,9 @@ _KWATTS_INTERVAL_MINUTES: dict[str, float] = {
 
 def _connect() -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with row_factory set."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.row_factory = sqlite3.Row
     return conn
 
