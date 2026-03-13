@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.9"
+VERSION = "1.7.10"
 
 
 def _read_monthly_budget() -> float:
@@ -2696,6 +2696,15 @@ def _load_panel_display_settings() -> dict:
         return {}
 
 
+def _load_panel_slots(default: int = 16) -> int:
+    try:
+        with open("settings.json") as f:
+            value = int((json.load(f).get("panel_slots") or default))
+    except Exception:
+        value = default
+    return max(1, value)
+
+
 def _normalize_panel_layout(layout: dict[int, dict], channel_names: list[str], minimum_slots: int = 20) -> tuple[dict[int, dict], int]:
     normalized = {slot: dict(row) for slot, row in layout.items()}
     assigned = {row.get("channel_name") for row in normalized.values() if row.get("channel_name")}
@@ -2717,7 +2726,7 @@ def _normalize_panel_layout(layout: dict[int, dict], channel_names: list[str], m
         }
 
     max_slot = max(max(normalized.keys(), default=0), minimum_slots)
-    panel_slots = max(minimum_slots, ((max_slot + 19) // 20) * 20)
+    panel_slots = max(minimum_slots, max_slot)
     return normalized, panel_slots
 
 
@@ -2803,7 +2812,11 @@ def _build_dashboard_context(panel_label: str) -> dict:
         ],
         key=lambda name: (name.startswith("Circuit_"), name),
     )
-    layout, _dashboard_panel_slots = _normalize_panel_layout(layout, ordered)
+    layout, dashboard_panel_slots = _normalize_panel_layout(
+        layout,
+        ordered,
+        minimum_slots=_load_panel_slots(),
+    )
     max_w = max((_watts_estimate(latest_map.get(name, 0)) for name in ordered), default=1) or 1
     live_watts = {name: _watts_estimate(latest_map.get(name, 0)) for name in ordered}
     sorted_watts = sorted(live_watts.values(), reverse=True)
@@ -2938,7 +2951,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
             breakers_left,
             breakers_right,
             panel_label_text=f"{panel_label} — Live",
-            bus_label="Bus bar",
+            bus_label=f"Bus bar • {dashboard_panel_slots} slots",
         ),
     }
 
@@ -3142,7 +3155,11 @@ def circuits_page():
         if n not in _MAINS_NAMES and n not in _SKIP_NAMES
            and not str(n).isdigit()
     ], key=lambda n: (n.startswith("Circuit_"), n))
-    layout, panel_slots = _normalize_panel_layout(layout, all_circuits)
+    layout, panel_slots = _normalize_panel_layout(
+        layout,
+        all_circuits,
+        minimum_slots=_load_panel_slots(),
+    )
 
     max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in all_circuits), default=1) or 1
     _live_w_c = {n: _watts_estimate(latest_map.get(n, 0)) for n in all_circuits}
@@ -3535,8 +3552,9 @@ PANEL_EDIT_HTML = """
     <label style="font-size:0.82rem; color:var(--text-light);">
       Panel size:
       <select id="panelSize" style="margin-left:6px; font-size:0.82rem; padding:4px 8px; border-radius:5px; border:1px solid var(--border); background:var(--bg); color:var(--text);">
-        <option value="20" {{ 'selected' if panel_slots==20 else '' }}>20 slots</option>
-        <option value="40" {{ 'selected' if panel_slots==40 else '' }}>40 slots</option>
+        {% for size in [12, 16, 20, 24, 30, 40] %}
+        <option value="{{ size }}" {{ 'selected' if panel_slots==size else '' }}>{{ size }} slots</option>
+        {% endfor %}
       </select>
     </label>
     <button onclick="saveLayout()" style="padding:8px 20px; background:var(--olive-800); color:var(--olive-50); border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
@@ -3600,7 +3618,7 @@ function saveLayout() {
   fetch('/api/panel-layout', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({slots})
+    body: JSON.stringify({slots, panel_slots: parseInt(document.getElementById('panelSize').value) || null})
   }).then(r => r.json()).then(() => {
     const m = document.getElementById('saveMsg');
     m.style.display = 'inline';
@@ -4208,8 +4226,7 @@ function savePanelDisplay() {
 def panel_edit_page():
     com = _common()
     layout = {row["slot"]: row for row in energy.get_panel_layout()}
-    max_saved = max(layout.keys(), default=0)
-    panel_slots = max(20, ((max_saved + 19) // 20) * 20)
+    panel_slots = max(_load_panel_slots(), max(layout.keys(), default=0))
     all_channels = sorted([
         r["channel_name"] for r in energy.get_summary(24 * 30)
         if r["channel_name"] not in _MAINS_NAMES and r["channel_name"] not in _SKIP_NAMES
@@ -4240,6 +4257,20 @@ def api_panel_layout():
             s["slot"], s.get("channel_name"), s.get("label"),
             s.get("note"), s.get("amps"), s.get("poles", 1)
         )
+    panel_slots = data.get("panel_slots")
+    if panel_slots is not None:
+        try:
+            panel_slots = max(1, int(panel_slots))
+            cfg = {}
+            try:
+                with open("settings.json") as f:
+                    cfg = json.load(f)
+            except Exception:
+                pass
+            cfg["panel_slots"] = panel_slots
+            energy._write_json_file("settings.json", cfg)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "panel_slots must be an integer"}), 400
     return jsonify({"ok": True})
 
 

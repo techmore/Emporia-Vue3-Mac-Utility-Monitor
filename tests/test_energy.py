@@ -252,6 +252,20 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("\"dashboard\":", first_chunk)
         self.assertIn("\"status\":", first_chunk)
 
+    def test_panel_slots_setting_supports_sixteen_slot_panels(self):
+        settings = Path("settings.json")
+        original = settings.read_text() if settings.exists() else None
+        try:
+            settings.write_text('{\n  "panel_slots": 16\n}', encoding="utf-8")
+            normalized, panel_slots = web._normalize_panel_layout({}, ["Dryer", "HVAC"], minimum_slots=web._load_panel_slots())
+            self.assertEqual(panel_slots, 16)
+            self.assertEqual(sorted(normalized.keys()), [1, 2])
+        finally:
+            if original is None:
+                settings.unlink(missing_ok=True)
+            else:
+                settings.write_text(original, encoding="utf-8")
+
     def test_partial_panel_layout_still_renders_unmapped_circuits(self):
         conn = energy._connect()
         now = energy.datetime.now().replace(microsecond=0).isoformat()
