@@ -48,7 +48,8 @@ private func resolveProjectRoot() -> URL {
 
 private let projectRoot   = resolveProjectRoot()
 private let venvPython    = projectRoot.appendingPathComponent("venv/bin/python3").path
-private let dashboardURL  = URL(string: "http://localhost:5001")!
+private let flaskPort     = ProcessInfo.processInfo.environment["FLASK_PORT"] ?? "5001"
+private let dashboardURL  = URL(string: "http://localhost:\(flaskPort)")!
 
 private func validateProjectRoot() -> String? {
     let fm = FileManager.default
@@ -226,7 +227,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func copyLocalURL() {
         let ip  = localNetworkIP() ?? "localhost"
-        let url = "http://\(ip):5001"
+        let url = "http://\(ip):\(flaskPort)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
         copyURLMenuItem?.title = "Copied!"
@@ -283,7 +284,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ── Live version fetch ────────────────────────────────────────────────
 
     private func fetchVersionFromFlask() {
-        guard let url = URL(string: "http://localhost:5001/api/version") else { return }
+        guard let url = URL(string: "http://localhost:\(flaskPort)/api/version") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -307,14 +308,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // ── Orphan cleanup ────────────────────────────────────────────────────────
 
-    /// Kill any process on port 5001 that is provably our own Flask (web.py from
-    /// this project's venv). Unrelated Flask apps on port 5001 are left alone.
+    /// Kill any process on the configured Flask port that is provably our own Flask
+    /// (web.py from this project's venv). Unrelated Flask apps are left alone.
     private func killOrphanedFlask() {
-        // Step 1: get PIDs listening on :5001
+        // Step 1: get PIDs listening on the configured port
         let lsof = Process()
         let lsofOut = Pipe()
         lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        lsof.arguments = ["-i", ":5001", "-t"]
+        lsof.arguments = ["-i", ":\(flaskPort)", "-t"]
         lsof.standardOutput = lsofOut
         lsof.standardError  = Pipe()
         guard (try? lsof.run()) != nil else { return }

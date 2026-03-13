@@ -20,6 +20,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_NAME="$(basename "$SCRIPT_DIR")"
+FLASK_PORT="${FLASK_PORT:-5001}"
+FLASK_BASE_URL="http://localhost:${FLASK_PORT}"
 APP_DIR="$SCRIPT_DIR/EnergyMonitorApp"
 SRC="$APP_DIR/Sources/main.swift"
 BIN="$APP_DIR/EnergyMonitorApp"
@@ -68,8 +70,8 @@ echo ""
 # ── 1. Kill existing project processes ────────────────────────────────────────
 echo "[ 1 / 6 ]  Stopping existing processes…"
 
-# Kill anything using port 5001 that belongs to our venv
-for PID in $(lsof -ti :5001 2>/dev/null); do
+# Kill anything using the configured Flask port that belongs to our venv
+for PID in $(lsof -ti :"$FLASK_PORT" 2>/dev/null); do
   CMD=$(ps -p "$PID" -o command= 2>/dev/null || true)
   if echo "$CMD" | grep -q "web\.py"; then
     kill -9 "$PID" 2>/dev/null && ok "Killed Flask (PID $PID)" || true
@@ -124,10 +126,10 @@ FLASK_PID=$!
 ok "Flask started (PID $FLASK_PID) — log: $FLASK_LOG"
 
 # Wait for Flask to be ready (up to 10s)
-info "Waiting for Flask on :5001…"
+info "Waiting for Flask on :${FLASK_PORT}…"
 for i in $(seq 1 10); do
-  if curl -s http://localhost:5001/api/version > /dev/null 2>&1; then
-    VERSION=$(curl -s http://localhost:5001/api/version | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null || echo "?")
+  if curl -s "$FLASK_BASE_URL/api/version" > /dev/null 2>&1; then
+    VERSION=$(curl -s "$FLASK_BASE_URL/api/version" | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null || echo "?")
     ok "Flask is up — v$VERSION"
     break
   fi
@@ -179,7 +181,7 @@ fi
 
 echo ""
 echo "────────────────────────────────────────────────"
-echo "  Dashboard → http://localhost:5001"
+echo "  Dashboard → $FLASK_BASE_URL"
 echo "  Flask log → $FLASK_LOG"
 echo "  Poller log → $POLLER_LOG"
 echo "────────────────────────────────────────────────"

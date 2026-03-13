@@ -19,6 +19,8 @@ app.jinja_env.autoescape = select_autoescape(
     enabled_extensions=("html", "htm", "xml"),
     default_for_string=True,
 )
+FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
+FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
 VERSION = "1.7.3"
 
@@ -3702,7 +3704,7 @@ def handle_large_upload(_exc):
 
 
 if __name__ == "__main__":
-    app.logger.info("Energy Monitor — http://localhost:5001")
+    app.logger.info("Energy Monitor — http://%s:%s", FLASK_HOST, FLASK_PORT)
     app.logger.info("Rate: $%.4f/kWh  Budget: $%.0f/mo", RATE, MONTHLY_BUDGET)
     n = energy.migrate_channel_names()
     if n:
@@ -3714,4 +3716,4 @@ if __name__ == "__main__":
             "[startup] fixed %s CSV kWatts rows (÷60 unit correction)",
             f"{csv_fix['fixed']:,}",
         )
-    app.run(debug=False, host=os.environ.get("FLASK_HOST", "127.0.0.1"), port=5001)
+    app.run(debug=False, host=FLASK_HOST, port=FLASK_PORT)
