@@ -35,6 +35,8 @@ git clone https://github.com/techmore/Emporia-Vue3-Mac-Utility-Monitor.git
 cd Emporia-Vue3-Mac-Utility-Monitor
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
+# For reproducible installs, use the pinned lock file instead:
+venv/bin/python3 -m pip install -r requirements.lock
 ```
 
 ### 2. Build, start everything, and open the app
@@ -169,6 +171,7 @@ POST /api/import-csv       # import Emporia CSV export
 ├── build.sh                # Full dev-cycle build script
 ├── setup_launch.sh         # LaunchAgent installer for auto-start
 ├── requirements.txt
+├── requirements.lock       # Pinned dependency set for reproducible installs
 ├── settings.json           # Runtime config (gitignored)
 ├── keys.json               # Emporia auth tokens (gitignored)
 ├── energy.db               # SQLite database (gitignored)
