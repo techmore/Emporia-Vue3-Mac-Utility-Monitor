@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.18"
+VERSION = "1.7.19"
 
 
 def _read_monthly_budget() -> float:
@@ -245,6 +245,39 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   padding: 1.25rem 1.5rem;
 }
 .chart-box h3 { font-size: 0.85rem; color: var(--text-light); margin-bottom: 1rem; font-family: 'Inter', sans-serif; font-weight: 600; }
+.banner-chart {
+  margin-top: 1rem;
+  background: color-mix(in oklab, var(--olive-950) 88%, transparent);
+  border: 1px solid var(--olive-800);
+  border-radius: 14px;
+  padding: 0.85rem 1rem 0.65rem;
+}
+.banner-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 0.45rem;
+}
+.banner-chart-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--olive-300);
+}
+.banner-chart-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 0.72rem;
+  color: var(--olive-300);
+}
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+  margin-right: 6px;
+}
 
 /* ── Trend banner ── */
 .trend-banner {
@@ -1153,6 +1186,17 @@ DASH_HTML = """
         <div class="ctx-val">${{ "%.4f"|format(rate) }}/kWh</div>
       </div>
     </div>
+
+    <div class="banner-chart">
+      <div class="banner-chart-head">
+        <div class="banner-chart-title">Today vs Yesterday</div>
+        <div class="banner-chart-legend">
+          <span><span class="legend-swatch" style="background:var(--chart1);"></span>Today</span>
+          <span><span class="legend-swatch" style="background:var(--chart2);"></span>Yesterday</span>
+        </div>
+      </div>
+      <canvas id="todayVsYesterdayChart" height="82"></canvas>
+    </div>
   </div>
 
   <!-- ── Active Circuits (multi-view) ─────────────────────────────────── -->
@@ -1693,6 +1737,7 @@ DASH_HTML = """
 <script>
 const daily  = {{ daily_json|tojson }};
 const hourly = {{ hourly_json|tojson }};
+const intradayComparison = {{ intraday_comparison|tojson }};
 
 function oliveChart(id, labels, data, color) {
   const s = getComputedStyle(document.documentElement);
@@ -1717,6 +1762,26 @@ function oliveChart(id, labels, data, color) {
   });
 }
 
+function groupedBarChart(id, labels, datasets) {
+  const s = getComputedStyle(document.documentElement);
+  const textLight = s.getPropertyValue('--olive-600').trim() || '#666';
+  const borderCol = s.getPropertyValue('--olive-200').trim() || '#ddd';
+  new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false }, tooltip: {
+        callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)} kWh` }
+      }},
+      scales: {
+        x: { ticks: { color: textLight, font: { size: 10 }, maxRotation: 0 }, grid: { display: false } },
+        y: { beginAtZero: true, ticks: { color: textLight, font: { size: 10 } }, grid: { color: borderCol } }
+      }
+    }
+  });
+}
+
 oliveChart('dailyChart',
   daily.map(d => d.day.slice(5)),
   daily.map(d => d.total_kwh),
@@ -1726,6 +1791,29 @@ oliveChart('hourlyChart',
   hourly.map(d => d.hour.slice(11,16)),
   hourly.map(d => d.total_kwh),
   'oklch(42% 0.055 110)');
+
+groupedBarChart('todayVsYesterdayChart',
+  intradayComparison.labels,
+  [
+    {
+      label: 'Today',
+      data: intradayComparison.today,
+      backgroundColor: 'oklch(35% 0.045 110)',
+      borderRadius: 3,
+      borderSkipped: false,
+      categoryPercentage: 0.9,
+      barPercentage: 0.9,
+    },
+    {
+      label: 'Yesterday',
+      data: intradayComparison.yesterday,
+      backgroundColor: 'oklch(55% 0.06 210)',
+      borderRadius: 3,
+      borderSkipped: false,
+      categoryPercentage: 0.9,
+      barPercentage: 0.9,
+    },
+  ]);
 
 // Auto-refresh the page every 60 s so "right now" stays current
 setTimeout(() => location.reload(), 60000);
@@ -3061,6 +3149,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
         "rate": RATE,
         "daily_json": energy.get_daily_data(30),
         "hourly_json": energy.get_hourly_data(7),
+        "intraday_comparison": energy.get_intraday_comparison(),
         "month_comparison": {
             "this_month": month_comparison["this_month"],
             "last_month": month_comparison["last_month"],

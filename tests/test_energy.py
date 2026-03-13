@@ -304,6 +304,7 @@ class EnergyTests(unittest.TestCase):
         self._seed_ui_data()
         conn = energy._connect()
         ts = energy.datetime.now().replace(microsecond=0).isoformat()
+        yesterday = (energy.datetime.now().replace(microsecond=0) - energy.timedelta(days=1)).isoformat()
         conn.executemany(
             """INSERT INTO readings
                (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
@@ -311,6 +312,7 @@ class EnergyTests(unittest.TestCase):
             [
                 (ts, "A", 12, "12", 0.05, 0.5),
                 (ts, "A", 13, "13", 0.04, 0.4),
+                (yesterday, "A", "1,2,3", "Main", 0.8, 8.0),
             ],
         )
         conn.commit()
@@ -328,6 +330,8 @@ class EnergyTests(unittest.TestCase):
         self.assertIn(">13<", body)
         self.assertIn("Bus bar", body)
         self.assertIn("Circuit Breakers", body)
+        self.assertIn("Today vs Yesterday", body)
+        self.assertIn("todayVsYesterdayChart", body)
         self.assertIn("Top Active Circuits", body)
         self.assertIn("Recommendations", body)
         self.assertGreaterEqual(body.count('class="breaker '), 2)

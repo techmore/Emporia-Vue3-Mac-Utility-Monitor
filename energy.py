@@ -874,6 +874,60 @@ def get_peak_usage(device_gid: str | None = None):
     }
 
 
+def get_intraday_comparison(device_gid: str | None = None) -> dict:
+    """Return hourly Main-channel totals for today vs yesterday in local time."""
+    conn = _connect()
+    c = conn.cursor()
+    resolved_gid = _resolve_device_gid(c, device_gid)
+    if not resolved_gid:
+        conn.close()
+        return {"labels": [], "today": [], "yesterday": []}
+
+    now = datetime.now()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start = today_start - timedelta(days=1)
+    tomorrow_start = today_start + timedelta(days=1)
+
+    c.execute(
+        """SELECT date(timestamp) as day_key,
+                  CAST(strftime('%H', timestamp) AS INTEGER) as hour_num,
+                  SUM(usage_kwh) as total_kwh
+           FROM readings
+           WHERE channel_name = 'Main'
+             AND device_gid = ?
+             AND timestamp >= ?
+             AND timestamp < ?
+           GROUP BY day_key, hour_num""",
+        (resolved_gid, yesterday_start.isoformat(), tomorrow_start.isoformat()),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    today_key = today_start.date().isoformat()
+    yesterday_key = yesterday_start.date().isoformat()
+    today = [0.0] * 24
+    yesterday = [0.0] * 24
+    for row in rows:
+        hour = row["hour_num"]
+        if row["day_key"] == today_key:
+            today[hour] = row["total_kwh"] or 0.0
+        elif row["day_key"] == yesterday_key:
+            yesterday[hour] = row["total_kwh"] or 0.0
+
+    labels = []
+    for hour in range(24):
+        if hour == 0:
+            labels.append("12a")
+        elif hour < 12:
+            labels.append(f"{hour}a")
+        elif hour == 12:
+            labels.append("12p")
+        else:
+            labels.append(f"{hour-12}p")
+
+    return {"labels": labels, "today": today, "yesterday": yesterday}
+
+
 def get_peak_24h(device_gid: str | None = None) -> dict:
     """Return the highest-demand timestamp in the last 24h (Main channel) and its watt estimate."""
     conn = _connect()
