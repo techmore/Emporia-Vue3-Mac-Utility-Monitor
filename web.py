@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.19"
+VERSION = "1.7.20"
 
 
 def _read_monthly_budget() -> float:
@@ -270,6 +270,25 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   gap: 12px;
   font-size: 0.72rem;
   color: var(--olive-300);
+}
+.banner-chart-rows {
+  display: grid;
+  gap: 8px;
+}
+.banner-chart-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.banner-chart-row-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--olive-300);
+}
+.banner-chart-row canvas {
+  width: 100%;
 }
 .legend-swatch {
   width: 10px;
@@ -1195,7 +1214,16 @@ DASH_HTML = """
           <span><span class="legend-swatch" style="background:var(--chart2);"></span>Yesterday</span>
         </div>
       </div>
-      <canvas id="todayVsYesterdayChart" height="82"></canvas>
+      <div class="banner-chart-rows">
+        <div class="banner-chart-row">
+          <div class="banner-chart-row-label">Today</div>
+          <canvas id="todayRowChart" height="26"></canvas>
+        </div>
+        <div class="banner-chart-row">
+          <div class="banner-chart-row-label">Yesterday</div>
+          <canvas id="yesterdayRowChart" height="26"></canvas>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1762,21 +1790,54 @@ function oliveChart(id, labels, data, color) {
   });
 }
 
-function groupedBarChart(id, labels, datasets) {
+function thinRowChart(id, labels, data, color) {
   const s = getComputedStyle(document.documentElement);
   const textLight = s.getPropertyValue('--olive-600').trim() || '#666';
   const borderCol = s.getPropertyValue('--olive-200').trim() || '#ddd';
   new Chart(document.getElementById(id), {
     type: 'bar',
-    data: { labels, datasets },
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: color,
+        borderRadius: 2,
+        borderSkipped: false,
+        categoryPercentage: 0.96,
+        barPercentage: 0.96,
+      }]
+    },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: {
-        callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw.toFixed(2)} kWh` }
+        callbacks: { label: ctx => ` ${ctx.raw.toFixed(2)} kWh` }
       }},
       scales: {
-        x: { ticks: { color: textLight, font: { size: 10 }, maxRotation: 0 }, grid: { display: false } },
-        y: { beginAtZero: true, ticks: { color: textLight, font: { size: 10 } }, grid: { color: borderCol } }
+        x: {
+          ticks: {
+            color: textLight,
+            font: { size: 10 },
+            maxRotation: 0,
+            autoSkip: false,
+            callback: (_value, index) => {
+              const label = labels[index];
+              return ['12a', '12p'].includes(label) ? label : '';
+            },
+          },
+          grid: {
+            color: (_ctx) => {
+              const i = _ctx.index;
+              const label = labels[i];
+              return ['12a', '12p'].includes(label) ? borderCol : 'transparent';
+            }
+          },
+        },
+        y: {
+          beginAtZero: true,
+          display: false,
+          grid: { display: false }
+        }
       }
     }
   });
@@ -1792,28 +1853,18 @@ oliveChart('hourlyChart',
   hourly.map(d => d.total_kwh),
   'oklch(42% 0.055 110)');
 
-groupedBarChart('todayVsYesterdayChart',
+thinRowChart(
+  'todayRowChart',
   intradayComparison.labels,
-  [
-    {
-      label: 'Today',
-      data: intradayComparison.today,
-      backgroundColor: 'oklch(35% 0.045 110)',
-      borderRadius: 3,
-      borderSkipped: false,
-      categoryPercentage: 0.9,
-      barPercentage: 0.9,
-    },
-    {
-      label: 'Yesterday',
-      data: intradayComparison.yesterday,
-      backgroundColor: 'oklch(55% 0.06 210)',
-      borderRadius: 3,
-      borderSkipped: false,
-      categoryPercentage: 0.9,
-      barPercentage: 0.9,
-    },
-  ]);
+  intradayComparison.today,
+  'oklch(35% 0.045 110)'
+);
+thinRowChart(
+  'yesterdayRowChart',
+  intradayComparison.labels,
+  intradayComparison.yesterday,
+  'oklch(55% 0.06 210)'
+);
 
 // Auto-refresh the page every 60 s so "right now" stays current
 setTimeout(() => location.reload(), 60000);
