@@ -60,6 +60,19 @@ On first run, open **Settings → Emporia Account**, enter credentials, and save
 
 ---
 
+## Release Packaging
+
+Use `release.sh` to create a source-first macOS release archive with the prebuilt app bundle and required project files.
+
+```bash
+./release.sh            # compile Swift app and create dist/Emporia-Energy-Monitor-<version>-macos.zip
+./release.sh --no-swift # package the existing app bundle without recompiling Swift
+```
+
+The release archive intentionally excludes local runtime state such as `energy.db`, `settings.json`, `keys.json`, and the virtual environment.
+
+---
+
 ## Build Script
 
 `build.sh` is the canonical local run path.
