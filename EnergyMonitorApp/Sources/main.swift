@@ -59,12 +59,20 @@ private func localNetworkIP() -> String? {
     var ptr = ifaddr
     while let current = ptr {
         let ifa = current.pointee
-        if ifa.ifa_addr.pointee.sa_family == UInt8(AF_INET) {
-            let name = String(cString: ifa.ifa_name)
-            if name.hasPrefix("en") {
-                var addr = ifa.ifa_addr.pointee
-                var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-                inet_ntop(AF_INET, &addr.sa_data.2, &buf, socklen_t(INET_ADDRSTRLEN))
+        guard let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else {
+            ptr = current.pointee.ifa_next
+            continue
+        }
+        let name = String(cString: ifa.ifa_name)
+        if name.hasPrefix("en") {
+            var ipv4 = UnsafeRawPointer(addr)
+                .assumingMemoryBound(to: sockaddr_in.self)
+                .pointee
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            let result = withUnsafePointer(to: &ipv4.sin_addr) {
+                inet_ntop(AF_INET, $0, &buf, socklen_t(INET_ADDRSTRLEN))
+            }
+            if result != nil {
                 let ip = String(cString: buf)
                 if ip != "0.0.0.0" { return ip }
             }
