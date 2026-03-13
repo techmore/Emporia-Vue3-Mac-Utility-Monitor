@@ -195,6 +195,19 @@ class EnergyTests(unittest.TestCase):
 
     def test_dashboard_route_renders_panel_invariants(self):
         self._seed_ui_data()
+        conn = energy._connect()
+        ts = energy.datetime.now().replace(microsecond=0).isoformat()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (ts, "A", 12, "12", 0.05, 0.5),
+                (ts, "A", 13, "13", 0.04, 0.4),
+            ],
+        )
+        conn.commit()
+        conn.close()
         client = web.app.test_client()
 
         response = client.get("/")
@@ -204,6 +217,8 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("Service Feed", body)
         self.assertIn("Leg A", body)
         self.assertIn("Leg B", body)
+        self.assertIn(">12<", body)
+        self.assertIn(">13<", body)
         self.assertIn("Bus bar", body)
         self.assertIn("Circuit Breakers", body)
         self.assertIn("Top Active Circuits", body)
@@ -215,6 +230,16 @@ class EnergyTests(unittest.TestCase):
 
     def test_circuits_route_renders_action_center_and_panel(self):
         self._seed_ui_data()
+        conn = energy._connect()
+        ts = energy.datetime.now().replace(microsecond=0).isoformat()
+        conn.execute(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (ts, "A", 12, "12", 0.05, 0.5),
+        )
+        conn.commit()
+        conn.close()
         client = web.app.test_client()
 
         response = client.get("/circuits")
@@ -223,6 +248,7 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Action Center", body)
         self.assertIn("Service Feed", body)
+        self.assertIn(">12<", body)
         self.assertIn("Safety Watch", body)
         self.assertIn("Live Heavy Hitters", body)
         self.assertIn("Always-On Loads", body)

@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.12"
+VERSION = "1.7.13"
 
 
 def _read_monthly_budget() -> float:
@@ -799,7 +799,7 @@ def _build_live_dashboard_payload() -> dict:
     top_circuits = []
     for row in ctx["circuits"]:
         name = row["channel_name"]
-        if name in _MAINS_NAMES or name in _SKIP_NAMES or str(name).isdigit():
+        if name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
         top_circuits.append({
             "channel_name": name,
@@ -2800,7 +2800,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
     top_circuits = []
     for row in ctx["circuits"]:
         name = row["channel_name"]
-        if name in _MAINS_NAMES or name in _SKIP_NAMES or str(name).isdigit():
+        if name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
         watts = _watts_estimate(latest_map.get(name, 0))
         top_circuits.append({
@@ -2819,7 +2819,6 @@ def _build_dashboard_context(panel_label: str) -> dict:
         row for row in summary_24
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
-        and not str(row["channel_name"]).isdigit()
     ]
     total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
     for row in circuits_24:
@@ -2839,7 +2838,7 @@ def _build_dashboard_context(panel_label: str) -> dict:
     ordered = sorted(
         [
             name for name in summary_24_map
-            if name not in _MAINS_NAMES and name not in _SKIP_NAMES and not str(name).isdigit()
+            if name not in _MAINS_NAMES and name not in _SKIP_NAMES
         ],
         key=lambda name: (name.startswith("Circuit_"), name),
     )
@@ -2927,7 +2926,6 @@ def _build_dashboard_context(panel_label: str) -> dict:
         {"name": name, "watts": _watts_estimate(kwh)}
         for name, kwh in latest_map.items()
         if name not in _MAINS_NAMES and name not in _SKIP_NAMES
-        and not str(name).isdigit()
         and 1 <= _watts_estimate(kwh) <= 50
     ]
     standby.sort(key=lambda row: row["watts"], reverse=True)
@@ -3023,7 +3021,6 @@ def reports_page():
         r for r in summary_24
         if r["channel_name"] not in _MAINS_NAMES
         and r["channel_name"] not in _SKIP_NAMES
-        and not str(r["channel_name"]).isdigit()
     ]
     total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
     for r in circuits_24:
@@ -3037,7 +3034,6 @@ def reports_page():
         for row in latest
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
-        and not str(row["channel_name"]).isdigit()
         and 1 <= _watts_estimate(row["usage_kwh"]) <= 50
     ]
     standby.sort(key=lambda x: x["watts"], reverse=True)
@@ -3086,7 +3082,7 @@ def recommendations_page():
     for row in ctx["latest"]:
         name = row["channel_name"]
         watts = _watts_estimate(row["usage_kwh"])
-        if name not in _MAINS_NAMES and name not in _SKIP_NAMES and not str(name).isdigit() and 1 <= watts <= 50:
+        if name not in _MAINS_NAMES and name not in _SKIP_NAMES and 1 <= watts <= 50:
             slot_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
             standby.append({"name": (slot_row or {}).get("label") or name, "watts": watts})
         panel_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
@@ -3161,7 +3157,6 @@ def circuits_page():
     all_circuits = sorted([
         n for n in sum_24h
         if n not in _MAINS_NAMES and n not in _SKIP_NAMES
-           and not str(n).isdigit()
     ], key=lambda n: (n.startswith("Circuit_"), n))
     layout, panel_slots = _normalize_panel_layout(
         layout,
@@ -3259,7 +3254,7 @@ def circuits_page():
     top_live_circuits = []
     for row in latest_rows:
         name = row["channel_name"]
-        if name in _MAINS_NAMES or name in _SKIP_NAMES or str(name).isdigit():
+        if name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
         top_live_circuits.append({
             "channel_name": name,
@@ -3272,7 +3267,6 @@ def circuits_page():
         {"name": usage_row_map.get(name, {}).get("display_name", name), "watts": watts}
         for name, watts in ((n, _watts_estimate(kwh)) for n, kwh in latest_map.items())
         if name not in _MAINS_NAMES and name not in _SKIP_NAMES
-        and not str(name).isdigit()
         and 1 <= watts <= 50
     ]
     standby_circuits.sort(key=lambda r: r["watts"], reverse=True)
@@ -4239,7 +4233,6 @@ def panel_edit_page():
     all_channels = sorted([
         r["channel_name"] for r in energy.get_summary(24 * 30)
         if r["channel_name"] not in _MAINS_NAMES and r["channel_name"] not in _SKIP_NAMES
-           and not str(r["channel_name"]).isdigit()
     ])
     breakers = []
     for slot in range(1, panel_slots + 1):
