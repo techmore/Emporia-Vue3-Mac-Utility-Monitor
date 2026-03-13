@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.38"
+VERSION = "1.7.39"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1323,7 +1323,7 @@ DASH_HTML = """
               {% endif %}
             </div>
             <div class="card">
-              <div class="card-label" style="margin-bottom:8px;">Top 5 Active Circuits</div>
+              <div class="card-label" style="margin-bottom:8px;">Top 5 Active Circuits Now</div>
               <div id="live-top-circuits-list">
               {% for c in top_circuits[:5] %}
               <div style="padding:5px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
@@ -1342,94 +1342,6 @@ DASH_HTML = """
               </div>
             </div>
           </div>
-
-          <!-- Row 6: Best day / Worst day -->
-          {% if trend and trend.best_day and trend.worst_day %}
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-            <div class="card">
-              <div class="card-label">Best Day (14d)</div>
-              <div class="card-value" style="font-size:1.1rem; color:#81c784;">{{ "%.1f"|format(trend.best_day.total_kwh) }}<span class="unit">kWh</span></div>
-              <div class="card-meta">{{ trend.best_day.day }}</div>
-            </div>
-            <div class="card">
-              <div class="card-label">Peak Day (14d)</div>
-              <div class="card-value" style="font-size:1.1rem; color:#f87171;">{{ "%.1f"|format(trend.worst_day.total_kwh) }}<span class="unit">kWh</span></div>
-              <div class="card-meta">{{ trend.worst_day.day }}</div>
-            </div>
-          </div>
-          {% endif %}
-
-          <!-- Row 7: This month vs last month -->
-          {% if month_comparison.this_month and month_comparison.last_month %}
-          {% set this_kwh = month_comparison.this_month.total_kwh or 0 %}
-          {% set last_kwh = month_comparison.last_month.total_kwh or 1 %}
-          {% set vs_bar = [((this_kwh / last_kwh) * 100)|round(0)|int, 100]|min %}
-          <div class="card">
-            <div class="card-label" style="margin-bottom:6px;">Month vs Last Month</div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:6px;">
-              <div>
-                <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase; letter-spacing:0.06em;">This Month</div>
-                <div style="font-size:1.1rem; font-weight:700; color:var(--text);">{{ "%.1f"|format(this_kwh) }} <span style="font-size:0.7rem; font-weight:400;">kWh</span></div>
-                <div style="font-size:0.72rem; color:var(--text-light);">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) }}</div>
-              </div>
-              <div>
-                <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase; letter-spacing:0.06em;">Last Month</div>
-                <div style="font-size:1.1rem; font-weight:700; color:var(--text);">{{ "%.1f"|format(last_kwh) }} <span style="font-size:0.7rem; font-weight:400;">kWh</span></div>
-                <div style="font-size:0.72rem; color:var(--text-light);">${{ "%.2f"|format((month_comparison.last_month.total_cents or 0) / 100) }}</div>
-              </div>
-            </div>
-            <div style="height:5px; background:var(--surface2); border-radius:3px; position:relative;">
-              <div style="height:5px; width:{{ vs_bar }}%; border-radius:3px;
-                background:{{ '#f87171' if this_kwh > last_kwh else '#81c784' }};"></div>
-            </div>
-            <div style="font-size:0.72rem; color:var(--text-light); margin-top:3px;">
-              {% set diff_pct = ((this_kwh - last_kwh) / last_kwh * 100)|round(1) %}
-              {{ '↑' if diff_pct > 0 else '↓' }} {{ diff_pct|abs|round(1) }}% vs last month (full)
-            </div>
-          </div>
-          {% endif %}
-
-          <!-- Row 8: Peak usage hours (historical pattern) -->
-          {% if peak_usage.peak_hours %}
-          <div class="card">
-            <div class="card-label" style="margin-bottom:8px;">Busiest Hours <span style="font-weight:400; color:var(--text-light);">(30-day avg)</span></div>
-            {% set max_peak = peak_usage.peak_hours[0].avg_kwh or 1 %}
-            {% for h in peak_usage.peak_hours[:5] %}
-            <div style="display:flex; align-items:center; gap:8px; padding:2px 0;
-                        border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
-              <div style="min-width:52px; font-size:0.78rem; color:var(--text);">{{ h.hour_label }}</div>
-              <div style="flex:1; height:5px; background:var(--surface2); border-radius:3px;">
-                <div style="height:5px; border-radius:3px; width:{{ ((h.avg_kwh / max_peak) * 100)|round(1) }}%;
-                  background:var(--olive-500);"></div>
-              </div>
-              <div style="min-width:52px; font-size:0.75rem; color:var(--text-light); text-align:right;">
-                {{ "%.4f"|format(h.avg_kwh) }} kWh
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          {% endif %}
-
-          <!-- Row 9: Peak days of week -->
-          {% if peak_usage.peak_days %}
-          <div class="card">
-            <div class="card-label" style="margin-bottom:8px;">Busiest Days <span style="font-weight:400; color:var(--text-light);">(30-day avg)</span></div>
-            {% set max_day = peak_usage.peak_days[0].avg_kwh or 1 %}
-            {% for d in peak_usage.peak_days[:5] %}
-            <div style="display:flex; align-items:center; gap:8px; padding:2px 0;
-                        border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
-              <div style="min-width:72px; font-size:0.78rem; color:var(--text);">{{ d.day }}</div>
-              <div style="flex:1; height:5px; background:var(--surface2); border-radius:3px;">
-                <div style="height:5px; border-radius:3px; width:{{ ((d.avg_kwh / max_day) * 100)|round(1) }}%;
-                  background:var(--olive-600);"></div>
-              </div>
-              <div style="min-width:52px; font-size:0.75rem; color:var(--text-light); text-align:right;">
-                {{ "%.4f"|format(d.avg_kwh) }} kWh
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-          {% endif %}
 
         </div><!-- /right -->
       </div>
