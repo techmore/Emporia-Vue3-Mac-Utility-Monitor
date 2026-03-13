@@ -111,6 +111,8 @@ def ensure_table():
             ON readings(device_gid, channel_num);
         CREATE INDEX IF NOT EXISTS idx_channel_name
             ON readings(channel_name);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
+            ON readings(device_gid, timestamp, channel_name);
 
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
@@ -971,13 +973,6 @@ def import_emporia_csv(
             interval_minutes = 1.0  # safe default; warn via returned dict
         kwatts_to_kwh = interval_minutes / 60.0
 
-        # Pre-fetch existing (timestamp, channel_name) combos scoped to this device
-        c.execute(
-            "SELECT timestamp, channel_name FROM readings WHERE device_gid = ?",
-            (device_gid,),
-        )
-        existing = {(r[0], r[1]) for r in c.fetchall()}
-
         rows_to_insert = []
         for row in reader:
             ts_raw = row.get(ts_col, "").strip()
@@ -1002,26 +997,23 @@ def import_emporia_csv(
                     errors += 1
                     continue
 
-                if (ts_iso, channel_name) in existing:
-                    skipped += 1
-                    continue
-
                 # Apply unit conversion
                 usage_kwh = raw_value * kwatts_to_kwh if is_kwatts else raw_value
                 cost_cents = usage_kwh * RATE_CENTS
                 rows_to_insert.append(
                     (ts_iso, device_gid, None, channel_name, usage_kwh, cost_cents)
                 )
-                existing.add((ts_iso, channel_name))  # prevent intra-file dupes
 
     if rows_to_insert:
+        before_changes = conn.total_changes
         c.executemany(
-            """INSERT INTO readings
+            """INSERT OR IGNORE INTO readings
                (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
                VALUES (?, ?, ?, ?, ?, ?)""",
             rows_to_insert,
         )
-        imported = len(rows_to_insert)
+        imported = conn.total_changes - before_changes
+        skipped += len(rows_to_insert) - imported
 
     conn.commit()
     conn.close()
