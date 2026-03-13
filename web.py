@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.28"
+VERSION = "1.7.29"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1534,9 +1534,6 @@ DASH_HTML = """
         document.getElementById('view-'+n).style.display = n===v ? '' : 'none';
         document.querySelector('[data-view="'+n+'"]').classList.toggle('active', n===v);
       });
-      // Panel view has inline KPI sidebar — hide the standalone 24h section to avoid duplication
-      const s24 = document.getElementById('section-24h');
-      if (s24) s24.style.display = v === 'panel' ? 'none' : '';
       localStorage.setItem('circuitView', v);
     }
     document.querySelectorAll('.vt-btn').forEach(btn => {
@@ -1664,91 +1661,33 @@ DASH_HTML = """
     </div>
   </div>
 
-  <!-- ── Trend banner ─────────────────────────────────────────────────── -->
-  {% if trend.slope is not none %}
-  <div class="section">
-    <div class="trend-banner">
-      <span class="trend-icon">{{ '📈' if trend.slope > 0.1 else ('📉' if trend.slope < -0.1 else '➡️') }}</span>
-      <span>
-        <strong>{{ '14-day trend: rising' if trend.slope > 0.1 else ('14-day trend: falling' if trend.slope < -0.1 else '14-day trend: stable') }}</strong>
-        &mdash;
-        usage changing {{ '%+.2f'|format(trend.slope) }} kWh/day.
-        Avg {{ "%.1f"|format(trend.avg_kwh) }} kWh/day.
-        Best: <strong>{{ trend.best_day.day }}</strong> ({{ "%.1f"|format(trend.best_day.total_kwh) }} kWh) &bull;
-        Peak: <strong>{{ trend.worst_day.day }}</strong> ({{ "%.1f"|format(trend.worst_day.total_kwh) }} kWh)
-      </span>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- ── Charts row ────────────────────────────────────────────────────── -->
-  <div class="section">
-    <div class="grid-2">
-      <div class="chart-box">
-        <h3>Daily Usage — Last 30 Days</h3>
-        <canvas id="dailyChart" height="180"></canvas>
-      </div>
-      <div class="chart-box">
-        <h3>Hourly Pattern — Last 7 Days</h3>
-        <canvas id="hourlyChart" height="180"></canvas>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Month comparison ──────────────────────────────────────────────── -->
   <div class="section">
     <div class="section-head">
-      <h2>Month Comparison</h2>
+      <h2>Analysis</h2>
+      <span class="section-sub">Deeper history and comparisons live in Reports and Trends</span>
     </div>
     <div class="grid-3">
-      <div class="card">
-        <div class="card-label">This Month</div>
-        <div class="card-value">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) }}<span class="unit">kWh</span></div>
-        <div class="card-meta">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) }}</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Last Month</div>
-        <div class="card-value">{{ "%.1f"|format(month_comparison.last_month.total_kwh or 0) }}<span class="unit">kWh</span></div>
-        <div class="card-meta">${{ "%.2f"|format((month_comparison.last_month.total_cents or 0) / 100) }}</div>
-      </div>
-      {% if month_comparison.this_month and month_comparison.last_month %}
-      <div class="card">
-        <div class="card-label">Change</div>
-        {% set ch = ((month_comparison.this_month.total_kwh or 0) - (month_comparison.last_month.total_kwh or 0)) / (month_comparison.last_month.total_kwh or 1) * 100 %}
-        <div class="card-value" style="font-size:2rem; color:{{ 'var(--green)' if ch < 0 else 'var(--red)' }}">
-          {{ '%+.1f'|format(ch) }}%
+      <a href="/reports" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Reports</div>
+          <div class="card-value" style="font-size:1.35rem;">Cost & Budget</div>
+          <div class="card-meta">24h cost, monthly projection, month-over-month changes, standby review, and recommendations.</div>
         </div>
-        <div class="card-meta">{{ '↓ lower' if ch < 0 else '↑ higher' }} than last month</div>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- ── Peak times ────────────────────────────────────────────────────── -->
-  <div class="section">
-    <div class="section-head">
-      <h2>Peak Times</h2>
-      <span class="section-sub">30-day average</span>
-    </div>
-    <div class="grid-2">
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Peak Hours</div>
-        {% for h in peak_usage.peak_hours[:5] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:500;">{{ h.hour_label }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.3f"|format(h.avg_kwh) }} kWh avg</span>
+      </a>
+      <a href="/trends" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Trends</div>
+          <div class="card-value" style="font-size:1.35rem;">Usage Patterns</div>
+          <div class="card-meta">Daily usage, hourly pattern, trend slope, and historical comparisons.</div>
         </div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Peak Days</div>
-        {% for d in peak_usage.peak_days[:5] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:500;">{{ d.day }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.3f"|format(d.avg_kwh) }} kWh avg</span>
+      </a>
+      <a href="/circuits" style="text-decoration:none; color:inherit;">
+        <div class="card">
+          <div class="card-label">Circuits</div>
+          <div class="card-value" style="font-size:1.35rem;">Panel Detail</div>
+          <div class="card-meta">Breaker safety, slot layout, always-on loads, and circuit-level drilldown.</div>
         </div>
-        {% endfor %}
-      </div>
+      </a>
     </div>
   </div>
 
