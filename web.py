@@ -5,6 +5,7 @@ Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
 from datetime import datetime
 from flask import Flask, jsonify, render_template_string, Response, request
+from jinja2 import select_autoescape
 from werkzeug.exceptions import RequestEntityTooLarge
 import json
 import logging
@@ -14,8 +15,12 @@ import energy
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+app.jinja_env.autoescape = select_autoescape(
+    enabled_extensions=("html", "htm", "xml"),
+    default_for_string=True,
+)
 
-VERSION = "1.7.3"
+VERSION = "1.7.4"
 
 
 def _read_monthly_budget() -> float:
@@ -214,6 +219,24 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .now-panel .ctx-item { flex: 1; min-width: 120px; }
 .now-panel .ctx-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--olive-400); }
 .now-panel .ctx-val { font-size: 1rem; font-weight: 600; color: var(--olive-100); }
+
+/* ── 24h sparkline strip ── */
+.spark-strip {
+  margin-top: 1rem; padding-top: 1rem;
+  border-top: 1px solid var(--olive-800);
+}
+.spark-labels {
+  display: flex; justify-content: space-between;
+  font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--olive-500); margin-bottom: 3px;
+}
+.spark-row { display: flex; gap: 1px; align-items: flex-end; height: 20px; }
+.spark-row-label {
+  font-size: 0.58rem; color: var(--olive-500); width: 44px;
+  flex-shrink: 0; line-height: 20px;
+}
+.spark-col { flex: 1; border-radius: 1px; min-width: 0; transition: opacity .15s; }
+.spark-col:hover { opacity: 0.7; cursor: default; }
 
 /* ── Circuit bar list ── */
 .circuit-bars { display: flex; flex-direction: column; gap: 8px; }
@@ -587,8 +610,6 @@ NAV_HTML = """
       <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/circuits" class="{{ 'active' if active_page == 'circuits' else '' }}">Circuits</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
-      <a href="/log" class="{{ 'active' if active_page == 'log' else '' }}">Log</a>
-      <a href="/import" class="{{ 'active' if active_page == 'import' else '' }}">Import</a>
       <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>
@@ -767,6 +788,7 @@ DASH_HTML = """
         const dayDate = new Date(d.date + 'T12:00:00'); // noon to avoid DST edge cases
         const diff = Math.round((dayDate - new Date(todayStr + 'T12:00:00')) / 86400000);
         const label = diff === 0 ? 'Today' : (diff === 1 ? 'Tomorrow' : DAYS[dayDate.getDay()]);
+        const dateLabel = dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const isToday = diff === 0;
 
         // 48-hour HVAC pressure: this day + next day
@@ -780,6 +802,7 @@ DASH_HTML = """
         el.className = 'wx-card' + (isToday ? ' wx-today' : '');
         el.innerHTML = `
           <div class="wx-label">${label}</div>
+          <div style="font-size:0.55rem; color:var(--olive-500); text-align:center; margin-top:-1px; letter-spacing:0.03em;">${dateLabel}</div>
           <div class="wx-icon">${icons[d.weathercode] || '🌡️'}</div>
           <div class="wx-hi">${Math.round(d.temp_max)}°</div>
           <div class="wx-lo">${Math.round(d.temp_min)}°</div>
@@ -878,10 +901,30 @@ DASH_HTML = """
         <div class="ctx-val">${{ "%.4f"|format(rate) }}/kWh</div>
       </div>
     </div>
+
+    <!-- 24h power usage timeline -->
+    <div class="spark-strip" id="spark-strip">
+      <div class="spark-labels">
+        <span>12 am</span><span>12 pm</span><span>now</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:4px;">
+        <div class="spark-row-label">Today</div>
+        <div class="spark-row" id="spark-today" style="flex:1;"></div>
+      </div>
+      <div style="display:flex; align-items:center; gap:4px; margin-top:2px;">
+        <div class="spark-row-label" style="color:var(--olive-700);">Yesterday</div>
+        <div class="spark-row" id="spark-yesterday" style="flex:1; opacity:0.4;"></div>
+      </div>
+    </div>
   </div>
 
   <!-- ── Active Circuits (multi-view) ─────────────────────────────────── -->
   <div class="section">
+    <!-- Two-column layout: circuit views left, metrics right -->
+    <div style="display:grid; grid-template-columns:1fr 320px; gap:20px; align-items:start;">
+
+    <!-- LEFT COLUMN: section head + all three views -->
+    <div>
     <div class="section-head">
       <h2>Active Circuits</h2>
       <div style="display:flex; align-items:center; gap:10px;">
@@ -912,16 +955,12 @@ DASH_HTML = """
       </div>
     </div>
 
-    <!-- Panel view: 50% panel + 50% metrics sidebar -->
+    <!-- Panel view: full-width breaker panel -->
     <div id="view-panel" style="display:none;">
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; align-items:start;">
-
-        <!-- Left: breaker panel -->
-        <div class="panel-wrap" style="margin-top:0;">
+      <div class="panel-wrap" style="margin-top:0;">
           {% if dash_mains %}
           <div class="panel-label">{{ panel_label }} — Live</div>
-          {% for m in dash_mains %}
-          {% if m.is_total %}
+          {% for m in dash_mains %}{% if m.is_total %}
           <div class="mains-card" style="margin-bottom:10px; background:var(--olive-700);">
             <div class="mc-leg">{{ m.label }}</div>
             <div class="mc-w" style="font-size:2.2rem;">{{ "%.0f"|format(m.watts) }} <span style="font-size:0.9rem;color:var(--olive-300)">W</span>
@@ -929,22 +968,19 @@ DASH_HTML = """
             </div>
             <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(m.cost_24h) }}</strong></div>
           </div>
+          {% endif %}{% endfor %}
+          {% set legs = [] %}{% for m in dash_mains %}{% if not m.is_total %}{% if legs.append(m) %}{% endif %}{% endif %}{% endfor %}
+          {% if legs %}
           <div class="panel-mains" style="margin-bottom:10px;">
-          {% elif loop.last %}
+            {% for m in legs %}
             <div class="mains-card">
               <div class="mc-leg">{{ m.label }}</div>
               <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
               <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
             </div>
+            {% endfor %}
           </div>
-          {% else %}
-            <div class="mains-card">
-              <div class="mc-leg">{{ m.label }}</div>
-              <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
-              <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
-            </div>
           {% endif %}
-          {% endfor %}
           <div class="panel-bus"><div class="panel-bus-line"></div><div class="panel-bus-label">Bus bar</div><div class="panel-bus-line"></div></div>
           {% endif %}
           {%- macro render_breaker(b) %}
@@ -987,8 +1023,8 @@ DASH_HTML = """
           </div>
         </div>
 
-        <!-- Right: 2-column metrics grid -->
-        <div style="display:flex; flex-direction:column; gap:10px;">
+        <!-- metrics moved to page-level right column — placeholder -->
+        <div style="display:none;">
 
           <!-- Row 1: $/hr now + 24h Avg with yesterday delta -->
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
@@ -1216,9 +1252,8 @@ DASH_HTML = """
           </div>
           {% endif %}
 
-        </div><!-- /right -->
-      </div>
-    </div>
+        </div><!-- /placeholder right (hidden) -->
+    </div><!-- /view-panel -->
 
     <!-- Grid view -->
     <div id="view-grid" style="display:none;">
@@ -1234,7 +1269,135 @@ DASH_HTML = """
         {% endfor %}
       </div>
     </div>
-  </div>
+    </div><!-- /left column -->
+
+    <!-- RIGHT COLUMN: metrics (always visible, true right side of screen) -->
+    <div style="display:flex; flex-direction:column; gap:10px; padding-top:3.2rem;">
+
+      <!-- Cost Right Now + Panel Balance -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="card">
+          <div class="card-label">Cost Now</div>
+          <div class="card-value">${{ "%.2f"|format(cost_per_hour) }}<span class="unit">/hr</span></div>
+          <div class="card-meta">{{ "%.0f"|format(current_watts) }} W</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Panel Balance</div>
+          {% if leg_a and leg_b %}
+          {% set leg_total = leg_a.watts + leg_b.watts %}
+          {% set pct_a = (leg_a.watts / (leg_total or 1) * 100)|round(0)|int %}
+          <div style="display:flex; gap:4px; align-items:center; margin:4px 0;">
+            <div style="flex:1; text-align:center;">
+              <div style="font-size:0.6rem; color:var(--text-light); text-transform:uppercase;">Leg A</div>
+              <div style="font-size:1rem; font-weight:700;">{{ "%.0f"|format(leg_a.watts) }}<span style="font-size:0.65rem; font-weight:400;"> W</span></div>
+            </div>
+            <div style="width:1px; background:var(--border); align-self:stretch;"></div>
+            <div style="flex:1; text-align:center;">
+              <div style="font-size:0.6rem; color:var(--text-light); text-transform:uppercase;">Leg B</div>
+              <div style="font-size:1rem; font-weight:700;">{{ "%.0f"|format(leg_b.watts) }}<span style="font-size:0.65rem; font-weight:400;"> W</span></div>
+            </div>
+          </div>
+          <div style="height:4px; background:var(--surface2); border-radius:3px; overflow:hidden;">
+            <div style="height:4px; width:{{ pct_a }}%; background:var(--olive-500); border-radius:3px;"></div>
+          </div>
+          {% else %}
+          <div class="card-value" style="font-size:1rem;">—</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- 24h + MTD -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="card">
+          <div class="card-label">24h Cost</div>
+          <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
+          <div class="card-meta">{{ "%.2f"|format(total_24h.total_kwh or 0) }} kWh</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Month-to-Date</div>
+          <div class="card-value">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) if month_comparison.this_month else '0.00' }}</div>
+          <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) if month_comparison.this_month else '0' }} kWh</div>
+        </div>
+      </div>
+
+      <!-- Peak today + 7-day trend -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="card">
+          <div class="card-label">Peak Today</div>
+          {% if peak_24h.peak_watts %}
+          <div class="card-value" style="font-size:1.3rem;">{{ "%.0f"|format(peak_24h.peak_watts) }}<span class="unit">W</span></div>
+          <div class="card-meta">{{ peak_24h.peak_time }}</div>
+          {% else %}
+          <div class="card-value" style="font-size:1.3rem;">—</div>
+          {% endif %}
+        </div>
+        <div class="card">
+          <div class="card-label">7-Day Trend</div>
+          <div class="card-value" style="font-size:1.3rem; color:{{ trend_color }};">{{ trend_dir }}</div>
+          <div class="card-meta">{{ "%.2f"|format(trend_avg) }} kWh/day</div>
+        </div>
+      </div>
+
+      <!-- Top active circuits -->
+      <div class="card">
+        <div class="card-label" style="margin-bottom:6px;">Top Active Circuits</div>
+        {% for c in top_circuits[:10] %}
+        <div style="display:flex; align-items:center; gap:6px; padding:3px 0;
+                    border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+          <div style="flex:1; font-size:0.78rem; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            <a href="/circuit/{{ c.channel_name|urlencode }}" style="color:inherit; text-decoration:none;">{{ c.channel_name }}</a>
+          </div>
+          <div style="font-size:0.78rem; font-weight:700; min-width:44px; text-align:right;">{{ "%.0f"|format(c.watts) }} W</div>
+          <div style="width:48px; height:4px; background:var(--surface2); border-radius:3px; flex-shrink:0;">
+            <div style="height:4px; border-radius:3px; width:{{ c.pct|round(1) }}%;
+              background:{{ '#f87171' if c.pct >= 40 else ('#fbbf24' if c.pct >= 20 else 'var(--olive-500)') }};"></div>
+          </div>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.8rem; font-style:italic;">No circuit data</div>
+        {% endfor %}
+      </div>
+
+      <!-- Standby loads -->
+      <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <div class="card-label">Standby Loads <span style="font-weight:400;">(1–50 W)</span></div>
+          {% if standby %}<div style="font-size:0.78rem; font-weight:700;">{{ standby|length }} · {{ "%.0f"|format(standby_total_w) }} W</div>{% endif %}
+        </div>
+        {% for s in standby[:5] %}
+        <div style="display:flex; justify-content:space-between; padding:2px 0;
+                    border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+          <span style="font-size:0.78rem;">{{ s.name }}</span>
+          <span style="font-size:0.78rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.78rem; font-style:italic;">None detected</div>
+        {% endfor %}
+        {% if standby|length > 5 %}<div style="font-size:0.72rem; color:var(--text-light); margin-top:3px;">+ {{ standby|length - 5 }} more</div>{% endif %}
+      </div>
+
+      <!-- Biggest 24h load -->
+      {% if biggest_circuit %}
+      <div class="card">
+        <div class="card-label">Biggest 24h Load</div>
+        <div style="display:flex; align-items:baseline; justify-content:space-between; margin-top:4px;">
+          <a href="/circuit/{{ biggest_circuit.channel_name|urlencode }}"
+             style="font-size:1rem; font-weight:700; color:var(--text); text-decoration:none;">
+            {{ biggest_circuit.channel_name }}
+          </a>
+          <span style="font-size:0.78rem; color:var(--text-light);">{{ "%.0f"|format(biggest_circuit.pct or 0) }}%</span>
+        </div>
+        <div style="height:4px; background:var(--surface2); border-radius:3px; margin-top:6px;">
+          <div style="height:4px; border-radius:3px; width:{{ biggest_circuit.pct|round(1) }}%;
+            background:{{ '#f87171' if biggest_circuit.pct > 40 else ('#fbbf24' if biggest_circuit.pct > 20 else 'var(--olive-500)') }};"></div>
+        </div>
+        <div style="font-size:0.72rem; color:var(--text-light); margin-top:2px;">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh</div>
+      </div>
+      {% endif %}
+
+    </div><!-- /right column -->
+    </div><!-- /two-col layout -->
+  </div><!-- /section -->
 
   <style>
   .view-toggle { display:flex; gap:3px; background:var(--surface2); border-radius:8px; padding:3px; }
@@ -1255,9 +1418,6 @@ DASH_HTML = """
         document.getElementById('view-'+n).style.display = n===v ? '' : 'none';
         document.querySelector('[data-view="'+n+'"]').classList.toggle('active', n===v);
       });
-      // Panel view has inline KPI sidebar — hide the standalone 24h section to avoid duplication
-      const s24 = document.getElementById('section-24h');
-      if (s24) s24.style.display = v === 'panel' ? 'none' : '';
       localStorage.setItem('circuitView', v);
     }
     document.querySelectorAll('.vt-btn').forEach(btn => {
@@ -1435,6 +1595,49 @@ oliveChart('hourlyChart',
 
 // Auto-refresh the page every 60 s so "right now" stays current
 setTimeout(() => location.reload(), 60000);
+
+// ── 24h sparkline ────────────────────────────────────────────────────────────
+(function() {
+  const currentHour = new Date().getHours();
+  fetch('/api/hourly-sparkline').then(r => r.json()).then(data => {
+    function renderRow(elId, hours, maxVal, isToday) {
+      const el = document.getElementById(elId);
+      if (!el) return;
+      el.innerHTML = '';
+      hours.forEach((kwh, h) => {
+        if (isToday && h > currentHour) return;
+        const pct = maxVal > 0 ? kwh / maxVal : 0;
+        const col = document.createElement('div');
+        col.className = 'spark-col';
+        col.style.height = Math.max(1, Math.round(pct * 20)) + 'px';
+        // olive → amber → red colour ramp
+        let r, g, b;
+        if (pct < 0.5) {
+          const t = pct / 0.5;
+          r = Math.round(100 + t * (200 - 100));
+          g = Math.round(90  + t * (140 - 90));
+          b = Math.round(40  + t * (20  - 40));
+        } else {
+          const t = (pct - 0.5) / 0.5;
+          r = Math.round(200 + t * (230 - 200));
+          g = Math.round(140 - t * 120);
+          b = Math.round(20  - t * 15);
+        }
+        col.style.background = `rgb(${r},${g},${b})`;
+        const label = h === 0 ? '12am' : h < 12 ? h+'am' : h === 12 ? '12pm' : (h-12)+'pm';
+        col.title = `${label} — ${kwh.toFixed(3)} kWh`;
+        el.appendChild(col);
+      });
+    }
+    const allVals = [...data.today, ...data.yesterday].filter(v => v > 0);
+    const maxVal  = allVals.length ? Math.max(...allVals) : 1;
+    renderRow('spark-today',     data.today,     maxVal, true);
+    renderRow('spark-yesterday', data.yesterday, maxVal, false);
+  }).catch(() => {
+    const s = document.getElementById('spark-strip');
+    if (s) s.style.display = 'none';
+  });
+})();
 </script>
 """
 
@@ -2131,19 +2334,30 @@ def index():
         except Exception:
             return False
 
-    # Circuit bars — exclude Main/Balance, annotate with live watts
+    # Circuit bars — use 24h summary so ALL named circuits appear, not just those
+    # active in the current 60-min window; annotate each with live watts.
     latest_map = {r["channel_name"]: r["usage_kwh"] for r in ctx["latest"]}
     latest_ts_map = {r["channel_name"]: r.get("timestamp") for r in ctx["latest"]}
+    _sum24_tmp = energy.get_summary(24)
+    _sum24_map = {r["channel_name"]: r for r in _sum24_tmp}
+    _ctx_map   = {c["channel_name"]: c for c in ctx["circuits"]}
     top_circuits = []
-    for c in ctx["circuits"]:
-        name = c["channel_name"]
-        if name in _MAINS_NAMES or name in ("Balance",) or str(name).isdigit():
+    seen_names = set()
+    for name, row in {**_sum24_map, **_ctx_map}.items():
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+        if name in _MAINS_NAMES or name in ("Balance",) or (len(str(name)) >= 5 and str(name).isdigit()):
             continue
         watts_now = _watts_estimate(latest_map.get(name, 0))
-        top_circuits.append({**c, "watts": watts_now,
-                              "pct": (c["kwh"] / (ctx["current_kwh"] or 1)) * 100})
+        kwh_win   = _ctx_map[name]["kwh"] if name in _ctx_map else 0
+        top_circuits.append({
+            "channel_name": name,
+            "kwh": kwh_win,
+            "watts": watts_now,
+            "pct": (kwh_win / (ctx["current_kwh"] or 1)) * 100,
+        })
     top_circuits.sort(key=lambda x: x["watts"], reverse=True)
-    top_circuits = top_circuits[:12]
 
     # 24h circuit breakdown (meta channels already excluded by get_summary)
     summary_24 = energy.get_summary(24)
@@ -2154,7 +2368,7 @@ def index():
     circuits_24 = [r for r in summary_24
                    if r["channel_name"] not in _MAINS_NAMES
                    and r["channel_name"] not in _SKIP_NAMES
-                   and not str(r["channel_name"]).isdigit()]
+                   and not (len(str(r["channel_name"])) >= 5 and str(r["channel_name"]).isdigit())]
     total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
     for r in circuits_24:
         r["pct"] = r["total_kwh"] / total_kwh_24 * 100
@@ -2194,7 +2408,7 @@ def index():
     layout   = {row["slot"]: row for row in energy.get_panel_layout()}
     ordered  = sorted(
         [n for n in sum_24h_map if n not in _MAINS_NAMES and n not in _SKIP_NAMES
-         and not str(n).isdigit()],
+         and not (len(str(n)) >= 5 and str(n).isdigit())],
         key=lambda n: (n.startswith("Circuit_"), n)
     )
     if not layout:
@@ -2281,7 +2495,7 @@ def index():
         {"name": name, "watts": _watts_estimate(kwh)}
         for name, kwh in latest_map.items()
         if name not in _MAINS_NAMES and name not in _SKIP_NAMES
-        and not str(name).isdigit()
+        and not (len(str(name)) >= 5 and str(name).isdigit())
         and 1 <= _watts_estimate(kwh) <= 50
     ]
     standby.sort(key=lambda x: x["watts"], reverse=True)
@@ -2393,7 +2607,7 @@ def circuits_page():
     all_circuits = sorted([
         n for n in sum_24h
         if n not in _MAINS_NAMES and n not in _SKIP_NAMES
-           and not str(n).isdigit()
+           and not (len(str(n)) >= 5 and str(n).isdigit())
     ], key=lambda n: (n.startswith("Circuit_"), n))
 
     # If no layout saved yet, auto-assign circuits to slots in order
@@ -2697,6 +2911,40 @@ def api_latest():
 def api_context():
     return jsonify(energy.get_now_vs_context(60))
 
+@app.route("/api/hourly-sparkline")
+def api_hourly_sparkline():
+    """Hourly kWh for today + yesterday (24 buckets each), preferring Main over Mains_A+B."""
+    from datetime import date, timedelta as td
+    conn = energy._connect()
+    c = conn.cursor()
+    results = {}
+    for label, day_offset in [("today", 0), ("yesterday", 1)]:
+        day   = date.today() - td(days=day_offset)
+        start = f"{day}T00:00:00"
+        end   = f"{day}T23:59:59"
+        c.execute("""
+            SELECT strftime('%H', timestamp) as hr, channel_name, SUM(usage_kwh)
+            FROM readings
+            WHERE timestamp BETWEEN ? AND ?
+              AND channel_name IN ('Main','Mains_A','Mains_B')
+              AND device_gid != ?
+            GROUP BY hr, channel_name ORDER BY hr
+        """, (start, end, energy._GHOST_DEVICE))
+        by_hr = {}
+        for row in c.fetchall():
+            h = int(row[0]); ch = row[1]; v = row[2] or 0
+            if h not in by_hr:
+                by_hr[h] = {"Main": 0, "Legs": 0}
+            if ch == "Main":
+                by_hr[h]["Main"] += v
+            else:
+                by_hr[h]["Legs"] += v
+        hours = [round((by_hr[h].get("Main") or by_hr[h].get("Legs") or 0), 4)
+                 if h in by_hr else 0 for h in range(24)]
+        results[label] = hours
+    conn.close()
+    return jsonify(results)
+
 @app.route("/api/trend")
 def api_trend():
     return jsonify(energy.get_trend(14))
@@ -2851,6 +3099,16 @@ SETTINGS_HTML = """
         <span class="sys-dot soon"></span>
         <div><div class="sys-name">NUTS / UPS</div><div class="sys-sub">ESP Remote Monitor</div></div>
       </button>
+
+      <div class="sys-nav-group" style="margin-top:0.4rem;">Tools</div>
+      <button class="sys-link" onclick="showPanel('import',this)">
+        <span class="sys-dot" style="background:var(--olive-500);"></span>
+        <div><div class="sys-name">Import CSV</div><div class="sys-sub">Load historical data</div></div>
+      </button>
+      <a class="sys-link" href="/log" style="text-decoration:none;">
+        <span class="sys-dot" id="sidebar-log-dot"></span>
+        <div><div class="sys-name">Poller Log</div><div class="sys-sub">Connection &amp; status</div></div>
+      </a>
     </div>
 
     <!-- ── Content panels ── -->
@@ -3238,6 +3496,35 @@ SETTINGS_HTML = """
         </div>
       </div><!-- /panel-nuts -->
 
+      <!-- ════════════════════════════════ IMPORT CSV ════════════════════════════════ -->
+      <div id="panel-import" class="sys-panel">
+        <div class="sys-panel-head">
+          <h3>Import CSV</h3>
+          <span class="int-badge ok">Available</span>
+        </div>
+        <div class="card" style="margin-bottom:1rem;">
+          <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
+            Select one or more <code>.csv</code> files exported from the Emporia app
+            (any resolution: 1MIN, 15MIN, 1H, 1DAY). Duplicate rows are skipped automatically.
+          </p>
+          <form id="import-form" enctype="multipart/form-data">
+            <label style="display:block; margin-bottom:0.5rem; font-size:0.82rem; font-weight:600;">CSV file(s)</label>
+            <input type="file" id="csv-files" name="files" multiple accept=".csv"
+                   style="display:block; margin-bottom:1rem; font-size:0.9rem;">
+            <button type="submit" class="btn-primary" id="import-btn">Import</button>
+          </form>
+          <div id="import-results" style="margin-top:1.25rem;"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-bottom:0.75rem; font-size:1rem;">How to export from Emporia</h3>
+          <ol style="padding-left:1.2rem; line-height:1.8; font-size:0.88rem; color:var(--text-light);">
+            <li>Open the Emporia app on iOS or Android.</li>
+            <li>Tap <strong>Usage</strong>, pick a time range, then tap <strong>Export</strong>.</li>
+            <li>Choose <em>CSV</em> format and save or share the file here.</li>
+          </ol>
+        </div>
+      </div><!-- /panel-import -->
+
     </div><!-- /content -->
   </div><!-- /settings-wrap -->
 </div>
@@ -3398,6 +3685,39 @@ function savePanelDisplay() {
     m.style.display='inline'; setTimeout(()=>m.style.display='none', 4000);
   });
 }
+
+// ── Import CSV form (embedded in Settings) ───────────────────────────────────
+const importForm = document.getElementById('import-form');
+if (importForm) {
+  importForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const files = document.getElementById('csv-files').files;
+    const btn   = document.getElementById('import-btn');
+    const out   = document.getElementById('import-results');
+    if (!files.length) { out.innerHTML = '<span style="color:var(--red)">Select at least one CSV file.</span>'; return; }
+    btn.disabled = true; btn.textContent = 'Importing…';
+    out.innerHTML = '';
+    let html = '';
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('device_gid', '551741');
+      try {
+        const r  = await fetch('/api/import-csv', { method: 'POST', body: fd });
+        const d  = await r.json();
+        if (d.error) {
+          html += `<div style="color:var(--red); margin-bottom:4px;">${file.name}: ${d.error}</div>`;
+        } else {
+          html += `<div style="color:var(--green); margin-bottom:4px;">✓ ${file.name}: imported ${d.imported}, skipped ${d.skipped}</div>`;
+        }
+      } catch(err) {
+        html += `<div style="color:var(--red); margin-bottom:4px;">${file.name}: network error</div>`;
+      }
+    }
+    out.innerHTML = html;
+    btn.disabled = false; btn.textContent = 'Import';
+  });
+}
 </script>
 """
 
@@ -3410,7 +3730,7 @@ def panel_edit_page():
     all_channels = sorted([
         r["channel_name"] for r in energy.get_summary(24 * 30)
         if r["channel_name"] not in _MAINS_NAMES and r["channel_name"] not in _SKIP_NAMES
-           and not str(r["channel_name"]).isdigit()
+           and not (len(str(r["channel_name"])) >= 5 and str(r["channel_name"]).isdigit())
     ])
     breakers = []
     for slot in range(1, panel_slots + 1):

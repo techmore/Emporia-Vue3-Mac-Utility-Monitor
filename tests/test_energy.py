@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import energy
+import web
 
 
 class EnergyTests(unittest.TestCase):
@@ -90,6 +91,12 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(first["fixed"], 1)
         self.assertEqual(second["fixed"], 0)
         self.assertEqual(tuple(row), (1.0, 0.1))
+
+    def test_render_template_string_autoescapes_user_content(self):
+        with web.app.app_context():
+            rendered = web._render("{{ value }}", value="<script>alert(1)</script>")
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", rendered)
+        self.assertNotIn("<script>alert(1)</script>", rendered)
 
     def test_queries_default_to_primary_device_gid(self):
         conn = energy._connect()
