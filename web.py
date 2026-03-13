@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.40"
+VERSION = "1.7.41"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -263,7 +263,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 0.45rem;
+  margin-bottom: 0.28rem;
 }
 .banner-chart-title {
   font-size: 0.66rem;
@@ -384,21 +384,21 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   margin-bottom: 1.25rem;
 }
 .panel-service-total {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 .panel-service-legs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 .mains-card {
   background: var(--olive-800);
-  border-radius: 10px; padding: 1rem 1.25rem;
+  border-radius: 10px; padding: 0.45rem 0.75rem;
 }
-.mains-card .mc-leg  { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--olive-400); margin-bottom: 4px; }
-.mains-card .mc-w    { font-family: 'Instrument Serif', serif; font-size: 2rem; line-height: 1; color: var(--olive-50); }
-.mains-card .mc-kwh  { font-size: 0.78rem; color: var(--olive-300); margin-top: 4px; }
+.mains-card .mc-leg  { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--olive-400); margin-bottom: 2px; }
+.mains-card .mc-w    { font-family: 'Instrument Serif', serif; font-size: 1.35rem; line-height: 1; color: var(--olive-50); }
+.mains-card .mc-kwh  { font-size: 0.66rem; color: var(--olive-300); margin-top: 2px; }
 .panel-breaker-head {
   margin-bottom: 1rem;
 }
@@ -408,7 +408,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   letter-spacing: 0.12em;
   color: var(--olive-500);
   text-align: center;
-  margin-bottom: 0.45rem;
+  margin-bottom: 0.28rem;
 }
 .panel-breaker-label {
   font-size: 0.6rem;
