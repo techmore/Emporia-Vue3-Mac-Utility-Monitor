@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.32"
+VERSION = "1.7.33"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1688,7 +1688,7 @@ REPORTS_HTML = """
       <div class="eyebrow">Analysis</div>
       <h1 style="margin:0.15rem 0 0.25rem;">Reports</h1>
       <p style="margin:0; color:var(--text-light); max-width:720px;">
-        Historical usage, cost comparisons, standby loads, and pattern analysis moved here so the dashboard stays glanceable.
+        Historical usage, cost comparisons, and recommendations live here so the dashboard stays glanceable.
       </p>
     </div>
   </div>
@@ -1710,9 +1710,9 @@ REPORTS_HTML = """
       <div class="card-meta">{{ peak_24h.peak_time or 'no data yet' }}</div>
     </div>
     <div class="card">
-      <div class="card-label">Standby Loads</div>
-      <div class="card-value">{{ standby|length }}</div>
-      <div class="card-meta">{{ "%.0f"|format(standby_total_w) }} W always-on</div>
+      <div class="card-label">Recommendation Reviews</div>
+      <div class="card-value">{{ recommendations|length }}</div>
+      <div class="card-meta">budget, safety, and standby checks</div>
     </div>
   </div>
 
@@ -1822,30 +1822,7 @@ REPORTS_HTML = """
       </div>
       {% endif %}
 
-      {% if biggest_circuit %}
-      <div class="card">
-        <div class="card-label">Biggest 24h Load</div>
-        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px;">
-          <a href="/circuit/{{ biggest_circuit.channel_name|urlencode }}" style="font-size:1.1rem; font-weight:700; color:var(--text); text-decoration:none;">{{ biggest_circuit.channel_name }}</a>
-          <span style="font-size:0.82rem; color:var(--text-light);">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh · {{ "%.0f"|format(biggest_circuit.pct or 0) }}%</span>
-        </div>
-      </div>
-      {% endif %}
 
-      <div class="card">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-          <div class="card-label">Standby Loads</div>
-          <div style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(standby_total_w) }} W total</div>
-        </div>
-        {% for s in standby[:10] %}
-        <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
-          <span style="font-size:0.82rem;">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby loads detected</div>
-        {% endfor %}
-      </div>
     </div>
 
     <div style="display:flex; flex-direction:column; gap:14px;">
@@ -2346,6 +2323,43 @@ CIRCUIT_HTML = """
 
   <div class="section">
     <div class="section-head">
+      <h2>Load Review</h2>
+      <span class="section-sub">Biggest daily load and always-on circuits moved from the dashboard and reports</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start;">
+      <div class="card">
+        <div class="card-label">Biggest 24h Load</div>
+        {% if biggest_circuit %}
+        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-top:4px;">
+          <a href="/circuit/{{ biggest_circuit.channel_name|urlencode }}" style="font-size:1.1rem; font-weight:700; color:var(--text); text-decoration:none;">{{ biggest_circuit.channel_name }}</a>
+          <span style="font-size:0.82rem; color:var(--text-light);">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh · {{ "%.0f"|format(biggest_circuit.pct or 0) }}%</span>
+        </div>
+        <div style="height:5px; background:var(--surface2); border-radius:3px; margin-top:6px;">
+          <div style="height:5px; border-radius:3px; width:{{ biggest_circuit.pct|round(1) }}%; background:{{ '#f87171' if biggest_circuit.pct > 40 else ('#fbbf24' if biggest_circuit.pct > 20 else 'var(--olive-500)') }};"></div>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic; margin-top:4px;">No 24-hour circuit data yet.</div>
+        {% endif %}
+      </div>
+      <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <div class="card-label">Standby Loads</div>
+          <div style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(standby_total_w) }} W total</div>
+        </div>
+        {% for s in standby_circuits[:10] %}
+        <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+          <span style="font-size:0.82rem;">{{ s.name }}</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby loads detected</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
       <h2>Analysis</h2>
       <span class="section-sub">Next places to drill down</span>
     </div>
@@ -2649,6 +2663,43 @@ TRENDS_HTML = """
         </div>
         {% else %}
         <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2>Load Review</h2>
+      <span class="section-sub">Biggest daily load and always-on circuits moved from the dashboard and reports</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start;">
+      <div class="card">
+        <div class="card-label">Biggest 24h Load</div>
+        {% if biggest_circuit %}
+        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-top:4px;">
+          <a href="/circuit/{{ biggest_circuit.channel_name|urlencode }}" style="font-size:1.1rem; font-weight:700; color:var(--text); text-decoration:none;">{{ biggest_circuit.channel_name }}</a>
+          <span style="font-size:0.82rem; color:var(--text-light);">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh · {{ "%.0f"|format(biggest_circuit.pct or 0) }}%</span>
+        </div>
+        <div style="height:5px; background:var(--surface2); border-radius:3px; margin-top:6px;">
+          <div style="height:5px; border-radius:3px; width:{{ biggest_circuit.pct|round(1) }}%; background:{{ '#f87171' if biggest_circuit.pct > 40 else ('#fbbf24' if biggest_circuit.pct > 20 else 'var(--olive-500)') }};"></div>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic; margin-top:4px;">No 24-hour circuit data yet.</div>
+        {% endif %}
+      </div>
+      <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <div class="card-label">Standby Loads</div>
+          <div style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(standby_total_w) }} W total</div>
+        </div>
+        {% for s in standby_circuits[:10] %}
+        <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
+          <span style="font-size:0.82rem;">{{ s.name }}</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+        </div>
+        {% else %}
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby loads detected</div>
         {% endfor %}
       </div>
     </div>
@@ -3885,6 +3936,7 @@ def trends_page():
         safety_breakers=safety_breakers,
         top_live_circuits=top_live_circuits,
         standby_circuits=standby_circuits,
+        standby_total_w=sum(item["watts"] for item in standby_circuits),
         **com,
     )
 

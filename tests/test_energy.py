@@ -393,8 +393,8 @@ class EnergyTests(unittest.TestCase):
         client = web.app.test_client()
 
         expectations = {
-            "/reports": ["24h Cost", "Peak Today", "Biggest 24h Load", "Next Best Actions"],
-            "/trends": ["Operational Summary", "Action Center", "24-Hour Summary", "Cost & Budget"],
+            "/reports": ["24h Cost", "Peak Today", "Next Best Actions"],
+            "/trends": ["Operational Summary", "Action Center", "24-Hour Summary", "Cost & Budget", "Load Review", "Biggest 24h Load", "Standby Loads"],
             "/guide": ["First-Time Setup", "Metric Meanings", "Panel view"],
             "/settings": ["Settings", "Reports & Recommendations", "Circuits", "Import", "Aqara", "Log"],
         }
