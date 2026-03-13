@@ -22,7 +22,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.3"
+VERSION = "1.7.4"
 
 
 def _read_monthly_budget() -> float:
@@ -2526,186 +2526,191 @@ _MAINS_NAMES = {"Mains_A", "Mains_B", "Mains_C", "Main"}
 _SKIP_NAMES  = {"Balance"}
 
 
-@app.route("/")
-def index():
-    com = _common()
+def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
+    if not reading or not reading.get("timestamp"):
+        return False
+    try:
+        age = (datetime.now() - datetime.fromisoformat(reading["timestamp"][:19])).total_seconds()
+        return age < max_age_secs
+    except Exception:
+        return False
+
+
+def _load_panel_display_settings() -> dict:
+    try:
+        with open("settings.json") as f:
+            return json.load(f).get("panel_display", {})
+    except Exception:
+        return {}
+
+
+def _build_dashboard_context(panel_label: str) -> dict:
     ctx = energy.get_now_vs_context(60)
     trend = energy.get_trend(14)
+    latest_map = {r["channel_name"]: r["usage_kwh"] for r in ctx["latest"]}
+    summary_24 = energy.get_summary(24)
+    main_24h = energy.get_main_total(24)
+    total_24h = main_24h or {
+        "total_kwh": sum(r["total_kwh"] for r in summary_24),
+        "total_cents": sum(r["total_cents"] for r in summary_24),
+    }
 
-    # Current watts from the most recent poll
     main_now = next((r for r in ctx["latest"] if r["channel_name"] == "Main"), None)
     current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
-
-    # Freshness: is the latest reading less than 5 minutes old?
-    def _reading_fresh(r: dict, max_age_secs: int = 300) -> bool:
-        if not r or not r.get("timestamp"):
-            return False
-        try:
-            age = (datetime.now() - datetime.fromisoformat(r["timestamp"][:19])).total_seconds()
-            return age < max_age_secs
-        except Exception:
-            return False
-
-    # Circuit bars — exclude Main/Balance, annotate with live watts
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in ctx["latest"]}
-    latest_ts_map = {r["channel_name"]: r.get("timestamp") for r in ctx["latest"]}
     top_circuits = []
-    for c in ctx["circuits"]:
-        name = c["channel_name"]
-        if name in _MAINS_NAMES or name in ("Balance",) or str(name).isdigit():
+    for row in ctx["circuits"]:
+        name = row["channel_name"]
+        if name in _MAINS_NAMES or name in _SKIP_NAMES or str(name).isdigit():
             continue
-        watts_now = _watts_estimate(latest_map.get(name, 0))
-        top_circuits.append({**c, "watts": watts_now,
-                              "pct": (c["kwh"] / (ctx["current_kwh"] or 1)) * 100})
-    top_circuits.sort(key=lambda x: x["watts"], reverse=True)
+        watts = _watts_estimate(latest_map.get(name, 0))
+        top_circuits.append({
+            **row,
+            "watts": watts,
+            "pct": (row["kwh"] / (ctx["current_kwh"] or 1)) * 100,
+        })
+    top_circuits.sort(key=lambda row: row["watts"], reverse=True)
     top_circuits = top_circuits[:12]
     top_live_circuits = [
-        {"channel_name": c["channel_name"], "display_name": c["channel_name"], "watts": c["watts"]}
-        for c in top_circuits
+        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": row["watts"]}
+        for row in top_circuits
     ]
 
-    # 24h circuit breakdown (meta channels already excluded by get_summary)
-    summary_24 = energy.get_summary(24)
-    # Authoritative 24h total from Main channel on real device (no double-counting)
-    main_24h   = energy.get_main_total(24)
-    total_24h  = main_24h or {"total_kwh": sum(r["total_kwh"] for r in summary_24),
-                               "total_cents": sum(r["total_cents"] for r in summary_24)}
-    circuits_24 = [r for r in summary_24
-                   if r["channel_name"] not in _MAINS_NAMES
-                   and r["channel_name"] not in _SKIP_NAMES
-                   and not str(r["channel_name"]).isdigit()]
+    circuits_24 = [
+        row for row in summary_24
+        if row["channel_name"] not in _MAINS_NAMES
+        and row["channel_name"] not in _SKIP_NAMES
+        and not str(row["channel_name"]).isdigit()
+    ]
     total_kwh_24 = (total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1)
-    for r in circuits_24:
-        r["pct"] = r["total_kwh"] / total_kwh_24 * 100
-    biggest_circuit = max(circuits_24, key=lambda r: r["total_kwh"]) if circuits_24 else None
+    for row in circuits_24:
+        row["pct"] = row["total_kwh"] / total_kwh_24 * 100
+    biggest_circuit = max(circuits_24, key=lambda row: row["total_kwh"]) if circuits_24 else None
     if biggest_circuit:
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
 
     monthly_projected = (total_24h["total_kwh"] or 0) * 30 * RATE
     budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
 
-    # Mains cards + breaker panel for dashboard panel view
-    sum_24h_map = {r["channel_name"]: r for r in summary_24}
+    summary_24_map = {row["channel_name"]: row for row in summary_24}
     mains_24h_map = {
-        r["channel_name"]: r
-        for r in energy.get_channel_totals(["Mains_A", "Mains_B", "Mains_C"], 24)
+        row["channel_name"]: row
+        for row in energy.get_channel_totals(["Mains_A", "Mains_B", "Mains_C"], 24)
     }
-    # Mains: Total first (from live Main channel), then Leg A / Leg B
     leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
-    dash_mains = []
-    # Total row — authoritative Main channel (no double-counting)
-    total_watts = _watts_estimate(latest_map.get("Main", 0)) or (
-        sum(_watts_estimate(latest_map.get(n, 0)) for n in ("Mains_A","Mains_B")))
-    dash_mains.append({
-        "label": "Total", "is_total": True,
-        "watts": total_watts,
+    dash_mains = [{
+        "label": "Total",
+        "is_total": True,
+        "watts": _watts_estimate(latest_map.get("Main", 0)) or sum(
+            _watts_estimate(latest_map.get(name, 0)) for name in ("Mains_A", "Mains_B")
+        ),
         "kwh_24h": (main_24h or {}).get("total_kwh", 0),
         "cost_24h": (main_24h or {}).get("total_cents", 0) / 100,
-    })
+    }]
     for name in ("Mains_A", "Mains_B", "Mains_C"):
         if name not in mains_24h_map:
             continue
-        r = mains_24h_map[name]
+        row = mains_24h_map[name]
         dash_mains.append({
-            "label":    leg_labels[name],
+            "label": leg_labels[name],
             "is_total": False,
-            "watts":    _watts_estimate(latest_map.get(name, 0)),
-            "kwh_24h":  r["total_kwh"],
-            "cost_24h": r["total_cents"] / 100,
+            "watts": _watts_estimate(latest_map.get(name, 0)),
+            "kwh_24h": row["total_kwh"],
+            "cost_24h": row["total_cents"] / 100,
         })
 
-    layout   = {row["slot"]: row for row in energy.get_panel_layout()}
-    ordered  = sorted(
-        [n for n in sum_24h_map if n not in _MAINS_NAMES and n not in _SKIP_NAMES
-         and not str(n).isdigit()],
-        key=lambda n: (n.startswith("Circuit_"), n)
+    layout = {row["slot"]: row for row in energy.get_panel_layout()}
+    ordered = sorted(
+        [
+            name for name in summary_24_map
+            if name not in _MAINS_NAMES and name not in _SKIP_NAMES and not str(name).isdigit()
+        ],
+        key=lambda name: (name.startswith("Circuit_"), name),
     )
     if not layout:
-        for i, name in enumerate(ordered):
-            layout[i + 1] = {"slot": i+1, "channel_name": name,
-                             "label": None, "note": None, "amps": None, "poles": 1}
-    max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in ordered), default=1) or 1
-    # Identify top-load circuits for the "peak user" badge
-    _live_watts = {n: _watts_estimate(latest_map.get(n, 0)) for n in ordered}
-    _sorted_watts = sorted(_live_watts.values(), reverse=True)
-    _peak_threshold = _sorted_watts[2] if len(_sorted_watts) >= 3 else (_sorted_watts[0] if _sorted_watts else 0)
+        for i, name in enumerate(ordered, start=1):
+            layout[i] = {
+                "slot": i,
+                "channel_name": name,
+                "label": None,
+                "note": None,
+                "amps": None,
+                "poles": 1,
+            }
+    max_w = max((_watts_estimate(latest_map.get(name, 0)) for name in ordered), default=1) or 1
+    live_watts = {name: _watts_estimate(latest_map.get(name, 0)) for name in ordered}
+    sorted_watts = sorted(live_watts.values(), reverse=True)
+    peak_threshold = sorted_watts[2] if len(sorted_watts) >= 3 else (sorted_watts[0] if sorted_watts else 0)
     dash_breakers = []
     for slot in range(1, max(len(ordered) + 1, max(layout.keys(), default=0) + 1)):
-        row   = layout.get(slot, {})
-        name  = row.get("channel_name")
+        row = layout.get(slot, {})
+        name = row.get("channel_name")
         configured_amps = row.get("amps")
         rated_amps = configured_amps or 15
         poles = row.get("poles") or 1
         voltage = 240 if poles == 2 else 120
         watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
-        bar   = min(100, watts / max_w * 100)
-        # Safety zone vs rated breaker amps
+        bar = min(100, watts / max_w * 100)
         if rated_amps and rated_amps > 0 and watts > 0:
-            amps_now  = watts / voltage
+            amps_now = watts / voltage
             safe_limit_amps = rated_amps * 0.8
-            load_pct  = amps_now / rated_amps * 100
-            safe_pct  = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
+            load_pct = amps_now / rated_amps * 100
+            safe_pct = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
             if safe_pct >= 100:
-                sz_cls = "sz-danger";   load_cls = "load-danger";   fill_cls = "fill-danger"
+                sz_cls, load_cls, fill_cls = "sz-danger", "load-danger", "fill-danger"
             elif safe_pct >= 80:
-                sz_cls = "sz-caution";  load_cls = "load-caution";  fill_cls = "fill-caution"
+                sz_cls, load_cls, fill_cls = "sz-caution", "load-caution", "fill-caution"
             elif safe_pct >= 60:
-                sz_cls = "sz-moderate"; load_cls = "load-moderate"; fill_cls = "fill-moderate"
+                sz_cls, load_cls, fill_cls = "sz-moderate", "load-moderate", "fill-moderate"
             else:
-                sz_cls = "";            load_cls = "load-normal";   fill_cls = "fill-normal"
-            load_bar_w = min(100, load_pct)  # % width of load bar
+                sz_cls, load_cls, fill_cls = "", "load-normal", "fill-normal"
+            load_bar_w = min(100, load_pct)
             safe_bar_pct = min(100, safe_pct)
             safe_cls = "danger" if safe_pct >= 100 else ("warn" if safe_pct >= 80 else "")
             load_label = f"{amps_now:.1f}/{rated_amps}A"
         else:
-            sz_cls = ""; load_cls = ""; fill_cls = "fill-normal"
-            load_bar_w = 0; load_label = ""; safe_bar_pct = 0; safe_cls = ""
-        is_peak = bool(name and watts >= _peak_threshold and watts > 0)
+            sz_cls, load_cls, fill_cls = "", "", "fill-normal"
+            load_bar_w, load_label, safe_bar_pct, safe_cls = 0, "", 0, ""
         cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         dash_breakers.append({
-            "slot": slot, "channel_name": name,
+            "slot": slot,
+            "channel_name": name,
             "label": row.get("label") or name or "—",
-            "note": row.get("note"), "amps": configured_amps or 15, "poles": poles,
-            "watts": watts, "bar_pct": bar, "cls": cls.strip(),
-            "load_cls": load_cls, "fill_cls": fill_cls,
-            "load_bar_w": load_bar_w, "load_label": load_label,
-            "safe_bar_pct": safe_bar_pct, "safe_cls": safe_cls,
-            "is_peak": is_peak,
+            "note": row.get("note"),
+            "amps": configured_amps or 15,
+            "poles": poles,
+            "watts": watts,
+            "bar_pct": bar,
+            "cls": cls.strip(),
+            "load_cls": load_cls,
+            "fill_cls": fill_cls,
+            "load_bar_w": load_bar_w,
+            "load_label": load_label,
+            "safe_bar_pct": safe_bar_pct,
+            "safe_cls": safe_cls,
+            "is_peak": bool(name and watts >= peak_threshold and watts > 0),
         })
 
-    # Panel column invert — read from settings.json
-    import json as _json
-    _cfg = {}
-    try:
-        with open("settings.json") as _f:
-            _cfg = _json.load(_f)
-    except Exception:
-        pass
-    _pinv = _cfg.get("panel_display", {})
-    _invert_left  = _pinv.get("invert_left",  False)
-    _invert_right = _pinv.get("invert_right", False)
-    breakers_left  = [b for b in dash_breakers if b["slot"] % 2 == 1]
-    breakers_right = [b for b in dash_breakers if b["slot"] % 2 == 0]
-    if _invert_left:  breakers_left  = list(reversed(breakers_left))
-    if _invert_right: breakers_right = list(reversed(breakers_right))
+    panel_display = _load_panel_display_settings()
+    breakers_left = [row for row in dash_breakers if row["slot"] % 2 == 1]
+    breakers_right = [row for row in dash_breakers if row["slot"] % 2 == 0]
+    if panel_display.get("invert_left", False):
+        breakers_left = list(reversed(breakers_left))
+    if panel_display.get("invert_right", False):
+        breakers_right = list(reversed(breakers_right))
 
     peak_usage = energy.get_peak_usage()
-    for h in peak_usage["peak_hours"]:
-        h["hour_label"] = _format_hour(h["hour"])
-
-    peak_24h = energy.get_peak_24h()
-
-    mc = energy.get_month_comparison()
-
-    # Month delta badge
-    if mc["this_month"] and mc["last_month"]:
-        ch = ((mc["this_month"]["total_kwh"] or 0) -
-              (mc["last_month"]["total_kwh"] or 0)) / (mc["last_month"]["total_kwh"] or 1) * 100
-        delta_month = _delta_badge(ch, "last month", invert=True)
+    for row in peak_usage["peak_hours"]:
+        row["hour_label"] = _format_hour(row["hour"])
+    month_comparison = energy.get_month_comparison()
+    if month_comparison["this_month"] and month_comparison["last_month"]:
+        month_change = (
+            (month_comparison["this_month"]["total_kwh"] or 0)
+            - (month_comparison["last_month"]["total_kwh"] or 0)
+        ) / (month_comparison["last_month"]["total_kwh"] or 1) * 100
+        delta_month = _delta_badge(month_change, "last month", invert=True)
     else:
         delta_month = _delta_badge(None, "last month")
 
-    # Standby / vampire loads — circuits with a live reading between 1W and 50W
     standby = [
         {"name": name, "watts": _watts_estimate(kwh)}
         for name, kwh in latest_map.items()
@@ -2713,80 +2718,73 @@ def index():
         and not str(name).isdigit()
         and 1 <= _watts_estimate(kwh) <= 50
     ]
-    standby.sort(key=lambda x: x["watts"], reverse=True)
-    standby_total_w = sum(s["watts"] for s in standby)
-    safety_breakers = [b for b in dash_breakers if b.get("safe_cls") in ("warn", "danger")]
-    danger_breakers = [b for b in safety_breakers if b.get("safe_cls") == "danger"]
+    standby.sort(key=lambda row: row["watts"], reverse=True)
+    leg_rows = [row for row in dash_mains if not row.get("is_total")]
+    mains_a_row = next((row for row in ctx["latest"] if row["channel_name"] == "Mains_A"), None)
+    legs_fresh = _reading_fresh(mains_a_row)
 
-    # $/hr at current draw
-    cost_per_hour = current_watts / 1000 * RATE
-
-    # Leg A / Leg B balance for panel sidebar
-    # Only show if the Mains_A/B readings are fresh (< 5 min old)
-    _mains_a_row = next((r for r in ctx["latest"] if r["channel_name"] == "Mains_A"), None)
-    _legs_fresh = _reading_fresh(_mains_a_row)
-    _legs = [m for m in dash_mains if not m.get("is_total")]
-    leg_a = _legs[0] if len(_legs) > 0 and _legs_fresh else None
-    leg_b = _legs[1] if len(_legs) > 1 and _legs_fresh else None
-    total_leg_w = (leg_a["watts"] if leg_a else 0) + (leg_b["watts"] if leg_b else 0)
-
-    # 7-day trend label
-    slope = trend.get("slope", 0) if trend else 0
-    if slope > 0.05:
-        trend_dir = "↑ rising"
-        trend_color = "#f87171"
-    elif slope < -0.05:
-        trend_dir = "↓ falling"
-        trend_color = "#81c784"
-    else:
-        trend_dir = "→ steady"
-        trend_color = "var(--text-light)"
-    trend_avg = trend.get("avg_kwh", 0) if trend else 0
-
-    return _render(
-        DASH_HTML,
-        active_page="dashboard",
-        panel_fragment=_render_panel_fragment(
+    return {
+        "ctx": ctx,
+        "main_now": main_now,
+        "current_watts": current_watts,
+        "cost_per_hour": current_watts / 1000 * RATE,
+        "top_circuits": top_circuits,
+        "top_live_circuits": top_live_circuits,
+        "total_24h": total_24h,
+        "biggest_circuit": biggest_circuit,
+        "monthly_projected": monthly_projected,
+        "budget": int(MONTHLY_BUDGET),
+        "budget_pct": budget_pct,
+        "rate": RATE,
+        "daily_json": energy.get_daily_data(30),
+        "hourly_json": energy.get_hourly_data(7),
+        "month_comparison": {
+            "this_month": month_comparison["this_month"],
+            "last_month": month_comparison["last_month"],
+        },
+        "peak_usage": peak_usage,
+        "peak_24h": energy.get_peak_24h(),
+        "dash_mains": dash_mains,
+        "dash_breakers": dash_breakers,
+        "breakers_left": breakers_left,
+        "breakers_right": breakers_right,
+        "panel_invert_left": panel_display.get("invert_left", False),
+        "panel_invert_right": panel_display.get("invert_right", False),
+        "trend": trend,
+        "standby": standby,
+        "standby_circuits": standby,
+        "standby_total_w": sum(row["watts"] for row in standby),
+        "safety_breakers": [row for row in dash_breakers if row.get("safe_cls") in ("warn", "danger")],
+        "danger_breakers": [row for row in dash_breakers if row.get("safe_cls") == "danger"],
+        "leg_a": leg_rows[0] if len(leg_rows) > 0 and legs_fresh else None,
+        "leg_b": leg_rows[1] if len(leg_rows) > 1 and legs_fresh else None,
+        "trend_dir": "↑ rising" if trend and trend.get("slope", 0) > 0.05 else ("↓ falling" if trend and trend.get("slope", 0) < -0.05 else "→ steady"),
+        "trend_color": "#f87171" if trend and trend.get("slope", 0) > 0.05 else ("#81c784" if trend and trend.get("slope", 0) < -0.05 else "var(--text-light)"),
+        "trend_avg": trend.get("avg_kwh", 0) if trend else 0,
+        "delta_month": delta_month,
+        "panel_fragment": _render_panel_fragment(
             dash_mains,
             breakers_left,
             breakers_right,
-            panel_label_text=f"{com['panel_label']} — Live",
+            panel_label_text=f"{panel_label} — Live",
             bus_label="Bus bar",
         ),
-        ctx=ctx,
-        current_watts=current_watts,
-        cost_per_hour=cost_per_hour,
-        top_circuits=top_circuits,
-        total_24h=total_24h,
-        biggest_circuit=biggest_circuit,
-        monthly_projected=monthly_projected,
-        budget=int(MONTHLY_BUDGET),
-        budget_pct=budget_pct,
-        rate=RATE,
-        daily_json=energy.get_daily_data(30),
-        hourly_json=energy.get_hourly_data(7),
-        month_comparison={"this_month": mc["this_month"], "last_month": mc["last_month"]},
-        peak_usage=peak_usage,
-        peak_24h=peak_24h,
-        dash_mains=dash_mains,
-        dash_breakers=dash_breakers,
-        breakers_left=breakers_left,
-        breakers_right=breakers_right,
-        panel_invert_left=_invert_left,
-        panel_invert_right=_invert_right,
-        trend=trend,
-        standby=standby,
-        standby_circuits=standby,
-        standby_total_w=standby_total_w,
-        safety_breakers=safety_breakers,
-        danger_breakers=danger_breakers,
-        top_live_circuits=top_live_circuits,
-        leg_a=leg_a, leg_b=leg_b,
-        trend_dir=trend_dir, trend_color=trend_color, trend_avg=trend_avg,
-        delta_yd=_delta_badge(ctx["vs_yesterday_pct"],  "yesterday", invert=True),
-        delta_wk=_delta_badge(ctx["vs_last_week_pct"],  "last week",  invert=True),
-        delta_mo=_delta_badge(ctx["vs_last_month_pct"], "last month", invert=True),
-        delta_month=delta_month,
+    }
+
+
+@app.route("/")
+def index():
+    com = _common()
+    dashboard = _build_dashboard_context(com["panel_label"])
+    return _render(
+        DASH_HTML,
+        active_page="dashboard",
+        freshness=_reading_fresh(dashboard["main_now"]),
+        delta_yd=_delta_badge(dashboard["ctx"]["vs_yesterday_pct"], "yesterday", invert=True),
+        delta_wk=_delta_badge(dashboard["ctx"]["vs_last_week_pct"], "last week", invert=True),
+        delta_mo=_delta_badge(dashboard["ctx"]["vs_last_month_pct"], "last month", invert=True),
+        delta_hour=_delta_badge(dashboard["ctx"]["change_pct"], "vs prior hour", invert=True),
+        **dashboard,
         **com,
     )
 

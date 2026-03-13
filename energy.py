@@ -891,13 +891,16 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
             "vs_yesterday_pct": None,
             "vs_last_week_pct": None,
             "vs_last_month_pct": None,
+            "change_pct": None,
             "circuits": [],
             "latest": [],
         }
 
-    def window_kwh(offset_days: float):
-        start = (now - timedelta(days=offset_days, minutes=window_minutes)).isoformat()
-        end = (now - timedelta(days=offset_days)).isoformat()
+    def window_kwh(offset_days: float = 0, offset_minutes: int = 0):
+        end = now - timedelta(days=offset_days, minutes=offset_minutes)
+        start = end - timedelta(minutes=window_minutes)
+        start = start.isoformat()
+        end = end.isoformat()
         c.execute(
             """SELECT SUM(usage_kwh) FROM readings
                WHERE channel_name = 'Main' AND timestamp BETWEEN ? AND ? AND device_gid = ?""",
@@ -906,10 +909,11 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
         row = c.fetchone()
         return row[0] if row and row[0] is not None else None
 
-    current = window_kwh(0)
-    yesterday = window_kwh(1)
-    last_week = window_kwh(7)
-    last_month = window_kwh(30)
+    current = window_kwh()
+    previous_window = window_kwh(offset_minutes=window_minutes)
+    yesterday = window_kwh(offset_days=1)
+    last_week = window_kwh(offset_days=7)
+    last_month = window_kwh(offset_days=30)
 
     # Per-circuit for the current window
     since = (now - timedelta(minutes=window_minutes)).isoformat()
@@ -952,6 +956,7 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
         "vs_yesterday_pct": _delta_pct(current, yesterday),
         "vs_last_week_pct": _delta_pct(current, last_week),
         "vs_last_month_pct": _delta_pct(current, last_month),
+        "change_pct": _delta_pct(current, previous_window),
         "circuits": circuits,
         "latest": latest_readings,
     }
