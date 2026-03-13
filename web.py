@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.37"
+VERSION = "1.7.38"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -188,6 +188,11 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 .section-head h2 { font-size: 1.5rem; color: var(--text); }
 .section-head .section-sub { font-size: 0.78rem; color: var(--text-light); }
+
+.page-jump-nav { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 1rem; }
+.page-jump-nav a { text-decoration:none; font-size:0.78rem; font-weight:600; color:var(--olive-800); background:var(--surface); border:1px solid var(--border); border-radius:999px; padding:0.35rem 0.7rem; }
+.page-jump-nav a:hover { background:var(--olive-100); }
+.section-block { display:flex; flex-direction:column; gap:14px; }
 
 /* ── Delta badges ── */
 .delta {
@@ -1642,12 +1647,24 @@ REPORTS_HTML = """
       <div class="eyebrow">Analysis</div>
       <h1 style="margin:0.15rem 0 0.25rem;">Reports</h1>
       <p style="margin:0; color:var(--text-light); max-width:720px;">
-        Historical usage, cost comparisons, and recommendations live here so the dashboard stays glanceable.
+        Budget review, monthly comparisons, and recommendation workflows live here so the dashboard stays focused on realtime operations.
       </p>
     </div>
   </div>
 
-  <div style="display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:14px;">
+  <div class="page-jump-nav">
+    <a href="#reports-overview">Overview</a>
+    <a href="#recommendations">Recommendations</a>
+    <a href="#billing-review">Billing Review</a>
+    <a href="#pattern-highlights">Pattern Highlights</a>
+  </div>
+
+  <div id="reports-overview" class="section">
+    <div class="section-head">
+      <h2>Overview</h2>
+      <span class="section-sub">Fast budget, cost, and peak checks</span>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:14px;">
     <div class="card">
       <div class="card-label">24h Cost</div>
       <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
@@ -1667,6 +1684,7 @@ REPORTS_HTML = """
       <div class="card-label">Recommendation Reviews</div>
       <div class="card-value">{{ recommendations|length }}</div>
       <div class="card-meta">budget, safety, and standby checks</div>
+    </div>
     </div>
   </div>
 
@@ -1735,8 +1753,13 @@ REPORTS_HTML = """
     </div>
   </div>
 
-  <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:14px; align-items:start;">
-    <div style="display:flex; flex-direction:column; gap:14px;">
+  <div id="billing-review" class="section">
+    <div class="section-head">
+      <h2>Billing Review</h2>
+      <span class="section-sub">Month-over-month cost and daily extremes</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:14px; align-items:start;">
+      <div class="section-block">
       {% if month_comparison.this_month and month_comparison.last_month %}
       {% set this_kwh = month_comparison.this_month.total_kwh or 0 %}
       {% set last_kwh = month_comparison.last_month.total_kwh or 1 %}
@@ -1777,9 +1800,9 @@ REPORTS_HTML = """
       {% endif %}
 
 
-    </div>
+      </div>
 
-    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div id="pattern-highlights" class="section-block">
       {% if peak_usage.peak_hours %}
       <div class="card">
         <div class="card-label" style="margin-bottom:8px;">Busiest Hours (30-day avg)</div>
@@ -1813,12 +1836,13 @@ REPORTS_HTML = """
       {% endif %}
 
       <div class="card">
-        <div class="card-label" style="margin-bottom:8px;">Shortcuts</div>
+        <div class="card-label" style="margin-bottom:8px;">Workflow Links</div>
         <div style="display:flex; flex-direction:column; gap:8px;">
           <a href="/trends" style="text-decoration:none; color:var(--text);">Trend charts →</a>
           <a href="/circuits" style="text-decoration:none; color:var(--text);">Circuit inventory →</a>
           <a href="/import" style="text-decoration:none; color:var(--text);">Import historical CSV →</a>
         </div>
+      </div>
       </div>
     </div>
   </div>
@@ -1852,9 +1876,9 @@ GUIDE_HTML = """
       <div class="card">
         <div class="card-label" style="margin-bottom:8px;">Reports</div>
         <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
-          <div><strong>Reports</strong> collects the slower-moving analysis that does not need to live on the dashboard.</div>
-          <div>Use it for month-vs-month comparisons, busiest hours and days, standby loads, and biggest recent consumers.</div>
-          <div>If you want per-circuit detail, jump from Reports into the Circuits page or an individual circuit page.</div>
+          <div><strong>Reports</strong> collects budget review, recommendations, and monthly comparison work that does not need to live on the dashboard.</div>
+          <div><strong>Trends</strong> is now the home for usage charts, load review, standby loads, and biggest recent consumers.</div>
+          <div>If you want per-circuit detail, jump from Reports or Trends into the Circuits page or an individual circuit page.</div>
         </div>
       </div>
 
@@ -2204,9 +2228,9 @@ CIRCUIT_HTML = """
     <canvas id="usageChart" height="180"></canvas>
   </div>
 
-  <div class="section">
+  <div id="operational-review" class="section">
     <div class="section-head">
-      <h2>Operational Summary</h2>
+      <h2>Operational Review</h2>
       <span class="section-sub">Rolled up from the main dashboard for deeper review</span>
     </div>
     <div class="grid-4">
@@ -2275,7 +2299,7 @@ CIRCUIT_HTML = """
     </div>
   </div>
 
-  <div class="section">
+  <div id="load-review" class="section">
     <div class="section-head">
       <h2>Load Review</h2>
       <span class="section-sub">Biggest daily load and always-on circuits moved from the dashboard and reports</span>
@@ -2515,6 +2539,8 @@ TRENDS_HTML = """
   </div>
   {% endif %}
 
+    </div>
+
   <div class="grid-2">
     <div class="chart-box">
       <h3>Daily Usage — 14 Days</h3>
@@ -2526,10 +2552,13 @@ TRENDS_HTML = """
     </div>
   </div>
 
-  <!-- Month comparison -->
-  <div class="section-head" style="margin-top:2rem;">
-    <h2>Month Comparison</h2>
   </div>
+
+  <div id="month-comparison" class="section">
+    <div class="section-head">
+      <h2>Month Comparison</h2>
+      <span class="section-sub">This month against the previous full month</span>
+    </div>
   <div class="grid-3">
     <div class="card">
       <div class="card-label">This Month</div>
