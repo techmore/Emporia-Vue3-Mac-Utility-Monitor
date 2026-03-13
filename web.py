@@ -5,6 +5,7 @@ Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
 from datetime import datetime
 from flask import Flask, jsonify, render_template_string, Response, request
+from jinja2 import select_autoescape
 from werkzeug.exceptions import RequestEntityTooLarge
 import json
 import logging
@@ -14,6 +15,10 @@ import energy
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+app.jinja_env.autoescape = select_autoescape(
+    enabled_extensions=("html", "htm", "xml"),
+    default_for_string=True,
+)
 
 VERSION = "1.7.3"
 
