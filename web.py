@@ -612,6 +612,7 @@ NAV_HTML = """
       <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
       <a href="/circuits" class="{{ 'active' if active_page == 'circuits' else '' }}">Circuits</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
+      <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
       <a href="/log" class="{{ 'active' if active_page == 'log' else '' }}">Log</a>
       <a href="/import" class="{{ 'active' if active_page == 'import' else '' }}">Import</a>
       <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
@@ -1621,6 +1622,85 @@ REPORTS_HTML = """
 </div>
 """
 
+GUIDE_HTML = """
+<div class="page">
+  <div class="section-head" style="margin-bottom:1rem;">
+    <div>
+      <div class="eyebrow">Help</div>
+      <h1 style="margin:0.15rem 0 0.3rem;">Guide</h1>
+      <p style="margin:0; color:var(--text-light); max-width:760px;">
+        Quick explanations for the dashboard, reports, breaker panel, and setup flow.
+      </p>
+    </div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:14px; align-items:start;">
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Dashboard</div>
+        <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
+          <div><strong>Now panel</strong>: live whole-home draw, cost rate, and short comparisons versus yesterday, last week, and last month.</div>
+          <div><strong>Panel view</strong>: mains cards plus breaker slots. Each breaker now shows both relative load and a safety bar against 80% of breaker rating.</div>
+          <div><strong>Budget ring</strong>: rough monthly projection based on the last 24 hours at your configured rate.</div>
+          <div><strong>Safety watch</strong>: breakers approaching or exceeding the continuous-load line.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Reports</div>
+        <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
+          <div><strong>Reports</strong> collects the slower-moving analysis that does not need to live on the dashboard.</div>
+          <div>Use it for month-vs-month comparisons, busiest hours and days, standby loads, and biggest recent consumers.</div>
+          <div>If you want per-circuit detail, jump from Reports into the Circuits page or an individual circuit page.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Circuits And Panel Editor</div>
+        <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
+          <div><strong>Circuits</strong> shows the panel layout and circuit summaries with saved labels and notes.</div>
+          <div><strong>Panel Editor</strong> lets you assign slot names, breaker amps, and poles. If amps are blank, the app assumes 15A for safety calculations.</div>
+          <div><strong>1P vs 2P</strong>: single-pole breakers use 120V assumptions; double-pole breakers use 240V.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">First-Time Setup</div>
+        <ol style="margin:0; padding-left:1.1rem; color:var(--text); font-size:0.9rem; line-height:1.65;">
+          <li>Open <strong>Settings</strong> and enter your Emporia email and password.</li>
+          <li>Save settings, then use the reconnect flow if the poller is waiting for credentials.</li>
+          <li>Name your Emporia devices so the panel header is readable.</li>
+          <li>Open the panel editor and map breaker slots, amps, and poles.</li>
+          <li>Optionally import historical CSV files from Emporia to backfill trends.</li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Log And Poller Status</div>
+        <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
+          <div><strong>Live</strong> means the poller wrote a recent heartbeat.</div>
+          <div><strong>Stale</strong> means data exists but the poller has not checked in recently.</div>
+          <div><strong>Offline</strong> means the UI cannot confirm current polling activity.</div>
+          <div>The Log page is where you check reconnect status, auth failures, and import/poller health.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label" style="margin-bottom:8px;">Metric Meanings</div>
+        <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
+          <div><strong>W</strong>: instantaneous-ish power estimate from the latest minute reading.</div>
+          <div><strong>kWh</strong>: energy used over a time period.</div>
+          <div><strong>$/hr</strong>: current burn rate using your configured utility price.</div>
+          <div><strong>80% line</strong>: common continuous-load rule-of-thumb for breaker safety visibility.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+"""
+
 
 # ── Circuits list template ────────────────────────────────────────────────────
 
@@ -2611,6 +2691,11 @@ def reports_page():
         biggest_circuit=biggest_circuit,
         **com,
     )
+
+
+@app.route("/guide")
+def guide_page():
+    return _render(GUIDE_HTML, active_page="guide", **_common())
 
 
 @app.route("/circuits")
