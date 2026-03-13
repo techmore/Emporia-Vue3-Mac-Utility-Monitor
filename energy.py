@@ -614,8 +614,8 @@ def get_peak_24h() -> dict:
     conn.close()
     if not row:
         return {"peak_watts": 0, "peak_time": None}
-    # Convert kWh per poll interval to watts
-    watts = (row["total_kwh"] or 0) * 1000 * (60 / POLL_INTERVAL)
+    # Poll data is requested at one-minute scale, so convert kWh/min to watts.
+    watts = (row["total_kwh"] or 0) * 60 * 1000
     ts = row["timestamp"]
     try:
         dt = datetime.fromisoformat(ts[:19])

@@ -5,16 +5,40 @@ Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
 from datetime import datetime
 from flask import Flask, jsonify, render_template_string, Response, request
+from werkzeug.exceptions import RequestEntityTooLarge
+import json
 import logging
+import math
 import os
 import energy
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 
 VERSION = "1.7.3"
 
-MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET", "150"))
-RATE = energy.RATE_CENTS / 100
+
+def _read_monthly_budget() -> float:
+    if os.environ.get("MONTHLY_BUDGET"):
+        return float(os.environ["MONTHLY_BUDGET"])
+    try:
+        with open("settings.json") as f:
+            v = json.load(f).get("monthly_budget")
+            if v is not None:
+                return float(v)
+    except Exception:
+        pass
+    return 150.0
+
+
+def _refresh_runtime_config() -> None:
+    global RATE, MONTHLY_BUDGET
+    RATE = energy._read_rate_cents() / 100
+    energy.RATE_CENTS = RATE * 100
+    MONTHLY_BUDGET = _read_monthly_budget()
+
+
+_refresh_runtime_config()
 
 # ── Shared design tokens (mirrors techmore.github.io) ─────────────────────────
 BASE_CSS = """
@@ -673,6 +697,19 @@ def _render(template: str, **ctx):
         NAV_HTML + "\n<style>" + BASE_CSS + "</style>\n" + template,
         **ctx
     )
+
+
+def _parse_nonnegative_float(value, field: str, *, allow_zero: bool = True) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be a number") from None
+    if not math.isfinite(parsed):
+        raise ValueError(f"{field} must be a finite number")
+    if parsed < 0 or (not allow_zero and parsed == 0):
+        cmp = "greater than 0" if not allow_zero else "0 or greater"
+        raise ValueError(f"{field} must be {cmp}")
+    return parsed
 
 
 # ── Dashboard template ────────────────────────────────────────────────────────
@@ -2286,7 +2323,7 @@ def index():
         biggest_circuit=biggest_circuit,
         monthly_projected=monthly_projected,
         budget=int(MONTHLY_BUDGET),
-        budget_pct=min(budget_pct, 100),
+        budget_pct=budget_pct,
         rate=RATE,
         daily_json=energy.get_daily_data(30),
         hourly_json=energy.get_hourly_data(7),
@@ -3576,19 +3613,29 @@ def api_save_credentials():
 @app.route("/api/settings/config", methods=["POST"])
 def api_save_config():
     import json as _json
-    data = request.get_json(force=True)
+    data = request.get_json(force=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Expected object"}), 400
     cfg = {}
     try:
         with open("settings.json") as f:
             cfg = _json.load(f)
     except Exception:
         pass
-    if data.get("rate_cents") is not None:
-        cfg["rate_cents"] = float(data["rate_cents"])
-    if data.get("monthly_budget") is not None:
-        cfg["monthly_budget"] = float(data["monthly_budget"])
+    try:
+        if data.get("rate_cents") is not None:
+            cfg["rate_cents"] = _parse_nonnegative_float(
+                data["rate_cents"], "rate_cents", allow_zero=False
+            )
+        if data.get("monthly_budget") is not None:
+            cfg["monthly_budget"] = _parse_nonnegative_float(
+                data["monthly_budget"], "monthly_budget", allow_zero=True
+            )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
     with open("settings.json", "w") as f:
         _json.dump(cfg, f, indent=2)
+    _refresh_runtime_config()
     return jsonify({"ok": True})
 
 
@@ -3632,6 +3679,8 @@ def api_import_csv():
     f = request.files.get("file")
     if not f:
         return jsonify({"error": "No file uploaded"}), 400
+    if not (f.filename or "").lower().endswith(".csv"):
+        return jsonify({"error": "Only .csv files are supported"}), 400
     suffix = os.path.splitext(f.filename or "")[1] or ".csv"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         f.save(tmp.name)
@@ -3645,6 +3694,12 @@ def api_import_csv():
     return jsonify(result)
 
 
+@app.errorhandler(RequestEntityTooLarge)
+def handle_large_upload(_exc):
+    max_mb = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
+    return jsonify({"error": f"Upload too large. Limit is {max_mb:.0f} MB"}), 413
+
+
 if __name__ == "__main__":
     print(f"Energy Monitor — http://localhost:5001")
     print(f"Rate: ${RATE:.4f}/kWh  Budget: ${MONTHLY_BUDGET:.0f}/mo")
@@ -3655,4 +3710,4 @@ if __name__ == "__main__":
     csv_fix = energy.fix_csv_kwatts_import()
     if csv_fix["fixed"]:
         print(f"[startup] fixed {csv_fix['fixed']:,} CSV kWatts rows (÷60 unit correction)")
-    app.run(debug=False, host="0.0.0.0", port=5001)
+    app.run(debug=False, host=os.environ.get("FLASK_HOST", "127.0.0.1"), port=5001)
