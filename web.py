@@ -22,7 +22,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.4"
+VERSION = "1.7.5"
 
 
 def _read_monthly_budget() -> float:
@@ -2723,6 +2723,8 @@ def _build_dashboard_context(panel_label: str) -> dict:
     mains_a_row = next((row for row in ctx["latest"] if row["channel_name"] == "Mains_A"), None)
     legs_fresh = _reading_fresh(mains_a_row)
 
+    slope = (trend or {}).get("slope") or 0
+
     return {
         "ctx": ctx,
         "main_now": main_now,
@@ -2758,9 +2760,10 @@ def _build_dashboard_context(panel_label: str) -> dict:
         "danger_breakers": [row for row in dash_breakers if row.get("safe_cls") == "danger"],
         "leg_a": leg_rows[0] if len(leg_rows) > 0 and legs_fresh else None,
         "leg_b": leg_rows[1] if len(leg_rows) > 1 and legs_fresh else None,
-        "trend_dir": "↑ rising" if trend and trend.get("slope", 0) > 0.05 else ("↓ falling" if trend and trend.get("slope", 0) < -0.05 else "→ steady"),
-        "trend_color": "#f87171" if trend and trend.get("slope", 0) > 0.05 else ("#81c784" if trend and trend.get("slope", 0) < -0.05 else "var(--text-light)"),
-        "trend_avg": trend.get("avg_kwh", 0) if trend else 0,
+        "slope": slope,
+        "trend_dir": "↑ rising" if slope > 0.05 else ("↓ falling" if slope < -0.05 else "→ steady"),
+        "trend_color": "#f87171" if slope > 0.05 else ("#81c784" if slope < -0.05 else "var(--text-light)"),
+        "trend_avg": (trend or {}).get("avg_kwh") or 0,
         "delta_month": delta_month,
         "panel_fragment": _render_panel_fragment(
             dash_mains,

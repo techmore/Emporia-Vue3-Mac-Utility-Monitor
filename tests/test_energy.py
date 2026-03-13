@@ -8,6 +8,38 @@ import web
 
 
 class EnergyTests(unittest.TestCase):
+
+    def _seed_ui_data(self):
+        conn = energy._connect()
+        now = energy.datetime.now().replace(microsecond=0)
+        ts = now.isoformat()
+        earlier = (now - energy.timedelta(minutes=30)).isoformat()
+        conn.executemany(
+            """INSERT INTO readings
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (ts, "A", 1, "Main", 1.2, 12.0),
+                (ts, "A", 2, "Mains_A", 0.6, 6.0),
+                (ts, "A", 3, "Mains_B", 0.6, 6.0),
+                (ts, "A", 4, "Dryer", 0.3, 3.0),
+                (ts, "A", 5, "HVAC", 0.2, 2.0),
+                (earlier, "A", 1, "Main", 1.0, 10.0),
+                (earlier, "A", 4, "Dryer", 0.25, 2.5),
+            ],
+        )
+        conn.executemany(
+            """INSERT INTO circuit_labels
+               (slot, channel_name, label, note, amps, poles)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (1, "Dryer", "Dryer", None, 30, 2),
+                (2, "HVAC", "HVAC", None, 20, 2),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
     def setUp(self):
         fd, db_path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
@@ -156,6 +188,49 @@ class EnergyTests(unittest.TestCase):
         totals = {r["channel_name"]: r for r in energy.get_channel_totals(["Mains_A", "Mains_B"], 24)}
         self.assertEqual(totals["Mains_A"]["total_kwh"], 0.5)
         self.assertEqual(totals["Mains_B"]["total_kwh"], 0.6)
+
+    def test_dashboard_route_renders_panel_invariants(self):
+        self._seed_ui_data()
+        client = web.app.test_client()
+
+        response = client.get("/")
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Bus bar", body)
+        self.assertIn("Top Active Circuits", body)
+        self.assertIn("Recommendations", body)
+        self.assertGreaterEqual(body.count('class="breaker '), 2)
+
+    def test_circuits_route_renders_action_center_and_panel(self):
+        self._seed_ui_data()
+        client = web.app.test_client()
+
+        response = client.get("/circuits")
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Action Center", body)
+        self.assertIn("Safety Watch", body)
+        self.assertIn("Live Heavy Hitters", body)
+        self.assertIn("Always-On Loads", body)
+        self.assertIn("Bus bar", body)
+
+    def test_secondary_pages_render_expected_sections(self):
+        self._seed_ui_data()
+        client = web.app.test_client()
+
+        expectations = {
+            "/reports": ["24h Cost", "Peak Today", "Biggest 24h Load"],
+            "/guide": ["First-Time Setup", "Metric Meanings", "Panel view"],
+            "/recommendations": ["Next Best Actions", "Shortcuts", "When To Call An Electrician"],
+        }
+        for path, snippets in expectations.items():
+            response = client.get(path)
+            body = response.get_data(as_text=True)
+            self.assertEqual(response.status_code, 200, path)
+            for snippet in snippets:
+                self.assertIn(snippet, body, f"{snippet} missing from {path}")
 
 
 if __name__ == "__main__":
