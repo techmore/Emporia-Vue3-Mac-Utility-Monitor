@@ -23,7 +23,7 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "1.7.34"
+VERSION = "1.7.35"
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
 
 
@@ -1052,41 +1052,37 @@ def _parse_nonnegative_float(value, field: str, *, allow_zero: bool = True) -> f
 DASH_HTML = """
 <div class="page">
 
-  <!-- ── Weather Strip ─────────────────────────────────────────────────── -->
-  <div id="weather-strip" style="display:none; margin-bottom:0.75rem;">
-    <div id="weather-days" style="display:flex; gap:6px; padding:2px 0;"></div>
-  </div>
   <style>
-  .wx-card {
-    background:var(--surface2); border:1px solid var(--border); border-radius:10px;
-    padding:8px 6px; text-align:center; flex:1; min-width:0;
+  .banner-forecast {
+    background: var(--olive-200); border: 1px solid var(--olive-300); border-radius: 12px;
+    padding: 0.75rem 0.9rem; min-width: 0; flex: 1 1 360px; color: var(--olive-950);
   }
-  .wx-card.wx-today { background:var(--olive-800); color:var(--olive-50); border-color:var(--olive-700); }
-  .wx-card.wx-today .wx-label, .wx-card.wx-today .wx-lo { color:var(--olive-300); }
-  .wx-label { font-size:0.65rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--olive-700); margin-bottom:3px; }
-  .wx-icon  { font-size:1.4rem; line-height:1; margin-bottom:2px; }
-  .wx-hi    { font-size:0.95rem; font-weight:700; color:var(--olive-950); }
-  .wx-lo    { font-size:0.75rem; color:var(--olive-700); }
-  .wx-now   { font-size:0.7rem; margin-top:2px; opacity:0.8; }
-  .wx-hvac  { height:3px; border-radius:2px; margin-top:5px; width:100%; }
-  .wx-hvac.heat { background:rgba(220,60,40,0.65); }
-  .wx-hvac.cool { background:rgba(60,140,220,0.65); }
+  .banner-forecast-head {
+    display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:0.45rem;
+  }
+  .banner-forecast-title { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--olive-700); }
+  .banner-forecast-sub { font-size:0.72rem; color:var(--olive-700); }
+  .banner-forecast-days { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:6px; }
+  .banner-forecast-day { background: rgba(255,255,255,0.28); border-radius:10px; padding:0.45rem 0.35rem; text-align:center; min-width:0; }
+  .banner-forecast-day.today { background: var(--olive-800); color: var(--olive-50); }
+  .banner-forecast-day.today .banner-forecast-date, .banner-forecast-day.today .banner-forecast-low { color: var(--olive-300); }
+  .banner-forecast-label { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--olive-700); }
+  .banner-forecast-date { font-size:0.66rem; color:var(--olive-600); margin-top:1px; }
+  .banner-forecast-hi { font-size:0.92rem; font-weight:700; line-height:1.1; margin-top:4px; }
+  .banner-forecast-low { font-size:0.72rem; color:var(--olive-700); line-height:1.1; }
+  .banner-forecast-line { height:3px; border-radius:999px; margin-top:6px; background: rgba(110,117,75,0.18); }
+  .banner-forecast-line.heat { background: rgba(220,60,40,0.72); }
+  .banner-forecast-line.cool { background: rgba(60,140,220,0.72); }
   </style>
   <script>
   (function(){
     const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-    const icons = {0:'☀️',1:'🌤️',2:'⛅',3:'☁️',45:'🌫️',48:'🌫️',51:'🌦️',53:'🌦️',55:'🌧️',
-      61:'🌧️',63:'🌧️',65:'🌧️',71:'🌨️',73:'🌨️',75:'🌨️',77:'🌨️',80:'🌦️',81:'🌧️',82:'🌧️',
-      85:'🌨️',86:'🌨️',95:'⛈️',96:'⛈️',99:'⛈️'};
     fetch('/api/weather').then(r=>r.json()).then(data=>{
       if(!data.days || !data.days.length) return;
-      // Use browser's local date so Today/Tomorrow roll over at midnight automatically
-      const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
-      const container = document.getElementById('weather-days');
-
-      // Pre-compute estimated cold/hot hours per day using half-day approximation:
-      // If max < 50 → 24h cold; if min < 50 <= max → 12h cold; else 0
-      // If min > 80 → 24h hot;  if max > 80 >= min → 12h hot;  else 0
+      const days = data.days.slice(0, 7);
+      const todayStr = new Date().toLocaleDateString('en-CA');
+      const container = document.getElementById('banner-forecast-days');
+      if (!container) return;
       function coldHours(d) {
         if (d.temp_max < 50) return 24;
         if (d.temp_min < 50) return 12;
@@ -1097,33 +1093,27 @@ DASH_HTML = """
         if (d.temp_max > 80) return 12;
         return 0;
       }
-
-      data.days.forEach((d, i)=>{
-        const dayDate = new Date(d.date + 'T12:00:00'); // noon to avoid DST edge cases
+      days.forEach((d, i)=>{
+        const dayDate = new Date(d.date + 'T12:00:00');
         const diff = Math.round((dayDate - new Date(todayStr + 'T12:00:00')) / 86400000);
-        const label = diff === 0 ? 'Today' : (diff === 1 ? 'Tomorrow' : DAYS[dayDate.getDay()]);
-        const isToday = diff === 0;
-
-        // 48-hour HVAC pressure: this day + next day
-        const next = data.days[i + 1] || d; // if last day, double-count current
-        const totalCold = coldHours(d) + coldHours(next);
-        const totalHot  = hotHours(d)  + hotHours(next);
-        // Show indicator if >= 24 of the 48h window is cold or hot (≥50% of window)
-        const hvacClass = totalCold >= 24 ? 'heat' : (totalHot >= 24 ? 'cool' : '');
-
+        const label = diff === 0 ? 'Today' : DAYS[dayDate.getDay()];
+        const dateLabel = `${dayDate.getMonth()+1}/${dayDate.getDate()}`;
+        const next = days[i + 1];
+        const totalCold = coldHours(d) + (next ? coldHours(next) : 0);
+        const totalHot  = hotHours(d) + (next ? hotHours(next) : 0);
+        const lineClass = totalCold >= 48 ? 'heat' : (totalHot >= 48 ? 'cool' : '');
         const el = document.createElement('div');
-        el.className = 'wx-card' + (isToday ? ' wx-today' : '');
+        el.className = 'banner-forecast-day' + (diff === 0 ? ' today' : '');
         el.innerHTML = `
-          <div class="wx-label">${label}</div>
-          <div class="wx-icon">${icons[d.weathercode] || '🌡️'}</div>
-          <div class="wx-hi">${Math.round(d.temp_max)}°</div>
-          <div class="wx-lo">${Math.round(d.temp_min)}°</div>
-          ${isToday && data.current_temp !== null ? `<div class="wx-now">${Math.round(data.current_temp)}° now</div>` : ''}
-          ${hvacClass ? `<div class="wx-hvac ${hvacClass}" title="${hvacClass==='heat'?'Heating likely ~'+totalCold+'h':'Cooling likely ~'+totalHot+'h'} over 48h"></div>` : '<div class="wx-hvac"></div>'}
+          <div class="banner-forecast-label">${label}</div>
+          <div class="banner-forecast-date">${dateLabel}</div>
+          <div class="banner-forecast-hi">${Math.round(d.temp_max)}°</div>
+          <div class="banner-forecast-low">${Math.round(d.temp_min)}°</div>
+          <div class="banner-forecast-line ${lineClass}" title="${lineClass === 'heat' ? 'Below 50°F for ~48h+' : (lineClass === 'cool' ? 'Above 80°F for ~48h+' : 'Moderate outlook')}"></div>
         `;
         container.appendChild(el);
       });
-      document.getElementById('weather-strip').style.display='';
+      document.getElementById('banner-forecast').style.display='block';
     }).catch(()=>{});
   })();
   </script>
@@ -1143,6 +1133,14 @@ DASH_HTML = """
           <span id="live-window-kwh">{{ "%.3f"|format(ctx.current_kwh or 0) }}</span> kWh &bull;
           $<span id="live-projected-month">{{ "%.3f"|format((ctx.current_kwh or 0) * 30 * 24 * rate) }}</span> projected/mo
         </div>
+      </div>
+
+      <div id="banner-forecast" class="banner-forecast" style="display:none;">
+        <div class="banner-forecast-head">
+          <div class="banner-forecast-title">7-Day Trend</div>
+          <div class="banner-forecast-sub">high / low forecast including today</div>
+        </div>
+        <div id="banner-forecast-days" class="banner-forecast-days"></div>
       </div>
 
       <!-- Budget ring -->
@@ -3941,7 +3939,7 @@ def api_weather():
             "&daily=weathercode,temperature_2m_max,temperature_2m_min"
             "&current_weather=true"
             "&temperature_unit=fahrenheit"
-            "&forecast_days=14"
+            "&forecast_days=7"
             "&timezone=America%2FNew_York"
         )
         with urllib.request.urlopen(url, timeout=8) as resp:
