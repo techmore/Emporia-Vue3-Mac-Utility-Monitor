@@ -27,6 +27,7 @@ SRC="$APP_DIR/Sources/main.swift"
 BIN="$APP_DIR/EnergyMonitorApp"
 BUNDLE="$APP_DIR/EnergyMonitorApp.app"
 BUNDLE_BIN="$BUNDLE/Contents/MacOS/EnergyMonitorApp"
+APP_INSTALL="/Applications/EnergyMonitorApp.app"
 VENV_PYTHON="$SCRIPT_DIR/venv/bin/python3"
 FLASK_LOG="$SCRIPT_DIR/flask.log"
 POLLER_LOG="/tmp/energymonitor-poller.log"
@@ -61,6 +62,13 @@ kill_matching_repo_processes() {
   done
 }
 
+kill_installed_app() {
+  local installed_bin="$APP_INSTALL/Contents/MacOS/EnergyMonitorApp"
+  for PID in $(pgrep -f "$installed_bin" 2>/dev/null || true); do
+    kill -9 "$PID" 2>/dev/null && ok "Killed installed app (PID $PID)" || true
+  done
+}
+
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║       Emporia Energy Monitor — build.sh      ║"
@@ -70,15 +78,8 @@ echo ""
 # ── 1. Kill existing project processes ────────────────────────────────────────
 echo "[ 1 / 6 ]  Stopping existing processes…"
 
-# Kill anything using the configured Flask port that belongs to our venv
-for PID in $(lsof -ti :"$FLASK_PORT" 2>/dev/null); do
-  CMD=$(ps -p "$PID" -o command= 2>/dev/null || true)
-  if echo "$CMD" | grep -q "web\.py"; then
-    kill -9 "$PID" 2>/dev/null && ok "Killed Flask (PID $PID)" || true
-  fi
-done
-
 kill_matching_repo_processes "web.py" "Flask"
+kill_installed_app
 
 # Kill any running poller or wrapper from this repo, including stale clones
 kill_matching_repo_processes "energy.py" "poller"
@@ -115,6 +116,14 @@ if [ "$DO_SWIFT" = true ]; then
   ok "Bundle → $BUNDLE_BIN"
 else
   echo "[ 3 / 6 ]  Skipping Swift compile (--no-swift)"
+fi
+
+if [ -d "$BUNDLE" ]; then
+  rm -rf "$APP_INSTALL"
+  cp -R "$BUNDLE" "$APP_INSTALL"
+  ok "Installed → $APP_INSTALL"
+else
+  warn "Bundle missing — skipping install to /Applications"
 fi
 
 # ── 4. Start Flask (web.py) ───────────────────────────────────────────────────
@@ -166,7 +175,10 @@ ok "Poller status: $POLLER_STATUS"
 echo ""
 if [ "$DO_OPEN" = true ]; then
   echo "[ 6 / 6 ]  Opening app…"
-  if [ -d "$BUNDLE" ]; then
+  if [ -d "$APP_INSTALL" ]; then
+    open "$APP_INSTALL"
+    ok "Opened $APP_INSTALL"
+  elif [ -d "$BUNDLE" ]; then
     open "$BUNDLE"
     ok "Opened $BUNDLE"
   elif [ -f "$BIN" ]; then
