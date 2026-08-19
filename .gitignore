@@ -43,3 +43,6 @@ EnergyMonitorApp/EnergyMonitorApp.app/Contents/MacOS/EnergyMonitorApp
 
 # Claude Code session data
 .claude/
+
+# Built app bundle
+EnergyMonitorApp/EnergyMonitorApp.app/

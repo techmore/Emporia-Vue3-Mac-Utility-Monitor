@@ -119,6 +119,8 @@ else
 fi
 
 if [ -d "$BUNDLE" ]; then
+  mkdir -p "$BUNDLE/Contents/Resources"
+  printf "%s\n" "$SCRIPT_DIR" > "$BUNDLE/Contents/Resources/project_root.txt"
   rm -rf "$APP_INSTALL"
   cp -R "$BUNDLE" "$APP_INSTALL"
   ok "Installed → $APP_INSTALL"

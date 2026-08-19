@@ -30,10 +30,21 @@ private func releaseLock() {
 //
 // Layout:   <project>/EnergyMonitorApp/EnergyMonitorApp   (bare binary)
 //        or <project>/EnergyMonitorApp/EnergyMonitorApp.app/Contents/MacOS/EnergyMonitorApp
+//        or /Applications/EnergyMonitorApp.app/Contents/MacOS/EnergyMonitorApp
+//
+// When installed in /Applications, the app reads the repo path from
+// Contents/Resources/project_root.txt (written by build.sh).
 
 private func resolveProjectRoot() -> URL {
     let binaryURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
     if binaryURL.pathComponents.contains("Contents") {
+        if let embeddedRoot = Bundle.main.url(forResource: "project_root", withExtension: "txt"),
+           let raw = try? String(contentsOf: embeddedRoot, encoding: .utf8) {
+            let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !path.isEmpty {
+                return URL(fileURLWithPath: path)
+            }
+        }
         return binaryURL
             .deletingLastPathComponent() // binary name
             .deletingLastPathComponent() // MacOS/
