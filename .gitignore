@@ -46,3 +46,6 @@ EnergyMonitorApp/EnergyMonitorApp.app/Contents/MacOS/EnergyMonitorApp
 
 # Built app bundle
 EnergyMonitorApp/EnergyMonitorApp.app/
+
+# Private utility bill baselines
+billing_history.json
