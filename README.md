@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.0.0-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.0.1-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -28,7 +28,7 @@ A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](http
 - **Poller health** — heartbeat monitoring, reconnect flows, and live status updates through SSE
 - **CSV import** — historical Emporia export import with service capability detection and duplicate protection
 - **Panel editor** — breaker slot assignments, amps, pole type, labels, notes, and explicit panel slot count
-- **Menu bar app** — native macOS wrapper that launches the local dashboard and shows synced app versioning
+- **Menu bar app** — native macOS wrapper with minute-average service watts, offline/stale status, automatic polling when launched directly, and synced app versioning
 
 ---
 
@@ -95,9 +95,13 @@ What it does:
 | 5 | Starts `energy.py` unbuffered and waits for the first heartbeat |
 | 6 | Opens `EnergyMonitorApp.app` unless `--no-open` |
 
+If the default port is occupied, use `FLASK_PORT=5017 ./build.sh --no-pull`.
+The chosen port is saved in the app bundle for subsequent launches. Startup rejects
+unrelated services on that port and verifies the dashboard version before polling.
+
 Logs:
-- Flask → `/Users/seandolbec/Projects/Emporia_energy_monitoring/flask.log`
-- Poller → `/tmp/energymonitor-poller.log`
+- Flask → `flask.log in the project`
+- Poller → `/tmp/energymonitor-poller.log` when started by `build.sh`, or `poller.log` in the project when started by the menu app
 
 ---
 
@@ -241,4 +245,4 @@ Current test coverage includes:
 
 ## Release Notes
 
-See `/Users/seandolbec/Projects/Emporia_energy_monitoring/CHANGELOG.md` for the 2.0.0 release summary.
+See `CHANGELOG.md` for release notes, `docs/AUDIT.md` for audit findings, and `docs/ROADMAP.md` for the refinement plan.

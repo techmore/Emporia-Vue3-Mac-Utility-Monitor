@@ -7,23 +7,32 @@ private let APP_VERSION_FALLBACK = "…"
 
 // ── Single-instance lock ──────────────────────────────────────────────────────
 
-private let kLockFile = "/tmp/com.dolbec.energymonitor.lock"
+private var lockDescriptor: Int32 = -1
 
-/// Returns true if we are the only running instance and the lock was acquired.
+/// Hold an OS lock for the app lifetime, including across simultaneous launches.
 private func acquireLock() -> Bool {
-    if let existing = try? String(contentsOfFile: kLockFile, encoding: .utf8)
-                               .trimmingCharacters(in: .whitespacesAndNewlines),
-       let pid = pid_t(existing),
-       kill(pid, 0) == 0 {
-        return false   // another instance is alive
+    let directory = URL(fileURLWithPath: NSHomeDirectory())
+        .appendingPathComponent("Library/Caches/com.dolbec.energymonitor")
+    do {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    } catch { return false }
+    let descriptor = Darwin.open(directory.appendingPathComponent("instance.lock").path,
+                                 O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else { return false }
+    guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+        Darwin.close(descriptor)
+        return false
     }
-    let myPID = String(ProcessInfo.processInfo.processIdentifier)
-    try? myPID.write(toFile: kLockFile, atomically: true, encoding: .utf8)
+    lockDescriptor = descriptor
     return true
 }
 
 private func releaseLock() {
-    try? FileManager.default.removeItem(atPath: kLockFile)
+    if lockDescriptor >= 0 {
+        flock(lockDescriptor, LOCK_UN)
+        Darwin.close(lockDescriptor)
+        lockDescriptor = -1
+    }
 }
 
 // ── Project root resolution ───────────────────────────────────────────────────
@@ -59,8 +68,13 @@ private func resolveProjectRoot() -> URL {
 
 private let projectRoot   = resolveProjectRoot()
 private let venvPython    = projectRoot.appendingPathComponent("venv/bin/python3").path
-private let flaskPort     = ProcessInfo.processInfo.environment["FLASK_PORT"] ?? "5001"
-private let dashboardURL  = URL(string: "http://localhost:\(flaskPort)")!
+private let flaskPort: String = {
+    let embedded = Bundle.main.url(forResource: "flask_port", withExtension: "txt")
+        .flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return ProcessInfo.processInfo.environment["FLASK_PORT"] ?? embedded ?? "5001"
+}()
+private let dashboardURL  = URL(string: "http://127.0.0.1:\(flaskPort)")!
 
 private func validateProjectRoot() -> String? {
     let fm = FileManager.default
@@ -101,43 +115,16 @@ private func validateProjectRoot() -> String? {
     return nil
 }
 
-// ── Local IP helper ───────────────────────────────────────────────────────────
-
-private func localNetworkIP() -> String? {
-    var ifaddr: UnsafeMutablePointer<ifaddrs>?
-    guard getifaddrs(&ifaddr) == 0 else { return nil }
-    defer { freeifaddrs(ifaddr) }
-    var ptr = ifaddr
-    while let current = ptr {
-        let ifa = current.pointee
-        guard let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else {
-            ptr = current.pointee.ifa_next
-            continue
-        }
-        let name = String(cString: ifa.ifa_name)
-        if name.hasPrefix("en") {
-            var ipv4 = UnsafeRawPointer(addr)
-                .assumingMemoryBound(to: sockaddr_in.self)
-                .pointee
-            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-            let result = withUnsafePointer(to: &ipv4.sin_addr) {
-                inet_ntop(AF_INET, $0, &buf, socklen_t(INET_ADDRSTRLEN))
-            }
-            if result != nil {
-                let ip = String(cString: buf)
-                if ip != "0.0.0.0" { return ip }
-            }
-        }
-        ptr = current.pointee.ifa_next
-    }
-    return nil
-}
-
 // ── AppDelegate ───────────────────────────────────────────────────────────────
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var flaskProcess: Process?
+    private var pollerProcess: Process?
     var statusItem: NSStatusItem?
+    private var ownsLock = false
+    private var monitorTimer: Timer?
+    private var refreshInFlight = false
+    private weak var healthMenuItem: NSMenuItem?
 
     private let probeInterval: TimeInterval = 0.5
     private let probeTimeout:  TimeInterval = 20.0
@@ -158,6 +145,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        ownsLock = true
         print("Energy Monitor — project root: \(projectRoot.path)")
         if let problem = validateProjectRoot() {
             let alert = NSAlert()
@@ -166,12 +154,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alert.alertStyle = .critical
             alert.addButton(withTitle: "OK")
             alert.runModal()
-            releaseLock()
+            if ownsLock { releaseLock() }
             NSApp.terminate(nil)
             return
         }
         NSApp.setActivationPolicy(.accessory)
         startFlaskServer()
+        startPollerIfNeeded()
         buildStatusItem()
         waitForFlaskThenOpen()
     }
@@ -179,7 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ── Menu-bar status item ──────────────────────────────────────────────────
 
     private func buildStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let btn = item.button {
             btn.image = NSImage(systemSymbolName: "bolt.fill",
                                 accessibilityDescription: "Energy Monitor")
@@ -196,6 +185,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(headerItem)
         headerMenuItem = headerItem
 
+        let healthItem = NSMenuItem(title: "Connecting to monitor…", action: nil, keyEquivalent: "")
+        healthItem.isEnabled = false
+        menu.addItem(healthItem)
+        healthMenuItem = healthItem
         menu.addItem(.separator())
 
         // ── Primary actions ──
@@ -230,6 +223,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+        monitorTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.refreshMonitor()
+        }
+        refreshMonitor()
     }
 
     @objc private func openInBrowser() {
@@ -237,8 +234,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func copyLocalURL() {
-        let ip  = localNetworkIP() ?? "localhost"
-        let url = "http://\(ip):\(flaskPort)"
+        let url = dashboardURL.absoluteString
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
         copyURLMenuItem?.title = "Copied!"
@@ -272,8 +268,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             candidate = candidate.deletingLastPathComponent()
         }
 
+        pollerProcess?.terminate()
         flaskProcess?.terminate()
-        releaseLock()
+        if ownsLock { releaseLock() }
 
         var resultURL: NSURL?
         do {
@@ -292,10 +289,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
+    // Poll asynchronously; stale data must never look like a live power reading.
+    private func refreshMonitor() {
+        guard !refreshInFlight else { return }
+        refreshInFlight = true
+        let request = URLRequest(url: dashboardURL.appendingPathComponent("api/poller-status"),
+                                 timeoutInterval: 5)
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            let status = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let live = (response as? HTTPURLResponse)?.statusCode == 200
+                && status?["poller_running"] as? Bool == true
+                && status?["ok"] as? Bool == true
+            guard live else {
+                DispatchQueue.main.async {
+                    self?.refreshInFlight = false
+                    self?.statusItem?.button?.title = " Offline"
+                    self?.statusItem?.button?.toolTip = "Energy Monitor — poller offline or stale"
+                    self?.healthMenuItem?.title = "Poller offline or stale — check Settings"
+                }
+                return
+            }
+            let latest = URLRequest(url: dashboardURL.appendingPathComponent("api/latest"),
+                                    timeoutInterval: 5)
+            URLSession.shared.dataTask(with: latest) { data, response, _ in
+                let rows = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] }
+                let main = rows?.first { $0["channel_name"] as? String == "Main" }
+                let watts = (main?["usage_kwh"] as? Double).map { $0 * 60 * 1000 }
+                let timestamp = main?["timestamp"] as? String
+                // SQLite uses local wall time without an offset.
+                let localFormatter = DateFormatter()
+                localFormatter.locale = Locale(identifier: "en_US_POSIX")
+                localFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+                let date = timestamp.flatMap { localFormatter.date(from: String($0.prefix(19))) }
+                let fresh = date.map { Date().timeIntervalSince($0) >= -60 && Date().timeIntervalSince($0) < 180 } ?? false
+                let valid = (response as? HTTPURLResponse)?.statusCode == 200 && fresh && watts?.isFinite == true
+                let power = valid ? String(format: " %.0f W", watts!) : " No data"
+                DispatchQueue.main.async {
+                    self?.refreshInFlight = false
+                    self?.statusItem?.button?.title = power
+                    self?.statusItem?.button?.toolTip = "Energy Monitor — minute-average power" + power
+                    self?.healthMenuItem?.title = valid ? "Live · minute-average power" : "Poller connected · waiting for readings"
+                }
+            }.resume()
+        }.resume()
+    }
+
     // ── Live version fetch ────────────────────────────────────────────────
 
     private func fetchVersionFromFlask() {
-        guard let url = URL(string: "http://localhost:\(flaskPort)/api/version") else { return }
+        guard let url = URL(string: "http://127.0.0.1:\(flaskPort)/api/version") else { return }
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -313,8 +355,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        monitorTimer?.invalidate()
+        pollerProcess?.terminate()
         flaskProcess?.terminate()
-        releaseLock()
+        if ownsLock { releaseLock() }
     }
 
     // ── Orphan cleanup ────────────────────────────────────────────────────────
@@ -337,7 +381,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let pids = raw.components(separatedBy: .newlines)
                       .compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
 
-        let venvPrefix = projectRoot.appendingPathComponent("venv").path
 
         for pid in pids {
             // Step 2: confirm the process is ours by checking its command line
@@ -354,7 +397,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                              encoding: .utf8) ?? ""
 
             // Only kill if the command uses our project's venv python AND web.py
-            if cmd.contains(venvPrefix) && cmd.contains("web.py") {
+            if cmd.contains("web.py") && processBelongsToProject(String(pid)) {
                 kill(pid, SIGTERM)
                 print("Killed orphaned Flask process (PID \(pid))")
             }
@@ -362,6 +405,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Brief pause to let the port free up
         Thread.sleep(forTimeInterval: 0.5)
+    }
+
+    private func processBelongsToProject(_ pid: String) -> Bool {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-a", "-p", pid, "-d", "cwd", "-Fn"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        return text.components(separatedBy: .newlines).contains("n" + projectRoot.path)
+    }
+
+    // The menu app owns polling when no independently launched poller is running.
+    private func startPollerIfNeeded() {
+        let check = Process()
+        let output = Pipe()
+        check.executableURL = URL(fileURLWithPath: "/bin/ps")
+        check.arguments = ["-axo", "pid=,command="]
+        check.standardOutput = output
+        do {
+            try check.run()
+            let commands = String(data: output.fileHandleForReading.readDataToEndOfFile(),
+                                  encoding: .utf8) ?? ""
+            check.waitUntilExit()
+            if commands.components(separatedBy: .newlines).contains(where: {
+                let fields = $0.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+                guard fields.count == 2, fields[1].hasSuffix(" energy.py") || fields[1].hasSuffix("/energy.py") else { return false }
+                return processBelongsToProject(String(fields[0]))
+            }) { return }
+            let logURL = projectRoot.appendingPathComponent("poller.log")
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            }
+            let log = try FileHandle(forWritingTo: logURL)
+            defer { try? log.close() }
+            try log.seekToEnd()
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: venvPython)
+            process.arguments = ["-u", "energy.py"]
+            process.currentDirectoryURL = projectRoot
+            process.standardOutput = log
+            process.standardError = log
+            try process.run()
+            pollerProcess = process
+        } catch {
+            print("Failed to start poller: \(error.localizedDescription)")
+        }
     }
 
     // ── Flask startup ─────────────────────────────────────────────────────────
@@ -379,6 +472,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         process.standardError       = pipe
 
         var env = ProcessInfo.processInfo.environment
+        env["FLASK_PORT"] = flaskPort
         env["FLASK_ENV"]   = "production"
         env["VIRTUAL_ENV"] = projectRoot.appendingPathComponent("venv").path
         env["PATH"]        = projectRoot.appendingPathComponent("venv/bin").path

@@ -75,6 +75,16 @@ echo "║       Emporia Energy Monitor — build.sh      ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 
+# Refuse to mistake another service for our dashboard before changing processes.
+for PID in $(lsof -nP -iTCP:"$FLASK_PORT" -sTCP:LISTEN -t 2>/dev/null || true); do
+  CMD=$(ps -p "$PID" -o command= 2>/dev/null || true)
+  PROCESS_CWD=$(lsof -a -p "$PID" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+  if [[ "$PROCESS_CWD" != "$SCRIPT_DIR" || "$CMD" != *"web.py"* ]]; then
+    warn "Port $FLASK_PORT is occupied by another service. Set FLASK_PORT to a free port."
+    exit 1
+  fi
+done
+
 # ── 1. Kill existing project processes ────────────────────────────────────────
 echo "[ 1 / 6 ]  Stopping existing processes…"
 
@@ -111,6 +121,8 @@ if [ "$DO_SWIFT" = true ]; then
     -framework WebKit \
     "$SRC" \
     -o "$BIN"
+  mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+  cp "$APP_DIR/Resources/Info.plist" "$BUNDLE/Contents/Info.plist"
   cp "$BIN" "$BUNDLE_BIN"
   ok "Binary → $BIN"
   ok "Bundle → $BUNDLE_BIN"
@@ -121,6 +133,7 @@ fi
 if [ -d "$BUNDLE" ]; then
   mkdir -p "$BUNDLE/Contents/Resources"
   printf "%s\n" "$SCRIPT_DIR" > "$BUNDLE/Contents/Resources/project_root.txt"
+  printf "%s\n" "$FLASK_PORT" > "$BUNDLE/Contents/Resources/flask_port.txt"
   rm -rf "$APP_INSTALL"
   cp -R "$BUNDLE" "$APP_INSTALL"
   ok "Installed → $APP_INSTALL"
@@ -138,14 +151,24 @@ ok "Flask started (PID $FLASK_PID) — log: $FLASK_LOG"
 
 # Wait for Flask to be ready (up to 10s)
 info "Waiting for Flask on :${FLASK_PORT}…"
+FLASK_READY=false
 for i in $(seq 1 10); do
-  if curl -s "$FLASK_BASE_URL/api/version" > /dev/null 2>&1; then
-    VERSION=$(curl -s "$FLASK_BASE_URL/api/version" | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null || echo "?")
+  if ! kill -0 "$FLASK_PID" 2>/dev/null; then
+    warn "Flask exited during startup. See $FLASK_LOG"
+    exit 1
+  fi
+  if VERSION=$(curl --fail --silent --max-time 2 "$FLASK_BASE_URL/api/version" | "$VENV_PYTHON" -c "import sys,json; print(json.load(sys.stdin)['version'])" 2>/dev/null); then
     ok "Flask is up — v$VERSION"
+    FLASK_READY=true
     break
   fi
   sleep 1
 done
+if [ "$FLASK_READY" != true ]; then
+  warn "Flask did not become ready. See $FLASK_LOG"
+  kill "$FLASK_PID" 2>/dev/null || true
+  exit 1
+fi
 
 # ── 5. Start poller (energy.py) ───────────────────────────────────────────────
 echo ""

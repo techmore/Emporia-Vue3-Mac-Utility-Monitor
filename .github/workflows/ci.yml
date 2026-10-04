@@ -23,8 +23,11 @@ jobs:
       - name: Install dependencies
         run: venv/bin/python3 -m pip install -r requirements.lock
 
+      - name: Check release metadata
+        run: venv/bin/python3 scripts/check_release.py
+
       - name: Syntax check
-        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py
+        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py
 
       - name: Run unit tests
         run: venv/bin/python3 -m unittest discover -s tests -v
@@ -38,3 +41,6 @@ jobs:
               response = client.get(path)
               assert response.status_code == 200, f"{path}: {response.status_code}"
           PY
+
+      - name: Compile and package release
+        run: ./release.sh

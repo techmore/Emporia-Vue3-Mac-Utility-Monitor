@@ -6,6 +6,7 @@ import sqlite3
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+from runtime_store import write_private_json
 import pyemvue
 from pyemvue.enums import Scale, Unit
 
@@ -31,10 +32,9 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
             "error": error,
             "consecutive_errors": consecutive_errors,
         }
-        with open(POLLER_STATUS_FILE, "w") as f:
-            json.dump(data, f)
+        _write_json_file(POLLER_STATUS_FILE, data)
     except Exception:
-        pass
+        logger.exception("Could not write poller heartbeat")
 
 
 def read_poller_status() -> dict:
@@ -85,9 +85,7 @@ def _chmod_owner_only(path: str | Path) -> None:
 
 
 def _write_json_file(path: str | Path, data: dict) -> None:
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-    _chmod_owner_only(path)
+    write_private_json(path, data)
 
 
 def _connect() -> sqlite3.Connection:
@@ -360,6 +358,23 @@ def save_panel_slot(slot: int, channel_name: str | None, label: str | None,
     conn.close()
 
 
+def save_panel_layout(slots: list[dict]) -> None:
+    """Save a validated layout in one transaction."""
+    conn = _connect()
+    try:
+        with conn:
+            conn.executemany(
+                """INSERT INTO circuit_labels(slot, channel_name, label, note, amps, poles)
+                   VALUES(?,?,?,?,?,?) ON CONFLICT(slot) DO UPDATE SET
+                   channel_name=excluded.channel_name, label=excluded.label,
+                   note=excluded.note, amps=excluded.amps, poles=excluded.poles""",
+                [(s["slot"], s.get("channel_name") or None, s.get("label") or None,
+                  s.get("note") or None, s.get("amps"), s.get("poles", 1)) for s in slots],
+            )
+    finally:
+        conn.close()
+
+
 # Ensure the table exists as soon as this module is imported.
 ensure_table()
 
@@ -536,6 +551,8 @@ def _normalize_channel_name(name: str | None) -> str | None:
 
 
 def poll_and_store(vue, device_gids):
+    global RATE_CENTS
+    RATE_CENTS = _read_rate_cents()
     conn = _connect()
     c = conn.cursor()
 

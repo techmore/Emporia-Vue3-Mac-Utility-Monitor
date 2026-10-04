@@ -303,15 +303,16 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(context["current_kwh"], 1.0)
 
     def test_get_channel_totals_includes_meta_channels(self):
+        now = energy.datetime.now().isoformat()
         conn = energy._connect()
         conn.executemany(
             """INSERT INTO readings
                (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
                VALUES (?, ?, ?, ?, ?, ?)""",
             [
-                ("2026-03-13T11:00:00", "A", 1, "Mains_A", 0.5, 5.0),
-                ("2026-03-13T11:00:00", "A", 2, "Mains_B", 0.6, 6.0),
-                ("2026-03-13T11:00:00", "A", 3, "Dryer", 0.2, 2.0),
+                (now, "A", 1, "Mains_A", 0.5, 5.0),
+                (now, "A", 2, "Mains_B", 0.6, 6.0),
+                (now, "A", 3, "Dryer", 0.2, 2.0),
             ],
         )
         conn.commit()

@@ -1,121 +1,65 @@
 #!/bin/bash
+# Portable source-first release. Does not stop or install the running app.
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DIST_DIR="$SCRIPT_DIR/dist"
-STAGE_ROOT="$DIST_DIR/stage"
-VERSION="$($SCRIPT_DIR/venv/bin/python3 - <<'PY'
-import re
-from pathlib import Path
-text = Path('/Users/seandolbec/Projects/Emporia_energy_monitoring/web.py').read_text()
-m = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.M)
-if not m:
-    raise SystemExit('Could not determine version from web.py')
-print(m.group(1))
-PY
-)"
-RELEASE_NAME="Emporia-Energy-Monitor-$VERSION"
-STAGE_DIR="$STAGE_ROOT/$RELEASE_NAME"
-ARCHIVE_PATH="$DIST_DIR/$RELEASE_NAME-macos.zip"
-APP_DIR="$SCRIPT_DIR/EnergyMonitorApp"
-APP_BUNDLE="$APP_DIR/EnergyMonitorApp.app"
-APP_BIN="$APP_DIR/EnergyMonitorApp"
+PYTHON="$SCRIPT_DIR/venv/bin/python3"
+[ -x "$PYTHON" ] || { echo "Create venv and install requirements.lock first" >&2; exit 1; }
+VERSION="$("$PYTHON" "$SCRIPT_DIR/scripts/check_release.py")"
 NO_SWIFT=false
-
 for arg in "$@"; do
   case "$arg" in
     --no-swift) NO_SWIFT=true ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
 done
-
-ok() { echo "  ✓  $*"; }
-info() { echo "  →  $*"; }
-warn() { echo "  ⚠  $*"; }
-
-if [ ! -x "$SCRIPT_DIR/venv/bin/python3" ]; then
-  echo "Missing virtualenv Python at $SCRIPT_DIR/venv/bin/python3" >&2
-  exit 1
-fi
-
-mkdir -p "$DIST_DIR"
-rm -rf "$STAGE_DIR"
-mkdir -p "$STAGE_DIR"
-
+APP_DIR="$SCRIPT_DIR/EnergyMonitorApp"
+BUNDLE="$APP_DIR/EnergyMonitorApp.app"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+cp "$APP_DIR/Resources/Info.plist" "$BUNDLE/Contents/Info.plist"
 if [ "$NO_SWIFT" = false ]; then
-  info "Compiling Swift app bundle"
-  SDK="$(xcrun --show-sdk-path)"
-  swiftc \
-    -sdk "$SDK" \
-    -target arm64-apple-macosx13.0 \
-    -framework SwiftUI \
-    -framework AppKit \
-    -framework WebKit \
-    "$APP_DIR/Sources/main.swift" \
-    -o "$APP_BIN"
-  cp "$APP_BIN" "$APP_BUNDLE/Contents/MacOS/EnergyMonitorApp"
-  ok "Swift app compiled"
-else
-  warn "Skipping Swift compile (--no-swift)"
+  swiftc -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macosx13.0 \
+    -framework AppKit "$APP_DIR/Sources/main.swift" \
+    -o "$BUNDLE/Contents/MacOS/EnergyMonitorApp"
 fi
-
-info "Staging release files"
-mkdir -p "$STAGE_DIR/EnergyMonitorApp"
-mkdir -p "$STAGE_DIR/setup"
-mkdir -p "$STAGE_DIR/tests"
-
-cp "$SCRIPT_DIR/README.md" "$STAGE_DIR/README.md"
-cp "$SCRIPT_DIR/CHANGELOG.md" "$STAGE_DIR/CHANGELOG.md"
-cp "$SCRIPT_DIR/LICENSE" "$STAGE_DIR/LICENSE"
-cp "$SCRIPT_DIR/build.sh" "$STAGE_DIR/build.sh"
-cp "$SCRIPT_DIR/setup_launch.sh" "$STAGE_DIR/setup_launch.sh"
-cp "$SCRIPT_DIR/requirements.txt" "$STAGE_DIR/requirements.txt"
-cp "$SCRIPT_DIR/requirements.lock" "$STAGE_DIR/requirements.lock"
-cp "$SCRIPT_DIR/energy.py" "$STAGE_DIR/energy.py"
-cp "$SCRIPT_DIR/web.py" "$STAGE_DIR/web.py"
-cp "$SCRIPT_DIR/aqara.py" "$STAGE_DIR/aqara.py"
-cp "$SCRIPT_DIR/AGENTS.md" "$STAGE_DIR/AGENTS.md"
-cp "$SCRIPT_DIR/setup/launchagent.plist" "$STAGE_DIR/setup/launchagent.plist"
-cp "$SCRIPT_DIR/setup/launchagent-poller.plist" "$STAGE_DIR/setup/launchagent-poller.plist"
-cp "$SCRIPT_DIR/tests/test_energy.py" "$STAGE_DIR/tests/test_energy.py"
-cp -R "$APP_BUNDLE" "$STAGE_DIR/EnergyMonitorApp/EnergyMonitorApp.app"
-cp "$APP_DIR/Resources/Info.plist" "$STAGE_DIR/EnergyMonitorApp/Info.plist"
-cp "$APP_DIR/project.yml" "$STAGE_DIR/EnergyMonitorApp/project.yml"
-cp "$APP_DIR/Resources/EnergyMonitorApp.entitlements" "$STAGE_DIR/EnergyMonitorApp/EnergyMonitorApp.entitlements"
-cp "$APP_DIR/Sources/main.swift" "$STAGE_DIR/EnergyMonitorApp/main.swift"
-
-cat > "$STAGE_DIR/RELEASE_NOTES.txt" <<NOTES
+[ -x "$BUNDLE/Contents/MacOS/EnergyMonitorApp" ] || { echo "Missing app binary" >&2; exit 1; }
+DIST="$SCRIPT_DIR/dist"
+NAME="Emporia-Energy-Monitor-$VERSION"
+STAGE="$DIST/stage/$NAME"
+ARCHIVE="$DIST/$NAME-macos.zip"
+rm -rf "$STAGE"
+mkdir -p "$STAGE/EnergyMonitorApp"
+for name in README.md CHANGELOG.md LICENSE AGENTS.md VERSION build.sh release.sh \
+  setup_launch.sh requirements.txt requirements.lock energy.py web.py aqara.py \
+  runtime_store.py panel_model.py; do
+  cp "$SCRIPT_DIR/$name" "$STAGE/"
+done
+for name in setup tests scripts docs; do
+  cp -R "$SCRIPT_DIR/$name" "$STAGE/"
+done
+cp -R "$APP_DIR/Sources" "$APP_DIR/Resources" "$APP_DIR/project.yml" "$BUNDLE" "$STAGE/EnergyMonitorApp/"
+# Strip machine-specific launch pointers from the distributed app.
+rm -f "$STAGE/EnergyMonitorApp/EnergyMonitorApp.app/Contents/Resources/project_root.txt" \
+      "$STAGE/EnergyMonitorApp/EnergyMonitorApp.app/Contents/Resources/flask_port.txt"
+find "$STAGE" -type d -name __pycache__ -prune -exec rm -rf {} +
+"$PYTHON" "$SCRIPT_DIR/scripts/check_release.py" "$STAGE"
+cat > "$STAGE/RELEASE_NOTES.txt" <<NOTES
 Emporia Energy Monitor $VERSION
-
-This archive is a source-first macOS release package.
-
-Included:
-- Prebuilt macOS app bundle in EnergyMonitorApp/EnergyMonitorApp.app
-- Python sources and setup scripts
-- LaunchAgent templates
-- Locked Python dependency set
-
-Not included:
-- Your local database, tokens, or runtime settings
-- Python virtualenv
-- Signed/notarized installer package
-
-Recommended first-run steps:
-1. Create a virtualenv and install requirements.lock
-2. Run ./build.sh or open EnergyMonitorApp/EnergyMonitorApp.app
-3. Configure credentials in Settings
+Source-first release for Apple Silicon, macOS 13+.
+Create venv with Python 3.12 and install requirements.lock, then run ./build.sh.
+For an occupied default port: FLASK_PORT=5017 ./build.sh --no-pull
+Credentials, tokens, databases, runtime settings and virtualenv are excluded.
+The app is unsigned and is not a standalone installer.
+See docs/AUDIT.md and docs/ROADMAP.md for validation and remaining work.
 NOTES
-
-info "Creating zip archive"
-rm -f "$ARCHIVE_PATH"
-cd "$STAGE_ROOT"
-/usr/bin/zip -qry "$ARCHIVE_PATH" "$RELEASE_NAME"
-ok "Archive created at $ARCHIVE_PATH"
-
-cat <<SUMMARY
-
-Release package ready:
-  Version: $VERSION
-  Archive: $ARCHIVE_PATH
-  Staged:  $STAGE_DIR
-SUMMARY
+"$PYTHON" - "$STAGE" <<'PY'
+import hashlib, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+lines = [f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(root)}'
+         for p in sorted(root.rglob('*')) if p.is_file()]
+(root / 'MANIFEST.sha256').write_text('\n'.join(lines) + '\n')
+PY
+rm -f "$ARCHIVE"
+(cd "$DIST/stage" && /usr/bin/zip -qry "$ARCHIVE" "$NAME")
+shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+echo "Release ready: $ARCHIVE"

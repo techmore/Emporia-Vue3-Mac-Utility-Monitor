@@ -4,6 +4,9 @@ Energy Monitor — Flask web server
 Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlsplit
+from panel_model import breaker_load
 from flask import Flask, jsonify, redirect, render_template_string, Response, request
 from jinja2 import select_autoescape
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -19,11 +22,43 @@ app.jinja_env.autoescape = select_autoescape(
     enabled_extensions=("html", "htm", "xml"),
     default_for_string=True,
 )
-FLASK_HOST = os.environ.get("FLASK_HOST", "127.0.0.1")
+FLASK_HOST = "127.0.0.1"
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
 
-VERSION = "2.0.0"
-_dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None}
+VERSION = Path(__file__).with_name("VERSION").read_text().strip()
+_dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None, "built_at": 0}
+
+
+@app.before_request
+def validate_local_request():
+    """Keep the local service local, and reject cross-origin mutation requests."""
+    if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return jsonify({"error": "Local host required"}), 403
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("Origin")
+        if (origin and origin.rstrip("/") != request.host_url.rstrip("/")) or request.headers.get("Sec-Fetch-Site") == "cross-site":
+            return jsonify({"error": "Same-origin request required"}), 403
+        if request.path != "/api/import-csv":
+            if not request.is_json:
+                return jsonify({"error": "application/json required"}), 415
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                return jsonify({"error": "Expected JSON object"}), 400
+            if request.path in {"/api/settings/credentials", "/api/poller-reconnect"}:
+                if any(data.get(field) is not None and not isinstance(data[field], str) for field in ("email", "password")):
+                    return jsonify({"error": "Credentials must be strings"}), 400
+    return None
+
+
+@app.after_request
+def invalidate_after_write(response):
+    if request.method == "POST" and response.status_code < 400:
+        _dashboard_cache["common"] = None
+        _dashboard_cache["context"] = None
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 
 def _read_monthly_budget() -> float:
@@ -459,6 +494,11 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   .panel-view-metrics { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 720px) {
+  nav.topnav .inner { height:auto; min-height:56px; flex-wrap:wrap; gap:8px; padding:8px 12px; }
+  nav.topnav .nav-links { order:3; width:100%; overflow-x:auto; }
+  .page { padding-left:12px; padding-right:12px; }
+  .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); }
+  .panel-grid { grid-template-columns: minmax(0, 1fr); }
   .panel-view-metrics { grid-template-columns: 1fr; }
 }
 .breaker {
@@ -758,6 +798,11 @@ NAV_HTML = """
   </div>
 </nav>
 <script>
+window.escapeHTML = function(value) {
+  const element = document.createElement('span');
+  element.textContent = String(value ?? '');
+  return element.innerHTML;
+};
 (function() {
   function getEnergyEventSource() {
     if (!window.__energyEventSource) {
@@ -844,41 +889,17 @@ def _poller_status_snapshot() -> dict:
 
 
 def _build_live_dashboard_payload() -> dict:
-    ctx = energy.get_now_vs_context(60)
-    latest_map = {row["channel_name"]: row["usage_kwh"] for row in ctx["latest"]}
-    main_now = next((row for row in ctx["latest"] if row["channel_name"] == "Main"), None)
-    current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
-    summary_24 = energy.get_summary(24)
-    summary_24_map = {row["channel_name"]: row for row in summary_24}
-    total_24h_main = energy.get_main_total(24)
-    total_kwh_24 = (total_24h_main or {}).get("total_kwh") or (sum(row["total_kwh"] for row in summary_24) or 1)
-    top_circuits = []
-    for row in ctx["circuits"]:
-        name = row["channel_name"]
-        if name in _MAINS_NAMES or name in _SKIP_NAMES:
-            continue
-        summary_row = summary_24_map.get(name, {})
-        top_circuits.append({
-            "channel_name": name,
-            "display_name": name,
-            "watts": _watts_estimate(latest_map.get(name, 0)),
-            "kwh_24h": summary_row.get("total_kwh", 0),
-            "pct_24h": ((summary_row.get("total_kwh", 0) / total_kwh_24) * 100) if total_kwh_24 else 0,
-        })
-    top_circuits.sort(key=lambda row: row["watts"], reverse=True)
-    main_24h = energy.get_main_total(24)
-    total_24h = main_24h or {
-        "total_kwh": sum(row["total_kwh"] for row in summary_24),
-        "total_cents": sum(row["total_cents"] for row in summary_24),
-    }
-    latest_ts = ctx["latest"][0]["timestamp"] if ctx["latest"] else None
+    _common_values, dashboard = _get_cached_dashboard()
     return {
-        "latest_timestamp": latest_ts,
-        "current_watts": round(current_watts, 1),
-        "current_kwh": round(ctx["current_kwh"] or 0, 3),
-        "monthly_projected": round((total_24h["total_kwh"] or 0) * 30 * RATE, 3),
-        "cost_per_hour": round(current_watts / 1000 * RATE, 2),
-        "top_circuits": top_circuits[:12],
+        "latest_timestamp": energy.get_latest_timestamp(),
+        "current_watts": round(dashboard["current_watts"], 1),
+        "reading_fresh": _reading_fresh(dashboard["main_now"]),
+        "current_kwh": round(dashboard["ctx"]["current_kwh"] or 0, 3),
+        "monthly_projected": round(dashboard["monthly_projected"], 2),
+        "cost_per_hour": round(dashboard["cost_per_hour"], 2),
+        "top_circuits": dashboard["top_live_circuits"],
+        "panel_fragment": dashboard["panel_fragment"],
+        "budget_pct": dashboard["budget_pct"],
     }
 
 
@@ -901,7 +922,10 @@ def _watts_estimate(kwh_per_minute: float) -> float:
 
 def _render(template: str, **ctx):
     return render_template_string(
-        NAV_HTML + "\n<style>" + BASE_CSS + "</style>\n" + template,
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
+        + NAV_HTML + template + '</body></html>',
         **ctx
     )
 
@@ -972,11 +996,11 @@ PANEL_FRAGMENT_HTML = """
           <div class="breaker-bar-wrap" title="Relative share of current panel load">
             <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
           </div>
-          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="Continuous-load safety vs 80% of breaker rating">
+          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="{{ 'Estimated load vs configured rating; 80% reference' if b.rating_known else 'Set breaker rating in Panel Layout' }}">
             <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
           </div>
         </div>
-        <div class="breaker-bar-labels"><span>Load</span><span>Safe</span></div>
+        <div class="breaker-bar-labels"><span>Load</span><span>Rating</span></div>
       </div>
       {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
     </a>
@@ -1127,21 +1151,21 @@ DASH_HTML = """
     <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
       <div>
         <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--olive-400); margin-bottom:0.35rem;">
-          Right Now &mdash; {{ ctx.window_minutes }}-min window
+          Minute-average power
         </div>
         <div class="watts-big">
-          <span id="live-current-watts">{{ "%.1f"|format(current_watts) }}</span>
+          <span id="live-current-watts">{{ "%.1f"|format(current_watts) if freshness else "—" }}</span>
           <span class="watts-unit">W</span>
         </div>
         <div style="font-size:0.85rem; color:var(--olive-300); margin-top:0.3rem;">
-          <span id="live-window-kwh">{{ "%.3f"|format(ctx.current_kwh or 0) }}</span> kWh &bull;
-          $<span id="live-projected-month">{{ "%.3f"|format((ctx.current_kwh or 0) * 30 * 24 * rate) }}</span> projected/mo
+          <span id="live-window-kwh">{{ "%.3f"|format(ctx.current_kwh or 0) }}</span> kWh / {{ ctx.window_minutes }} min &bull;
+          $<span id="live-projected-month">{{ "%.2f"|format(monthly_projected) }}</span> projected/mo
         </div>
       </div>
 
       <div id="banner-forecast" class="banner-forecast" style="display:none;">
         <div class="banner-forecast-head">
-          <div class="banner-forecast-title">7-Day Trend</div>
+          <div class="banner-forecast-title">7-Day Weather</div>
           <div class="banner-forecast-sub">high / low forecast including today</div>
         </div>
         <div id="banner-forecast-days" class="banner-forecast-days"></div>
@@ -1155,11 +1179,11 @@ DASH_HTML = """
             <circle cx="45" cy="45" r="38" fill="none"
               stroke="{{ '#FF453A' if budget_pct > 100 else '#9ca865' }}"
               stroke-width="8"
-              stroke-dasharray="{{ [budget_pct/100*239, 239]|min|round(1) }} 239"
+              id="live-budget-ring" stroke-dasharray="{{ [budget_pct/100*239, 239]|min|round(1) }} 239"
               stroke-linecap="round"/>
           </svg>
           <div class="budget-center">
-            <div class="budget-pct" style="color:{{ '#FF453A' if budget_pct > 100 else 'var(--text)' }}">
+            <div id="live-budget-pct" class="budget-pct" style="color:{{ 'var(--red)' if budget_pct > 100 else 'var(--olive-50)' }}">
               {{ "%.0f"|format(budget_pct) }}%
             </div>
             <div class="budget-label">budget</div>
@@ -1168,13 +1192,16 @@ DASH_HTML = """
         <div>
           <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.07em; color:var(--olive-400);">Monthly</div>
           <div style="font-size:1.4rem; font-family:'Instrument Serif',serif; color:var(--olive-50);">
-            ${{ "%.2f"|format(monthly_projected) }}
+            $<span id="live-budget-projected">{{ "%.2f"|format(monthly_projected) }}</span>
           </div>
           <div style="font-size:0.75rem; color:var(--olive-400);">projected of ${{ budget|int }}/mo</div>
         </div>
       </div>
     </div>
 
+    {% if partial_history %}
+    <p style="margin-top:0.8rem;color:var(--olive-200);font-size:0.85rem;">Collecting history: monthly estimates use the recorded portion of the last 24 hours.</p>
+    {% endif %}
     <!-- Context row -->
     <div class="context-row">
       <div class="ctx-item">
@@ -1242,9 +1269,9 @@ DASH_HTML = """
     <div class="circuit-toolbar">
       <div class="circuit-toolbar-title">Active Circuits · Last {{ ctx.window_minutes }} min</div>
       <div class="view-toggle" id="viewToggle" aria-label="Circuit view modes">
-        <button class="vt-btn" data-view="panel" title="Breaker panel">⊞</button>
-        <button class="vt-btn" data-view="bars" title="Bar list">≡</button>
-        <button class="vt-btn" data-view="grid" title="Card grid">▦</button>
+        <button class="vt-btn" data-view="panel" aria-label="Breaker panel" title="Breaker panel">⊞</button>
+        <button class="vt-btn" data-view="bars" aria-label="Bar list" title="Bar list">≡</button>
+        <button class="vt-btn" data-view="grid" aria-label="Card grid" title="Card grid">▦</button>
       </div>
     </div>
 
@@ -1270,7 +1297,7 @@ DASH_HTML = """
     <div id="view-panel" style="display:none;">
       <div class="panel-view-layout">
         <div class="panel-view-shell" data-panel-section="digital-panel">
-          {{ panel_fragment|safe }}
+          <div id="live-panel-fragment">{{ panel_fragment|safe }}</div>
         </div>
 
         <div class="panel-view-sidebar" data-panel-section="sidebar-metrics">
@@ -1374,11 +1401,13 @@ DASH_HTML = """
   <script>
   (function(){
     const views = ['bars','panel','grid'];
-    const saved = localStorage.getItem('circuitView') || 'panel';
+    const stored = localStorage.getItem('circuitView');
+    const saved = views.includes(stored) ? stored : 'panel';
     function show(v) {
       views.forEach(n => {
         document.getElementById('view-'+n).style.display = n===v ? '' : 'none';
         document.querySelector('[data-view="'+n+'"]').classList.toggle('active', n===v);
+        document.querySelector('[data-view="'+n+'"]').setAttribute('aria-pressed', String(n===v));
       });
       localStorage.setItem('circuitView', v);
     }
@@ -1397,7 +1426,7 @@ DASH_HTML = """
       list.innerHTML = circuits.slice(0, 5).map((circuit, index) => `
         <div style="padding:5px 0; border-bottom:${index < Math.min(circuits.length, 5) - 1 ? '1px solid var(--border)' : 'none'};">
           <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-            <a href="/circuit/${encodeURIComponent(circuit.channel_name)}" style="flex:1; font-size:0.82rem; font-weight:600; color:var(--text); text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${circuit.display_name || circuit.channel_name}</a>
+            <a href="/circuit/${encodeURIComponent(circuit.channel_name)}" style="flex:1; font-size:0.82rem; font-weight:600; color:var(--text); text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(circuit.display_name || circuit.channel_name)}</a>
             <span style="font-size:0.78rem; color:var(--text-light);">${Math.round(circuit.pct_24h || 0)}%</span>
           </div>
           <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:2px;">
@@ -1408,19 +1437,36 @@ DASH_HTML = """
       `).join('');
     }
 
-    let lastLiveTimestamp = null;
+    let lastDashboardKey = null;
     window.subscribeEnergyEvents(function(payload) {
       const dashboard = payload && payload.dashboard;
-      if (!dashboard || dashboard.latest_timestamp === lastLiveTimestamp) return;
-      lastLiveTimestamp = dashboard.latest_timestamp;
+      if (!dashboard) return;
+      const dashboardKey = JSON.stringify(dashboard);
+      if (dashboardKey === lastDashboardKey) return;
+      lastDashboardKey = dashboardKey;
       const watts = document.getElementById('live-current-watts');
       const kwh = document.getElementById('live-window-kwh');
       const projected = document.getElementById('live-projected-month');
       const cost = document.getElementById('live-cost-per-hour');
-      if (watts) watts.textContent = Number(dashboard.current_watts || 0).toFixed(1);
+      if (watts) watts.textContent = dashboard.reading_fresh ? Number(dashboard.current_watts || 0).toFixed(1) : '—';
       if (kwh) kwh.textContent = Number(dashboard.current_kwh || 0).toFixed(3);
-      if (projected) projected.textContent = Number(dashboard.monthly_projected || 0).toFixed(3);
+      if (projected) projected.textContent = Number(dashboard.monthly_projected || 0).toFixed(2);
       if (cost) cost.textContent = Number(dashboard.cost_per_hour || 0).toFixed(2);
+      const panel = document.getElementById('live-panel-fragment');
+      if (panel && dashboard.panel_fragment) panel.innerHTML = dashboard.panel_fragment;
+      const budgetProjected = document.getElementById('live-budget-projected');
+      if (budgetProjected) budgetProjected.textContent = Number(dashboard.monthly_projected || 0).toFixed(2);
+      const budgetPct = document.getElementById('live-budget-pct');
+      const percentage = Number(dashboard.budget_pct || 0);
+      if (budgetPct) {
+        budgetPct.textContent = Math.round(percentage) + '%';
+        budgetPct.style.color = percentage > 100 ? 'var(--red)' : 'var(--olive-50)';
+      }
+      const ring = document.getElementById('live-budget-ring');
+      if (ring) {
+        ring.setAttribute('stroke-dasharray', Math.min(239, Math.max(0, percentage / 100 * 239)) + ' 239');
+        ring.setAttribute('stroke', percentage > 100 ? 'var(--red)' : 'var(--olive-400)');
+      }
       renderTopCircuits(dashboard.top_circuits || []);
     });
   })();
@@ -1777,7 +1823,7 @@ GUIDE_HTML = """
         <div class="card-label" style="margin-bottom:8px;">Dashboard</div>
         <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
           <div><strong>Now panel</strong>: live whole-home draw, cost rate, and short comparisons versus yesterday, last week, and last month.</div>
-          <div><strong>Panel view</strong>: mains cards plus breaker slots. Each breaker now shows both relative load and a safety bar against 80% of breaker rating.</div>
+          <div><strong>Panel view</strong>: mains cards plus breaker slots. Each breaker shows relative load and an estimated rating comparison when a breaker rating is configured.</div>
           <div><strong>Budget ring</strong>: rough monthly projection based on the last 24 hours at your configured rate.</div>
           <div><strong>Safety watch</strong>: breakers approaching or exceeding the continuous-load line.</div>
         </div>
@@ -1796,7 +1842,7 @@ GUIDE_HTML = """
         <div class="card-label" style="margin-bottom:8px;">Circuits And Panel Editor</div>
         <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
           <div><strong>Circuits</strong> shows the panel layout and circuit summaries with saved labels and notes.</div>
-          <div><strong>Panel Editor</strong> lets you assign slot names, breaker amps, and poles. If amps are blank, the app assumes 15A for safety calculations.</div>
+          <div><strong>Panel Editor</strong> lets you assign slot names, breaker amps, and poles. If amps are blank, the rating comparison remains unavailable until configured.</div>
           <div><strong>1P vs 2P</strong>: single-pole breakers use 120V assumptions; double-pole breakers use 240V.</div>
         </div>
       </div>
@@ -2928,12 +2974,12 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
       const cls = d.errors ? 'err' : 'ok';
       results.innerHTML +=
         `<div class="import-result ${cls}">
-          <strong>${file.name}</strong>: imported ${d.imported}, skipped ${d.skipped}, errors ${d.errors}
-          ${d.message ? ' — ' + d.message : ''}
+          <strong>${escapeHTML(file.name)}</strong>: imported ${d.imported}, skipped ${d.skipped}, errors ${d.errors}
+          ${d.message ? ' — ' + escapeHTML(d.message) : ''}
         </div>`;
     } catch (ex) {
       results.innerHTML +=
-        `<div class="import-result err"><strong>${file.name}</strong>: network error — ${ex}</div>`;
+        `<div class="import-result err"><strong>${escapeHTML(file.name)}</strong>: network error — ${escapeHTML(ex)}</div>`;
     }
   }
   btn.disabled = false;
@@ -2949,7 +2995,7 @@ def _common():
     """Values needed by every page (status indicator + device labels)."""
     active_device_gid = energy.get_active_device_gid()
     latest = energy.get_latest(active_device_gid)
-    last   = latest[0]["timestamp"] if latest else "N/A"
+    last   = energy.get_latest_timestamp(active_device_gid) or "N/A"
     cls, label, _ = _status(last)
     device_labels = energy.get_device_labels()
     named = [v for v in device_labels.values() if v.strip()]
@@ -2965,7 +3011,8 @@ def _get_cached_dashboard() -> tuple[dict, dict]:
     active_device_gid = energy.get_active_device_gid()
     latest_timestamp = energy.get_latest_timestamp(active_device_gid)
     if (
-        _dashboard_cache["common"] is not None
+        time.monotonic() - _dashboard_cache["built_at"] < 15
+        and _dashboard_cache["common"] is not None
         and _dashboard_cache["context"] is not None
         and _dashboard_cache["active_device_gid"] == active_device_gid
         and _dashboard_cache["latest_timestamp"] == latest_timestamp
@@ -2975,6 +3022,7 @@ def _get_cached_dashboard() -> tuple[dict, dict]:
     common = _common()
     context = _build_dashboard_context(common["panel_label"], common["active_device_gid"])
     _dashboard_cache.update({
+        "built_at": time.monotonic(),
         "latest_timestamp": latest_timestamp,
         "active_device_gid": active_device_gid,
         "common": common,
@@ -2992,7 +3040,7 @@ def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
         return False
     try:
         age = (datetime.now() - datetime.fromisoformat(reading["timestamp"][:19])).total_seconds()
-        return age < max_age_secs
+        return -60 <= age < max_age_secs
     except Exception:
         return False
 
@@ -3264,42 +3312,25 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     sorted_watts = sorted(live_watts.values(), reverse=True)
     peak_threshold = sorted_watts[2] if len(sorted_watts) >= 3 else (sorted_watts[0] if sorted_watts else 0)
     dash_breakers = []
-    for slot in range(1, max(len(ordered) + 1, max(layout.keys(), default=0) + 1)):
+    for slot in range(1, dashboard_panel_slots + 1):
         row = layout.get(slot, {})
         name = row.get("channel_name")
         configured_amps = row.get("amps")
-        rated_amps = configured_amps or 15
         poles = row.get("poles") or 1
-        voltage = 240 if poles == 2 else 120
         watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
         bar = min(100, watts / max_w * 100)
-        if rated_amps and rated_amps > 0 and watts > 0:
-            amps_now = watts / voltage
-            safe_limit_amps = rated_amps * 0.8
-            load_pct = amps_now / rated_amps * 100
-            safe_pct = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
-            if safe_pct >= 100:
-                sz_cls, load_cls, fill_cls = "sz-danger", "load-danger", "fill-danger"
-            elif safe_pct >= 80:
-                sz_cls, load_cls, fill_cls = "sz-caution", "load-caution", "fill-caution"
-            elif safe_pct >= 60:
-                sz_cls, load_cls, fill_cls = "sz-moderate", "load-moderate", "fill-moderate"
-            else:
-                sz_cls, load_cls, fill_cls = "", "load-normal", "fill-normal"
-            load_bar_w = min(100, load_pct)
-            safe_bar_pct = min(100, safe_pct)
-            safe_cls = "danger" if safe_pct >= 100 else ("warn" if safe_pct >= 80 else "")
-            load_label = f"{amps_now:.1f}/{rated_amps}A"
-        else:
-            sz_cls, load_cls, fill_cls = "", "", "fill-normal"
-            load_bar_w, load_label, safe_bar_pct, safe_cls = 0, "", 0, ""
+        load = breaker_load(watts, configured_amps, poles)
+        sz_cls = load["zone_cls"]
+        load_cls, fill_cls = load["load_cls"], load["fill_cls"]
+        load_bar_w, load_label = load["load_bar_w"], load["load_label"]
+        safe_bar_pct, safe_cls = load["safe_bar_pct"], load["safe_cls"]
         cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         dash_breakers.append({
             "slot": slot,
             "channel_name": name,
             "label": row.get("label") or name or "—",
             "note": row.get("note"),
-            "amps": configured_amps or 15,
+            "amps": configured_amps,
             "poles": poles,
             "watts": watts,
             "bar_pct": bar,
@@ -3310,6 +3341,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
             "load_label": load_label,
             "safe_bar_pct": safe_bar_pct,
             "safe_cls": safe_cls,
+            "rating_known": load["rating_known"],
             "is_peak": bool(name and watts >= peak_threshold and watts > 0),
         })
 
@@ -3368,6 +3400,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         "biggest_circuit": biggest_circuit,
         "monthly_projected": monthly_projected,
         "budget": int(MONTHLY_BUDGET),
+        "partial_history": (main_24h or {}).get("readings", 0) * energy.POLL_INTERVAL < 24 * 3600,
         "budget_pct": budget_pct,
         "rate": RATE,
         "daily_json": energy.get_daily_data(30, active_device_gid),
@@ -3405,7 +3438,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
             breakers_left,
             breakers_right,
             balance_info,
-            panel_label_text=f"{panel_label} — Live",
+            panel_label_text=f"{panel_label} — {'Live' if _reading_fresh(main_now) else 'Last recorded'}",
             bus_label=f"Bus bar • {dashboard_panel_slots} slots",
         ),
     }
@@ -3470,7 +3503,9 @@ def reports_page():
         panel_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
         if not panel_row or name in _MAINS_NAMES or not watts:
             continue
-        amps = panel_row.get("amps") or 15
+        amps = panel_row.get("amps")
+        if not amps:
+            continue
         poles = panel_row.get("poles") or 1
         voltage = 240 if poles == 2 else 120
         amps_now = watts / voltage
@@ -3569,31 +3604,14 @@ def circuits_page():
         row = layout.get(slot, {})
         name  = row.get("channel_name")
         configured_amps = row.get("amps")
-        rated_amps = configured_amps or 15
         poles = row.get("poles") or 1
-        voltage = 240 if poles == 2 else 120
         watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
         bar   = min(100, watts / max_w * 100)
-        if rated_amps and rated_amps > 0 and watts > 0:
-            amps_now  = watts / voltage
-            safe_limit_amps = rated_amps * 0.8
-            load_pct  = amps_now / rated_amps * 100
-            safe_pct  = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
-            if safe_pct >= 100:
-                sz_cls = "sz-danger";   load_cls = "load-danger";   fill_cls = "fill-danger"
-            elif safe_pct >= 80:
-                sz_cls = "sz-caution";  load_cls = "load-caution";  fill_cls = "fill-caution"
-            elif safe_pct >= 60:
-                sz_cls = "sz-moderate"; load_cls = "load-moderate"; fill_cls = "fill-moderate"
-            else:
-                sz_cls = "";            load_cls = "load-normal";   fill_cls = "fill-normal"
-            load_bar_w = min(100, load_pct)
-            safe_bar_pct = min(100, safe_pct)
-            safe_cls = "danger" if safe_pct >= 100 else ("warn" if safe_pct >= 80 else "")
-            load_label = f"{amps_now:.1f}/{rated_amps}A"
-        else:
-            sz_cls = ""; load_cls = ""; fill_cls = "fill-normal"
-            load_bar_w = 0; load_label = ""; safe_bar_pct = 0; safe_cls = ""
+        load = breaker_load(watts, configured_amps, poles)
+        sz_cls = load["zone_cls"]
+        load_cls, fill_cls = load["load_cls"], load["fill_cls"]
+        load_bar_w, load_label = load["load_bar_w"], load["load_label"]
+        safe_bar_pct, safe_cls = load["safe_bar_pct"], load["safe_cls"]
         is_peak = bool(name and watts >= _peak_thr_c and watts > 0)
         cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         breakers.append({
@@ -3601,7 +3619,7 @@ def circuits_page():
             "channel_name": name,
             "label":        row.get("label") or name or "—",
             "note":         row.get("note"),
-            "amps":         configured_amps or 15,
+            "amps":         configured_amps,
             "poles":        poles,
             "watts":        watts,
             "bar_pct":      bar,
@@ -3612,6 +3630,7 @@ def circuits_page():
             "load_label":   load_label,
             "safe_bar_pct": safe_bar_pct,
             "safe_cls":     safe_cls,
+            "rating_known": load["rating_known"],
             "is_peak":      is_peak,
         })
 
@@ -3802,7 +3821,9 @@ def trends_page():
         watts = _watts_estimate(latest_map.get(name) or 0)
         if not watts:
             continue
-        configured_amps = row.get("amps") or 15
+        configured_amps = row.get("amps")
+        if not configured_amps:
+            continue
         poles = row.get("poles") or 1
         voltage = 240 if poles == 2 else 120
         amps_now = watts / voltage
@@ -3916,15 +3937,7 @@ def api_poller_status():
 
 @app.route("/api/live-dashboard")
 def api_live_dashboard():
-    _com, dashboard = _get_cached_dashboard()
-    return jsonify({
-        "latest_timestamp": dashboard["ctx"]["latest"][0]["timestamp"] if dashboard["ctx"]["latest"] else None,
-        "current_watts": round(dashboard["current_watts"], 1),
-        "current_kwh": round(dashboard["ctx"]["current_kwh"] or 0, 3),
-        "monthly_projected": round(dashboard["monthly_projected"], 3),
-        "cost_per_hour": round(dashboard["cost_per_hour"], 2),
-        "top_circuits": dashboard["top_circuits"][:12],
-    })
+    return jsonify(_build_live_dashboard_payload())
 
 
 @app.route("/api/poller-reconnect", methods=["POST"])
@@ -3937,7 +3950,7 @@ def api_poller_reconnect():
     import json as _json, os as _os
     data = request.get_json(force=True) or {}
     email = (data.get("email") or "").strip()
-    pwd   = (data.get("password") or "").strip()
+    pwd   = data.get("password") or ""
     # Persist new credentials if supplied
     if email:
         cfg = {}
@@ -4007,7 +4020,7 @@ PANEL_EDIT_HTML = """
   <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
     Slot numbers mirror physical positions (1 = top-left, 2 = top-right, alternating down).
     <strong>Amps</strong> + <strong>poles</strong> determine voltage (1P = 120 V, 2P = 240 V) and enable the
-    NEC 80% safety indicators on every breaker card.
+    estimated rating comparisons on configured breaker cards.
   </p>
 
   <div style="display:flex; gap:12px; margin-bottom:1rem; flex-wrap:wrap; align-items:center;">
@@ -4217,7 +4230,7 @@ SETTINGS_HTML = """
           <h3 style="font-size:1rem; margin-bottom:0.5rem;">Rate &amp; Budget</h3>
           <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:0.25rem;">
             <label style="font-size:0.82rem; font-weight:600;">Electricity rate (¢/kWh)
-              <input type="number" id="cfgRate" step="0.01" value="{{ rate_cents }}"
+              <input type="number" id="cfgRate" step="0.01" value="{{ "%.2f"|format(rate_cents) }}"
                      style="display:block; width:130px; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
             </label>
@@ -4235,7 +4248,7 @@ SETTINGS_HTML = """
             </button>
             <span id="cfgMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
           </div>
-          <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.5rem;">Restart Flask for rate changes to take effect.</p>
+          <p style="font-size:0.75rem; color:var(--text-light); margin-top:0.5rem;">Rate and budget changes take effect when saved.</p>
         </div>
 
         <!-- Panel Labels -->
@@ -4735,11 +4748,29 @@ def panel_edit_page():
 @app.route("/api/panel-layout", methods=["POST"])
 def api_panel_layout():
     data = request.get_json(force=True)
-    for s in data.get("slots", []):
-        energy.save_panel_slot(
-            s["slot"], s.get("channel_name"), s.get("label"),
-            s.get("note"), s.get("amps"), s.get("poles", 1)
-        )
+    slots = data.get("slots", [])
+    try:
+        if not isinstance(slots, list):
+            raise ValueError("slots must be a list")
+        for slot in slots:
+            if not isinstance(slot, dict) or type(slot.get("slot")) is not int or not 1 <= slot["slot"] <= 200:
+                raise ValueError("slot must be an integer from 1 to 200")
+            if type(slot.get("poles", 1)) is not int or slot.get("poles", 1) not in (1, 2):
+                raise ValueError("poles must be 1 or 2")
+            amps = slot.get("amps")
+            if amps is not None and (type(amps) is not int or not 1 <= amps <= 400):
+                raise ValueError("amps must be an integer from 1 to 400 or null")
+            for field in ("channel_name", "label", "note"):
+                value = slot.get(field)
+                if value is not None and (not isinstance(value, str) or len(value) > 1000):
+                    raise ValueError(f"{field} must be a string of at most 1000 characters")
+        if data.get("panel_slots") is not None and (type(data["panel_slots"]) is not int or not 1 <= data["panel_slots"] <= 200):
+            raise ValueError("panel_slots must be an integer from 1 to 200")
+        if len({slot["slot"] for slot in slots}) != len(slots):
+            raise ValueError("Duplicate slots")
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    energy.save_panel_layout(slots)
     panel_slots = data.get("panel_slots")
     if panel_slots is not None:
         try:
@@ -4907,7 +4938,7 @@ def api_save_credentials():
     import json as _json, os as _os
     data = request.get_json(force=True)
     email = (data.get("email") or "").strip()
-    pwd   = (data.get("password") or "").strip()
+    pwd   = data.get("password") or ""
     if not email:
         return jsonify({"ok": False, "error": "Email required"}), 400
     cfg = {}

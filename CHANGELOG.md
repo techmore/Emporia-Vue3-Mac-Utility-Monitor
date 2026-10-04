@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.0.1 - 2026-10-04
+
+### Added
+- Minute-average service watts and offline status in the native menu bar
+- Automatic poller launch when the menu app starts directly
+- Shared breaker model and atomic private runtime storage modules
+- Version metadata checks, portable release archive, manifests and checksums
+- Code/UI audit and phased maintenance roadmap in `docs/`
+
+### Fixed
+- Unsafe dynamic circuit/import text rendering and cross-origin local writes
+- In-place runtime JSON writes and partially applied panel layout requests
+- Invented 15A ratings; unconfigured ratings now remain unknown
+- Conflicting monthly projections and stale live service/breaker/budget display
+- Dashboard cache invalidation, rate refresh in the poller and stale power labeling
+- Unreachable copied dashboard URL, custom-port persistence and unrelated-port readiness
+- Single-instance race using an OS lock
+- Release staging paths, machine-specific pointers and version drift
+- Expired test fixture, control names/states, weather label, ring text and rate formatting
+- Document title/language/mobile viewport and basic narrow-screen reflow
+
+### Validation
+- 26 unit/regression tests, Python and shell syntax checks, native Swift compilation
+- Browser checks of live Dashboard and Settings, projections, rating labels and rate
+- Fresh archive extraction, metadata/manifest verification and route smoke checks
+- Local 2.0.1 tag and package; remote publication remains separate
+
+### Known limits
+- Cost projections remain provisional with partial history; source/interval-aware
+  aggregation and physical-panel mapping need further work
+- Charts and secondary historical cards still require reload; see `docs/AUDIT.md`
+- Unsigned Apple Silicon source-first package; Python virtualenv required
+
 ## 2.0.0 - 2026-03-13
 
 ### Added
