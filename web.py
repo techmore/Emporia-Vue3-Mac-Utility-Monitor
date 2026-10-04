@@ -15,6 +15,7 @@ import math
 import os
 import time
 import energy
+from extensions import HOUSE_CSS, register_extensions
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
@@ -792,6 +793,7 @@ NAV_HTML = """
       <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
       <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
+      <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>
@@ -5103,6 +5105,10 @@ def api_import_csv():
 def handle_large_upload(_exc):
     max_mb = app.config["MAX_CONTENT_LENGTH"] / (1024 * 1024)
     return jsonify({"error": f"Upload too large. Limit is {max_mb:.0f} MB"}), 413
+
+
+BASE_CSS += HOUSE_CSS
+register_extensions(app, _render, _common)
 
 
 if __name__ == "__main__":

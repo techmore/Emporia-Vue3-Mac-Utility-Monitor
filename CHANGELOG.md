@@ -2,6 +2,10 @@
 
 ## 2.1.0 - Unreleased
 
+- Experimental House climate extension: SQLite temperature observations, room placement,
+  1/7/30-day replay alongside energy, clearly labeled simulated preview, cooling scenario
+  calculator, and optional read-only Home Assistant collector. Aqara connection remains pending.
+
 - Icon-only native menu bar monitor with compact SwiftUI dropdown
 - Live power, hourly cost, recorded 24-hour energy and top circuit summaries
 - Native circuit 1/7/30-day chart and trend view; Dashboard/Settings shortcuts

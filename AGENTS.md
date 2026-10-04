@@ -225,3 +225,14 @@ separately in web.py.
    logs appear in `/tmp/energymonitor-poller.log` in real time.
 7. LaunchAgent plists use `__PROJECT_ROOT__` as a placeholder;
    `setup_launch.sh` substitutes the real path via `sed` at install time.
+
+## Experimental climate extension
+
+`extensions.py` registers explicit built-in Flask blueprints and supplies `HOUSE_CSS`, appended
+into `BASE_CSS`. `climate.py` owns normalized observation validation and replay queries;
+`climate_collect.py` is an optional read-only Home Assistant collector/local JSON importer.
+DDL remains in `energy.ensure_table()`, queries use `energy._connect()`. Demo data is generated
+in memory and must never be persisted or mixed with recorded energy. UTC is required for
+climate observation times; existing energy timestamps retain their local convention.
+`templates/house.html`, `static/house.js` and `docs/CLIMATE_EXTENSION.md` describe the prototype.
+Do not activate a collector or re-pair devices without knowing the user's actual source setup.

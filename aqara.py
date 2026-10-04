@@ -1,9 +1,10 @@
 """
 aqara.py — Aqara Cloud OpenAPI client skeleton
 ================================================
-Status: PLACEHOLDER — Aqara developer signup is temporarily unavailable.
+Status: LEGACY PLACEHOLDER — connection/signing/auth have not been verified.
+Climate logging uses the normalized contract in climate.py; see docs/CLIMATE_EXTENSION.md.
 
-When developer.aqara.com sign-up reopens:
+Before implementing this cloud connection, verify current documentation and then:
   1. Create an app → get APP_ID, APP_KEY, KEY_ID
   2. Run authorize_url() to get the OAuth URL, open it in a browser
   3. Exchange the returned authorization code for ACCESS_TOKEN + REFRESH_TOKEN

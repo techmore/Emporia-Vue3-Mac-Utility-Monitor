@@ -12,7 +12,7 @@ info = plistlib.loads((root / 'EnergyMonitorApp/Resources/Info.plist').read_byte
 assert info['CFBundleShortVersionString'] == version, 'Bundle version drift'
 project = (root / 'EnergyMonitorApp/project.yml').read_text()
 assert f'MARKETING_VERSION: "{version}"' in project, 'Xcode version drift'
-for name in ('web.py', 'energy.py', 'runtime_store.py', 'panel_model.py',
+for name in ('web.py', 'energy.py', 'climate.py', 'climate_collect.py', 'extensions.py', 'templates/house.html', 'static/house.js', 'static/cooling-model.js', 'runtime_store.py', 'panel_model.py',
              'EnergyMonitorApp/Sources/main.swift', 'requirements.lock',
              'scripts/check_release.py', 'templates/circuit_overlay.html',
              'static/circuit-overlay.js', 'EnergyMonitorApp/Sources/MenuPopover.swift'):

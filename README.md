@@ -273,3 +273,12 @@ Current test coverage includes:
 ## Release Notes
 
 See `CHANGELOG.md` for release notes, `docs/AUDIT.md` for audit findings, and `docs/ROADMAP.md` for the refinement plan.
+
+### House climate extension (experimental)
+
+**House · Lab** in the dashboard adds an example floor plan, sensor room assignment,
+1/7/30-day temperature replay, whole-home energy history and an illustrative cooling scenario.
+Choose **Try simulated house** to explore before connecting sensors; demo readings never enter
+the database. Real Aqara logging still requires a verified hub connection. An optional read-only
+Home Assistant collector and normalized JSON import are available. See
+[connection, storage and modeling details](docs/CLIMATE_EXTENSION.md).

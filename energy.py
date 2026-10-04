@@ -147,6 +147,25 @@ def ensure_table():
             PRIMARY KEY (device_gid, channel_name)
         );
 
+        CREATE TABLE IF NOT EXISTS climate_sensors (
+            source TEXT NOT NULL,
+            sensor_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            room_id TEXT,
+            PRIMARY KEY (source, sensor_id)
+        );
+        CREATE TABLE IF NOT EXISTS climate_readings (
+            source TEXT NOT NULL,
+            sensor_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            temperature_c REAL NOT NULL,
+            humidity_pct REAL,
+            battery_pct REAL,
+            PRIMARY KEY (source, sensor_id, timestamp),
+            FOREIGN KEY (source, sensor_id) REFERENCES climate_sensors(source, sensor_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_climate_timestamp ON climate_readings(timestamp);
+
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
             slot        INTEGER PRIMARY KEY,  -- 1-based physical slot

@@ -30,7 +30,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/EnergyMonitorApp"
 for name in README.md CHANGELOG.md LICENSE AGENTS.md VERSION build.sh release.sh \
   setup_launch.sh requirements.txt requirements.lock energy.py web.py aqara.py \
-  runtime_store.py panel_model.py; do
+  runtime_store.py panel_model.py climate.py extensions.py climate_collect.py; do
   cp "$SCRIPT_DIR/$name" "$STAGE/"
 done
 for name in setup tests scripts docs templates static; do
