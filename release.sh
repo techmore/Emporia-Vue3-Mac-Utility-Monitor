@@ -18,7 +18,7 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$APP_DIR/Resources/Info.plist" "$BUNDLE/Contents/Info.plist"
 if [ "$NO_SWIFT" = false ]; then
   swiftc -sdk "$(xcrun --show-sdk-path)" -target arm64-apple-macosx13.0 \
-    -framework AppKit "$APP_DIR/Sources/main.swift" \
+    -framework AppKit "$APP_DIR"/Sources/*.swift \
     -o "$BUNDLE/Contents/MacOS/EnergyMonitorApp"
 fi
 [ -x "$BUNDLE/Contents/MacOS/EnergyMonitorApp" ] || { echo "Missing app binary" >&2; exit 1; }

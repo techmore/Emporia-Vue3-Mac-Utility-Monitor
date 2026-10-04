@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Darwin
 
 // ── Version ───────────────────────────────────────────────────────────────────
@@ -117,13 +118,15 @@ private func validateProjectRoot() -> String? {
 
 // ── AppDelegate ───────────────────────────────────────────────────────────────
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var flaskProcess: Process?
     private var pollerProcess: Process?
     var statusItem: NSStatusItem?
     private var ownsLock = false
     private var monitorTimer: Timer?
-    private var refreshInFlight = false
+    private let monitor = MenuMonitor(baseURL: dashboardURL)
+    private var popover: NSPopover?
+    private var contextMenu: NSMenu?
     private weak var healthMenuItem: NSMenuItem?
 
     private let probeInterval: TimeInterval = 0.5
@@ -162,17 +165,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startFlaskServer()
         startPollerIfNeeded()
         buildStatusItem()
-        waitForFlaskThenOpen()
+        waitForFlask()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { togglePopover(nil) }
+        return false
     }
 
     // ── Menu-bar status item ──────────────────────────────────────────────────
 
     private func buildStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let btn = item.button {
             btn.image = NSImage(systemSymbolName: "bolt.fill",
                                 accessibilityDescription: "Energy Monitor")
             btn.image?.isTemplate = true
+            btn.target = self
+            btn.action = #selector(togglePopover(_:))
+            btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            btn.setAccessibilityLabel("Energy Monitor")
         }
 
         let menu = NSMenu()
@@ -221,16 +233,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
 
-        item.menu = menu
+        contextMenu = menu
         statusItem = item
-        monitorTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            self?.refreshMonitor()
+        let panel = NSPopover()
+        panel.behavior = .transient
+        panel.delegate = self
+        panel.contentSize = NSSize(width: 360, height: 470)
+        panel.contentViewController = NSHostingController(rootView: MonitorPopover(
+            monitor: monitor,
+            openDashboard: { [weak self] in self?.openInBrowser() },
+            openSettings: { [weak self] in self?.openSettings() },
+            quit: { NSApp.terminate(nil) }
+        ))
+        popover = panel
+        monitor.didUpdate = { [weak self] in
+            guard let self = self else { return }
+            let power = self.monitor.online ? self.monitor.summary?.currentWatts.map { String(format: "%.0f W", $0) } ?? "No readings" : "Offline"
+            self.statusItem?.button?.toolTip = "Energy Monitor — " + power
+            self.statusItem?.button?.setAccessibilityValue(power)
+            self.healthMenuItem?.title = self.monitor.online ? "Live · minute-average power" : "Poller offline or stale — check Settings"
+            if let version = self.monitor.summary?.version {
+                self.headerMenuItem?.title = "Energy Monitor  v\(version)"
+            }
         }
+        let timer = Timer(timeInterval: 15, repeats: true) { [weak self] _ in self?.refreshMonitor() }
+        monitorTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
         refreshMonitor()
     }
 
     @objc private func openInBrowser() {
+        popover?.performClose(nil)
         NSWorkspace.shared.open(dashboardURL)
+    }
+
+    @objc private func togglePopover(_ sender: Any?) {
+        guard let button = statusItem?.button else { return }
+        if NSApp.currentEvent?.type == .rightMouseUp, let menu = contextMenu {
+            popover?.performClose(nil)
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY), in: button)
+            return
+        }
+        if popover?.isShown == true {
+            popover?.performClose(nil)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            monitor.refresh()
+            popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) { monitor.goBack() }
+
+    private func openSettings() {
+        popover?.performClose(nil)
+        NSWorkspace.shared.open(dashboardURL.appendingPathComponent("settings"))
     }
 
     @objc private func copyLocalURL() {
@@ -289,50 +346,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
-    // Poll asynchronously; stale data must never look like a live power reading.
-    private func refreshMonitor() {
-        guard !refreshInFlight else { return }
-        refreshInFlight = true
-        let request = URLRequest(url: dashboardURL.appendingPathComponent("api/poller-status"),
-                                 timeoutInterval: 5)
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
-            let status = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            let live = (response as? HTTPURLResponse)?.statusCode == 200
-                && status?["poller_running"] as? Bool == true
-                && status?["ok"] as? Bool == true
-            guard live else {
-                DispatchQueue.main.async {
-                    self?.refreshInFlight = false
-                    self?.statusItem?.button?.title = " Offline"
-                    self?.statusItem?.button?.toolTip = "Energy Monitor — poller offline or stale"
-                    self?.healthMenuItem?.title = "Poller offline or stale — check Settings"
-                }
-                return
-            }
-            let latest = URLRequest(url: dashboardURL.appendingPathComponent("api/latest"),
-                                    timeoutInterval: 5)
-            URLSession.shared.dataTask(with: latest) { data, response, _ in
-                let rows = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] }
-                let main = rows?.first { $0["channel_name"] as? String == "Main" }
-                let watts = (main?["usage_kwh"] as? Double).map { $0 * 60 * 1000 }
-                let timestamp = main?["timestamp"] as? String
-                // SQLite uses local wall time without an offset.
-                let localFormatter = DateFormatter()
-                localFormatter.locale = Locale(identifier: "en_US_POSIX")
-                localFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-                let date = timestamp.flatMap { localFormatter.date(from: String($0.prefix(19))) }
-                let fresh = date.map { Date().timeIntervalSince($0) >= -60 && Date().timeIntervalSince($0) < 180 } ?? false
-                let valid = (response as? HTTPURLResponse)?.statusCode == 200 && fresh && watts?.isFinite == true
-                let power = valid ? String(format: " %.0f W", watts!) : " No data"
-                DispatchQueue.main.async {
-                    self?.refreshInFlight = false
-                    self?.statusItem?.button?.title = power
-                    self?.statusItem?.button?.toolTip = "Energy Monitor — minute-average power" + power
-                    self?.healthMenuItem?.title = valid ? "Live · minute-average power" : "Poller connected · waiting for readings"
-                }
-            }.resume()
-        }.resume()
-    }
+    private func refreshMonitor() { monitor.refresh() }
 
     // ── Live version fetch ────────────────────────────────────────────────
 
@@ -502,27 +516,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func waitForFlaskThenOpen() {
+    private func waitForFlask() {
         let deadline = Date().addingTimeInterval(probeTimeout)
 
         func probe() {
-            var request = URLRequest(url: dashboardURL, timeoutInterval: probeInterval)
-            request.httpMethod = "HEAD"
+            let request = URLRequest(url: dashboardURL.appendingPathComponent("api/version"), timeoutInterval: 2)
 
-            URLSession.shared.dataTask(with: request) { _, response, _ in
-                let ready = (response as? HTTPURLResponse)?.statusCode != nil
+            URLSession.shared.dataTask(with: request) { data, response, _ in
+                let json = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                let ready = (response as? HTTPURLResponse)?.statusCode == 200 && json?["version"] is String
                 DispatchQueue.main.async {
                     if ready {
-                        print("Flask is ready — opening browser")
-                        NSWorkspace.shared.open(dashboardURL)
+                        print("Flask is ready — menu monitor active")
                         self.fetchVersionFromFlask()
+                        self.refreshMonitor()
                     } else if Date() < deadline {
                         DispatchQueue.main.asyncAfter(deadline: .now() + self.probeInterval) {
                             probe()
                         }
                     } else {
-                        print("Flask did not respond in time — opening browser anyway")
-                        NSWorkspace.shared.open(dashboardURL)
+                        print("Flask did not respond in time — menu monitor will retry")
+                        self.refreshMonitor()
                     }
                 }
             }.resume()

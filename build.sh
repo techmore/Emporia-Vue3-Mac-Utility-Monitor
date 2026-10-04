@@ -119,7 +119,7 @@ if [ "$DO_SWIFT" = true ]; then
     -framework SwiftUI \
     -framework AppKit \
     -framework WebKit \
-    "$SRC" \
+    "$APP_DIR"/Sources/*.swift \
     -o "$BIN"
   mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
   cp "$APP_DIR/Resources/Info.plist" "$BUNDLE/Contents/Info.plist"

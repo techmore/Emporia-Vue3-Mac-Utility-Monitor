@@ -4027,6 +4027,35 @@ def api_month_comparison():
 def api_peak_usage():
     return jsonify(energy.get_peak_usage())
 
+@app.route("/api/menu-summary")
+def api_menu_summary():
+    """Small native-menu payload; no templates or dashboard analytics required."""
+    gid = energy.get_active_device_gid()
+    latest = energy.get_latest(gid)
+    main = next((row for row in latest if row["channel_name"] == "Main"), None)
+    status = _poller_status_snapshot()
+    online = bool(status.get("ok") and status.get("poller_running") and _reading_fresh(main, 180))
+    watts = _watts_estimate(main["usage_kwh"]) if online and main["usage_kwh"] is not None else None
+    labels = {row["channel_name"]: row.get("label") for row in energy.get_panel_layout()}
+    circuits = [
+        {
+            "channel_name": row["channel_name"],
+            "display_name": labels.get(row["channel_name"]) or row["channel_name"],
+            "watts": _watts_estimate(row["usage_kwh"]) if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None else None,
+        }
+        for row in latest if row["channel_name"] not in energy.META_CHANNELS
+    ]
+    circuits.sort(key=lambda row: (-(row["watts"] or 0), row["display_name"]))
+    total = energy.get_main_total(24, gid)
+    return jsonify({
+        "version": VERSION, "online": online, "current_watts": watts,
+        "cost_per_hour": watts / 1000 * RATE if watts is not None else None,
+        "recorded_kwh": total["total_kwh"] if total else None,
+        "last_reading": main["timestamp"] if main else None,
+        "top_circuits": circuits[:5],
+    })
+
+
 @app.route("/api/circuit-history/<path:circuit_name>")
 def api_circuit_history(circuit_name):
     result = energy.get_circuit_history(circuit_name)

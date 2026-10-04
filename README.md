@@ -6,6 +6,15 @@ A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](http
 
 ---
 
+## Compact menu bar monitor (2.1)
+
+Click the lightning icon in the macOS menu bar for a native compact dropdown with
+minute-average power, hourly cost, recorded 24-hour usage, and the five most active
+circuits. Select a circuit for 1-, 7- or 30-day recorded usage, cost, a small chart
+and a trend when history is sufficiently sampled. Refresh, Dashboard and Settings
+are available from the dropdown. Launching the app stays in the menu bar; opening
+the app again reveals the dropdown. Right-click the icon for the utility menu.
+
 ## Circuit quick view (2.1)
 
 Click a circuit on Dashboard, Circuits, Trends or Reports to open an optional overlay.
@@ -202,6 +211,7 @@ GET  /api/summary           # usage by circuit
 GET  /api/daily             # daily totals
 GET  /api/hourly            # hourly totals
 GET  /api/latest            # latest reading per channel
+GET  /api/menu-summary      # compact native menu power, usage and active circuits
 GET  /api/circuit-history/<name> # circuit 1/7/30-day recorded totals, series and guarded trends
 GET  /api/context           # now vs historical windows
 GET  /api/trend             # 7-day trend direction

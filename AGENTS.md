@@ -80,7 +80,7 @@ for path in ['/', '/circuits', '/trends', '/log']:
 cd EnergyMonitorApp
 
 # Compile (single-file, no Xcode required)
-swiftc -o EnergyMonitorApp Sources/main.swift -sdk $(xcrun --show-sdk-path)
+swiftc -o EnergyMonitorApp Sources/*.swift -sdk $(xcrun --show-sdk-path)
 
 # Copy into the app bundle after every recompile
 cp EnergyMonitorApp EnergyMonitorApp.app/Contents/MacOS/EnergyMonitorApp
@@ -202,6 +202,8 @@ separately in web.py.
 ## Code Style — Swift
 
 - Target: **macOS 13.0+**, Swift 5.9, compiled with `swiftc` (no Xcode project required).
+- Compile all `Sources/*.swift`: `MenuPopover.swift` owns the native compact UI/model;
+  `main.swift` owns app lifecycle, the status icon and process management.
 - No sandbox (`CODE_SIGNING_REQUIRED: NO`); entitlements allow subprocess spawning.
 - Project root is derived at runtime via `resolveProjectRoot()` — never hardcode
   absolute paths like `/Users/username/...`.

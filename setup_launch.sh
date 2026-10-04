@@ -22,7 +22,7 @@ if [ ! -f "$APP_BINARY" ]; then
     echo "Error: App binary not found at $APP_BINARY"
     echo "Compile with:"
     echo "  cd EnergyMonitorApp"
-    echo "  swiftc -o EnergyMonitorApp Sources/main.swift -sdk \$(xcrun --show-sdk-path)"
+    echo "  swiftc -o EnergyMonitorApp Sources/*.swift -sdk \$(xcrun --show-sdk-path)"
     exit 1
 fi
 

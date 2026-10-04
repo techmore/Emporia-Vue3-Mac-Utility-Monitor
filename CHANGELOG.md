@@ -2,6 +2,12 @@
 
 ## 2.1.0 - Unreleased
 
+- Icon-only native menu bar monitor with compact SwiftUI dropdown
+- Live power, hourly cost, recorded 24-hour energy and top circuit summaries
+- Native circuit 1/7/30-day chart and trend view; Dashboard/Settings shortcuts
+- Quiet startup with no automatic browser window; app reopen reveals the dropdown
+- Compact JSON menu endpoint with offline-safe power values
+
 - Optional circuit overlay with rolling 1-day, 7-day and 30-day energy and cost
 - Hourly/daily charts, accessible chart data, explicit missing-data buckets
 - Equal-period trends guarded against sparse history; stale live power unavailable
