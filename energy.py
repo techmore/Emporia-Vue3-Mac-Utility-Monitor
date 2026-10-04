@@ -1171,6 +1171,84 @@ def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
     return {"data": [dict(row) for row in results], "total": total}
 
 
+def get_circuit_history(
+    channel_name: str, device_gid: str | None = None, now: datetime | None = None,
+) -> dict | None:
+    """Recorded rolling 1/7/30-day totals and series, scoped to one device.
+
+    Null buckets mean missing data, not zero energy. Trend comparisons require
+    dense minute sampling in both equal-length periods. This is a sampling guard,
+    not a guarantee of coverage for imported history of unknown intervals.
+    """
+    now = now or datetime.now()
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return None
+        latest = conn.execute(
+            """SELECT timestamp, usage_kwh FROM readings
+               WHERE device_gid=? AND channel_name=? AND timestamp<=?
+               ORDER BY timestamp DESC LIMIT 1""",
+            (gid, channel_name, now.isoformat()),
+        ).fetchone()
+        if latest is None:
+            return None
+
+        def totals(start: datetime, end: datetime) -> dict:
+            return dict(conn.execute(
+                """SELECT SUM(usage_kwh) total_kwh, SUM(cost_cents) total_cents,
+                          COUNT(*) readings, COUNT(DISTINCT substr(timestamp,1,16)) sampled_minutes,
+                          MIN(timestamp) first_reading, MAX(timestamp) last_reading
+                   FROM readings WHERE device_gid=? AND channel_name=?
+                   AND timestamp>=? AND timestamp<? AND usage_kwh IS NOT NULL""",
+                (gid, channel_name, start.isoformat(), end.isoformat()),
+            ).fetchone())
+
+        windows = []
+        for days in (1, 7, 30):
+            start = now - timedelta(days=days)
+            previous_start = start - timedelta(days=days)
+            current, previous = totals(start, now), totals(previous_start, start)
+            dense = all(row['sampled_minutes'] >= days * 1440 * 0.8 for row in (current, previous))
+            change = _delta_pct(current['total_kwh'], previous['total_kwh']) if dense else None
+            grouping = "%Y-%m-%d %H:00" if days == 1 else "%Y-%m-%d"
+            buckets = {
+                row['period']: dict(row) for row in conn.execute(
+                    """SELECT strftime(?, timestamp) period, SUM(usage_kwh) total_kwh,
+                              COUNT(*) readings FROM readings
+                       WHERE device_gid=? AND channel_name=? AND timestamp>=?
+                       AND timestamp<? AND usage_kwh IS NOT NULL
+                       GROUP BY period ORDER BY period""",
+                    (grouping, gid, channel_name, start.isoformat(), now.isoformat()),
+                ).fetchall()
+            }
+            cursor = start.replace(minute=0, second=0, microsecond=0) if days == 1 else start.replace(hour=0, minute=0, second=0, microsecond=0)
+            step = timedelta(hours=1) if days == 1 else timedelta(days=1)
+            series = []
+            while cursor < now:
+                label = cursor.strftime(grouping)
+                series.append({
+                    **buckets.get(label, {'period': label, 'total_kwh': None, 'readings': 0}),
+                    'partial_bucket': cursor < start or cursor + step > now,
+                })
+                cursor += step
+            windows.append({
+                **current, 'days': days, 'previous_kwh': previous['total_kwh'],
+                'change_pct': change, 'comparison_sampled': dense,
+                'series': series,
+            })
+        age = (now - datetime.fromisoformat(latest['timestamp'])).total_seconds()
+        return {
+            'channel_name': channel_name, 'device_gid': gid,
+            'last_reading': latest['timestamp'],
+            'live_watts': latest['usage_kwh'] * 60000 if 0 <= age < 180 and latest['usage_kwh'] is not None else None,
+            'windows': windows,
+        }
+    finally:
+        conn.close()
+
+
 def get_monthly_projection(device_gid: str | None = None):
     """Most recent month's total using Main channel only (avoids double-counting)."""
     conn = _connect()

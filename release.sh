@@ -33,7 +33,7 @@ for name in README.md CHANGELOG.md LICENSE AGENTS.md VERSION build.sh release.sh
   runtime_store.py panel_model.py; do
   cp "$SCRIPT_DIR/$name" "$STAGE/"
 done
-for name in setup tests scripts docs; do
+for name in setup tests scripts docs templates static; do
   cp -R "$SCRIPT_DIR/$name" "$STAGE/"
 done
 cp -R "$APP_DIR/Sources" "$APP_DIR/Resources" "$APP_DIR/project.yml" "$BUNDLE" "$STAGE/EnergyMonitorApp/"

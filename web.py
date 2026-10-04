@@ -747,6 +747,29 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   -webkit-backdrop-filter: blur(12px);
 }
 
+/* Circuit history quick view */
+#circuit-history { margin:auto; width:min(820px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; border:1px solid var(--border); border-radius:18px; padding:24px; background:var(--surface); color:var(--text); box-shadow:0 24px 80px var(--olive-950); }
+#circuit-history::backdrop { background:var(--olive-950); opacity:0.7; }
+.ch-header,.ch-toolbar,.ch-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.ch-header h2 { font-size:1.8rem; overflow-wrap:anywhere; }
+.ch-eyebrow { display:block; font-size:0.78rem; color:var(--text-light); }
+#circuit-history button,.ch-toggle { cursor:pointer; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); padding:8px 12px; font:inherit; }
+#circuit-history button[aria-pressed="true"],.ch-toggle[aria-pressed="true"] { background:var(--accent); color:var(--accent-fg); }
+#ch-status,#ch-history-note,.ch-footnote { margin:14px 0; font-size:0.85rem; overflow-wrap:anywhere; }
+.ch-totals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:20px 0; }
+.ch-totals strong { display:block; font-size:1.2rem; margin-top:6px; }
+#ch-chart { border:1px solid var(--border); border-radius:12px; padding:8px; }
+#ch-chart svg { display:block; width:100%; }
+#ch-chart .ch-bar { fill:var(--accent); }
+#ch-chart .ch-gap { fill:var(--border); }
+#ch-chart text { fill:var(--text-light); font-size:12px; }
+.ch-table-wrap { max-height:220px; overflow:auto; }
+.ch-table-wrap table { width:100%; font-size:0.85rem; }
+.ch-table-wrap th,.ch-table-wrap td { padding:6px; text-align:left; border-bottom:1px solid var(--border); }
+.ch-footer { margin-top:16px; }
+.ch-footer a { color:var(--accent); }
+@media(max-width:600px) { .ch-totals { grid-template-columns:1fr; } #circuit-history { padding:16px; } }
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -925,7 +948,7 @@ def _render(template: str, **ctx):
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
-        + NAV_HTML + template + '</body></html>',
+        + NAV_HTML + template + '{% include "circuit_overlay.html" %}</body></html>',
         **ctx
     )
 
@@ -4003,6 +4026,14 @@ def api_month_comparison():
 @app.route("/api/peak-usage")
 def api_peak_usage():
     return jsonify(energy.get_peak_usage())
+
+@app.route("/api/circuit-history/<path:circuit_name>")
+def api_circuit_history(circuit_name):
+    result = energy.get_circuit_history(circuit_name)
+    if result is None:
+        return jsonify({"error": "Circuit not found"}), 404
+    return jsonify(result)
+
 
 @app.route("/api/circuit/<path:circuit_name>")
 @app.route("/api/circuit/<path:circuit_name>/<period>")

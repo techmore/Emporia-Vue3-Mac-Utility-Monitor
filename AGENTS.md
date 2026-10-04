@@ -26,6 +26,10 @@ to `energy.db`. `web.py` reads from the same SQLite file. They share state only 
 database — never import `web` from `energy` or vice versa (except `web.py` imports `energy`
 for its public query functions).
 
+`templates/circuit_overlay.html` and `static/circuit-overlay.js` provide the optional
+circuit history overlay; its device-scoped query is `energy.get_circuit_history`.
+Release packaging must preserve both directories.
+
 `panel_model.py` owns shared rating calculations; `runtime_store.py` owns atomic
 private JSON writes. `VERSION` is the application version source; validate bundle
 metadata with `venv/bin/python3 scripts/check_release.py`. Audit and maintenance

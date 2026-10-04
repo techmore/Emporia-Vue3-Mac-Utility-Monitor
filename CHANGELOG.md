@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.0 - Unreleased
+
+- Optional circuit overlay with rolling 1-day, 7-day and 30-day energy and cost
+- Hourly/daily charts, accessible chart data, explicit missing-data buckets
+- Equal-period trends guarded against sparse history; stale live power unavailable
+- Toggle preference, Escape/backdrop close, full-page fallback and refresh/error states
+- SQLite logging verified; no database replacement or schema migration required
+- Feature isolated from the stable 2.0.1 tag
+
 ## 2.0.1 - 2026-10-04
 
 ### Added

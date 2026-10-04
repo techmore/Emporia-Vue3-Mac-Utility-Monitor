@@ -6,6 +6,22 @@ A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](http
 
 ---
 
+## Circuit quick view (2.1)
+
+Click a circuit on Dashboard, Circuits, Trends or Reports to open an optional overlay.
+Choose **1 day**, **7 days** or **30 days** for recorded kWh, recorded cost and an
+hourly/daily chart. Trends compare with the preceding equal-length period only
+when both windows have sufficiently dense minute sampling. Missing chart periods
+remain gaps. Use **Circuit quick view** to disable previews, or **Open full circuit
+page** inside the overlay for the existing detail view. The preference is local
+to your browser; keyboard and modified clicks retain their normal behavior.
+
+The existing SQLite database records each cloud poll (default 60 seconds), retains
+365 days by default, and persists across app restarts. Poller health is visible in
+Log. Longer history fills as the app runs; CSV imports can provide older data, but
+unknown import intervals can affect recorded totals and are not a coverage guarantee.
+The stable `v2.0.1` tag remains intact; 2.1 changes live on a separate feature branch.
+
 ## 2.0 Highlights
 
 - **Realtime dashboard focus** — compact live banner, 7-day forecast strip, budget ring, and a service-panel-first layout
@@ -186,6 +202,7 @@ GET  /api/summary           # usage by circuit
 GET  /api/daily             # daily totals
 GET  /api/hourly            # hourly totals
 GET  /api/latest            # latest reading per channel
+GET  /api/circuit-history/<name> # circuit 1/7/30-day recorded totals, series and guarded trends
 GET  /api/context           # now vs historical windows
 GET  /api/trend             # 7-day trend direction
 GET  /api/weather           # 7-day forecast (Open-Meteo, cached)

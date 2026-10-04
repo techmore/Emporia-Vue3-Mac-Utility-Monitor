@@ -14,6 +14,7 @@ project = (root / 'EnergyMonitorApp/project.yml').read_text()
 assert f'MARKETING_VERSION: "{version}"' in project, 'Xcode version drift'
 for name in ('web.py', 'energy.py', 'runtime_store.py', 'panel_model.py',
              'EnergyMonitorApp/Sources/main.swift', 'requirements.lock',
-             'scripts/check_release.py'):
+             'scripts/check_release.py', 'templates/circuit_overlay.html',
+             'static/circuit-overlay.js'):
     assert (root / name).is_file(), f'Missing release file: {name}'
 print(version)

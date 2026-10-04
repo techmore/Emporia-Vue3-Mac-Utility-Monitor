@@ -1,0 +1,28 @@
+<dialog id="circuit-history" aria-labelledby="circuit-history-title">
+  <div class="ch-header">
+    <div><div class="ch-eyebrow">Circuit history</div><h2 id="circuit-history-title">Circuit</h2></div>
+    <button type="button" id="ch-close" aria-label="Close circuit history">×</button>
+  </div>
+  <p id="ch-status" role="status" aria-live="polite">Loading history…</p>
+  <div id="ch-content" hidden>
+    <div class="ch-toolbar">
+      <span id="ch-power"></span>
+      <div id="ch-periods" role="group" aria-label="History period">
+        <button type="button" data-days="1" aria-pressed="true">1 day</button>
+        <button type="button" data-days="7" aria-pressed="false">7 days</button>
+        <button type="button" data-days="30" aria-pressed="false">30 days</button>
+      </div>
+    </div>
+    <div class="ch-totals">
+      <div><span class="ch-eyebrow">Recorded usage</span><strong id="ch-usage"></strong></div>
+      <div><span class="ch-eyebrow">Recorded cost</span><strong id="ch-cost"></strong></div>
+      <div><span class="ch-eyebrow">Trend vs previous period</span><strong id="ch-trend"></strong></div>
+    </div>
+    <div id="ch-chart" role="img" aria-label="Recorded circuit energy chart"></div>
+    <p id="ch-history-note"></p>
+    <details><summary>View chart data</summary><div class="ch-table-wrap"><table><thead><tr><th scope="col">Period</th><th scope="col">kWh</th></tr></thead><tbody id="ch-data"></tbody></table></div></details>
+    <p class="ch-footnote">Totals use readings saved locally. Gaps mean no recorded data; first and last chart periods can be partial. Imported history may use different sampling intervals.</p>
+    <div class="ch-footer"><a id="ch-full-page" href="/">Open full circuit page →</a><button type="button" id="ch-refresh">Refresh</button></div>
+  </div>
+</dialog>
+<script src="/static/circuit-overlay.js" defer></script>
