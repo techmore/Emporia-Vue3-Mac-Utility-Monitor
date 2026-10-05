@@ -38,7 +38,7 @@ jobs:
           import web
           client = web.app.test_client()
           for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house']:
-              response = client.get(path)
+              response = client.get(path, follow_redirects=True)
               assert response.status_code == 200, f"{path}: {response.status_code}"
           assert client.get('/api/menu-summary').status_code == 200
           assert client.get('/api/climate/replay?demo=1').status_code == 200
