@@ -10,14 +10,13 @@ private let APP_VERSION_FALLBACK = "…"
 
 private var lockDescriptor: Int32 = -1
 
-/// Hold an OS lock for the app lifetime, including across simultaneous launches.
+/// Hold an OS lock for this data store, including across simultaneous launches.
 private func acquireLock() -> Bool {
-    let directory = URL(fileURLWithPath: NSHomeDirectory())
-        .appendingPathComponent("Library/Caches/com.dolbec.energymonitor")
+    let directory = runtimeDataRoot
     do {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     } catch { return false }
-    let descriptor = Darwin.open(directory.appendingPathComponent("instance.lock").path,
+    let descriptor = Darwin.open(directory.appendingPathComponent(".instance.lock").path,
                                  O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard descriptor >= 0 else { return false }
     guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {

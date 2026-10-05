@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.1 - 2026-10-05
+
+- Hide breaker load indicators when live readings are unavailable instead of implying zero load.
+- Scope the app's single-instance lock to its data directory so source and Homebrew installs can coexist.
+
 ## 2.2.0 - 2026-10-05
 
 - Native dropdown follows the saved panel breaker slots with a two-column service-panel layout.

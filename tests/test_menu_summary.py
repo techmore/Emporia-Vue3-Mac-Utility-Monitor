@@ -16,7 +16,7 @@ class MenuSummaryTests(unittest.TestCase):
         ]
         with patch.object(energy,'get_active_device_gid',return_value='A'), \
              patch.object(energy,'get_latest',return_value=rows), \
-             patch.object(energy,'get_panel_layout',return_value=[{'channel_name':'Pump','label':'Well pump'}]), \
+             patch.object(energy,'get_panel_layout',return_value=[{'channel_name':'Pump','label':'Well pump','amps':20,'poles':1}]), \
              patch.object(energy,'get_main_total',return_value={'total_kwh':3}), \
              patch.object(web,'_poller_status_snapshot',return_value={'ok':True,'poller_running':True}):
             return web.app.test_client().get('/api/menu-summary')
@@ -40,4 +40,7 @@ class MenuSummaryTests(unittest.TestCase):
         self.assertIsNone(data['current_watts'])
         self.assertIsNone(data['cost_per_hour'])
         self.assertTrue(all(c['watts'] is None for c in data['top_circuits']))
+        pump_slot = next(slot for slot in data['breaker_slots'] if slot['channel_name'] == 'Pump')
+        self.assertIsNone(pump_slot['load_percent'])
+        self.assertIsNone(pump_slot['load_state'])
         self.assertEqual(data['recorded_kwh'],3)

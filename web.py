@@ -4062,7 +4062,10 @@ def api_menu_summary():
         row = layout.get(slot, {})
         name = row.get("channel_name")
         breaker_watts = watts_by_name.get(name) if name else None
-        rating = breaker_load(breaker_watts or 0, row.get("amps"), row.get("poles") or 1)
+        rating = (
+            breaker_load(breaker_watts, row.get("amps"), row.get("poles") or 1)
+            if breaker_watts is not None else None
+        )
         breaker_slots.append({
             "slot": slot,
             "channel_name": name,
@@ -4070,8 +4073,8 @@ def api_menu_summary():
             "amps": row.get("amps"),
             "poles": row.get("poles") or 1,
             "watts": breaker_watts,
-            "load_percent": rating["load_bar_w"] if rating["rating_known"] else None,
-            "load_state": rating["safe_cls"] if rating["rating_known"] else None,
+            "load_percent": rating["load_bar_w"] if rating and rating["rating_known"] else None,
+            "load_state": rating["safe_cls"] if rating and rating["rating_known"] else None,
         })
     display = _load_panel_display_settings()
     left = breaker_slots[::2]
