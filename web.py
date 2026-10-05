@@ -4038,7 +4038,54 @@ def api_menu_summary():
     status = _poller_status_snapshot()
     online = bool(status.get("ok") and status.get("poller_running") and _reading_fresh(main, 180))
     watts = _watts_estimate(main["usage_kwh"]) if online and main["usage_kwh"] is not None else None
-    labels = {row["channel_name"]: row.get("label") for row in energy.get_panel_layout()}
+    saved_layout = energy.get_panel_layout()
+    labels = {row["channel_name"]: row.get("label") for row in saved_layout}
+    layout = {row.get("slot", index + 1): row for index, row in enumerate(saved_layout)}
+    circuit_names = list(dict.fromkeys(
+        row["channel_name"] for row in latest
+        if row["channel_name"] not in energy.META_CHANNELS
+    ))
+    layout = _seed_layout_from_latest(layout, latest, circuit_names)
+    layout, panel_slots = _normalize_panel_layout(
+        layout, circuit_names, minimum_slots=_load_panel_slots()
+    )
+    watts_by_name = {
+        row["channel_name"]: (
+            _watts_estimate(row["usage_kwh"])
+            if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None
+            else None
+        )
+        for row in latest if row["channel_name"] not in energy.META_CHANNELS
+    }
+    breaker_slots = []
+    for slot in range(1, panel_slots + 1):
+        row = layout.get(slot, {})
+        name = row.get("channel_name")
+        breaker_watts = watts_by_name.get(name) if name else None
+        rating = breaker_load(breaker_watts or 0, row.get("amps"), row.get("poles") or 1)
+        breaker_slots.append({
+            "slot": slot,
+            "channel_name": name,
+            "display_name": row.get("label") or name or "—",
+            "amps": row.get("amps"),
+            "poles": row.get("poles") or 1,
+            "watts": breaker_watts,
+            "load_percent": rating["load_bar_w"] if rating["rating_known"] else None,
+            "load_state": rating["safe_cls"] if rating["rating_known"] else None,
+        })
+    display = _load_panel_display_settings()
+    left = breaker_slots[::2]
+    right = breaker_slots[1::2]
+    if display.get("invert_left"):
+        left.reverse()
+    if display.get("invert_right"):
+        right.reverse()
+    breaker_slots = [
+        slot for index in range(max(len(left), len(right)))
+        for slot in (left[index:index + 1] + right[index:index + 1])
+    ]
+    device_labels = energy.get_device_labels()
+    panel_label = " · ".join(value.strip() for value in device_labels.values() if value.strip()) or "Service Panel"
     circuits = [
         {
             "channel_name": row["channel_name"],
@@ -4053,6 +4100,8 @@ def api_menu_summary():
         "version": VERSION, "online": online, "current_watts": watts,
         "cost_per_hour": watts / 1000 * RATE if watts is not None else None,
         "recorded_kwh": total["total_kwh"] if total else None,
+        "panel_label": panel_label, "panel_slots": panel_slots,
+        "breaker_slots": breaker_slots,
         "last_reading": main["timestamp"] if main else None,
         "top_circuits": circuits[:5],
     })

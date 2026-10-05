@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.0.1-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.2.0-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -14,6 +14,26 @@ circuits. Select a circuit for 1-, 7- or 30-day recorded usage, cost, a small ch
 and a trend when history is sufficiently sampled. Refresh, Dashboard and Settings
 are available from the dropdown. Launching the app stays in the menu bar; opening
 the app again reveals the dropdown. Right-click the icon for the utility menu.
+
+The native dropdown follows the saved panel slot numbers in two physical columns.
+Empty slots, circuit labels, live watts and configured breaker ratings follow the
+Panel Layout editor. Select an occupied breaker to open its history.
+
+## Install with Homebrew
+
+On Apple Silicon Macs running macOS 13 or later:
+
+```sh
+brew install techmore/tap/energy-monitor
+brew services start techmore/tap/energy-monitor
+```
+
+The Formula installs Python 3.12, prepares an offline wheelhouse, and compiles the
+menu app locally with Swift, so no unsigned downloaded app bundle or Gatekeeper
+bypass is involved. Xcode Command Line Tools are required. `brew services start`
+starts the menu app and polling engine at login; use `brew services stop` to stop it.
+Settings, credentials and the SQLite database live in `$(brew --prefix)/var/energy-monitor`.
+Uninstalling the Formula preserves this directory.
 
 ## Circuit quick view (2.1)
 

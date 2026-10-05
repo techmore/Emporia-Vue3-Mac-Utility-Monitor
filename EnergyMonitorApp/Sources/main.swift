@@ -68,6 +68,14 @@ private func resolveProjectRoot() -> URL {
 }
 
 private let projectRoot   = resolveProjectRoot()
+private let runtimeDataRoot: URL = {
+    if let embedded = Bundle.main.url(forResource: "data_root", withExtension: "txt"),
+       let raw = try? String(contentsOf: embedded, encoding: .utf8) {
+        let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !path.isEmpty { return URL(fileURLWithPath: path) }
+    }
+    return projectRoot
+}()
 private let venvPython    = projectRoot.appendingPathComponent("venv/bin/python3").path
 private let flaskPort: String = {
     let embedded = Bundle.main.url(forResource: "flask_port", withExtension: "txt")
@@ -238,7 +246,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let panel = NSPopover()
         panel.behavior = .transient
         panel.delegate = self
-        panel.contentSize = NSSize(width: 360, height: 470)
+        panel.contentSize = NSSize(width: 440, height: 560)
         panel.contentViewController = NSHostingController(rootView: MonitorPopover(
             monitor: monitor,
             openDashboard: { [weak self] in self?.openInBrowser() },
@@ -431,7 +439,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard (try? process.run()) != nil else { return false }
         let text = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         process.waitUntilExit()
-        return text.components(separatedBy: .newlines).contains("n" + projectRoot.path)
+        let directories = Set([
+            projectRoot.path,
+            projectRoot.resolvingSymlinksInPath().path,
+            runtimeDataRoot.path,
+            runtimeDataRoot.resolvingSymlinksInPath().path,
+        ])
+        return text.components(separatedBy: .newlines).contains { line in
+            guard line.hasPrefix("n") else { return false }
+            return directories.contains(String(line.dropFirst()))
+        }
     }
 
     // The menu app owns polling when no independently launched poller is running.
@@ -451,7 +468,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 guard fields.count == 2, fields[1].hasSuffix(" energy.py") || fields[1].hasSuffix("/energy.py") else { return false }
                 return processBelongsToProject(String(fields[0]))
             }) { return }
-            let logURL = projectRoot.appendingPathComponent("poller.log")
+            try FileManager.default.createDirectory(at: runtimeDataRoot, withIntermediateDirectories: true)
+            let logURL = runtimeDataRoot.appendingPathComponent("poller.log")
             if !FileManager.default.fileExists(atPath: logURL.path) {
                 FileManager.default.createFile(atPath: logURL.path, contents: nil)
             }
@@ -461,7 +479,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: venvPython)
             process.arguments = ["-u", "energy.py"]
-            process.currentDirectoryURL = projectRoot
+            process.currentDirectoryURL = runtimeDataRoot
             process.standardOutput = log
             process.standardError = log
             try process.run()
@@ -481,7 +499,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         process.executableURL       = URL(fileURLWithPath: venvPython)
         process.arguments           = ["web.py"]
-        process.currentDirectoryURL = projectRoot
+        do {
+            try FileManager.default.createDirectory(at: runtimeDataRoot, withIntermediateDirectories: true)
+        } catch {
+            print("Could not create runtime data directory: \(error.localizedDescription)")
+            return
+        }
+        process.currentDirectoryURL = runtimeDataRoot
         process.standardOutput      = pipe
         process.standardError       = pipe
 

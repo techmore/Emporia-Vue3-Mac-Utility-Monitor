@@ -27,7 +27,7 @@ jobs:
         run: venv/bin/python3 scripts/check_release.py
 
       - name: Syntax check
-        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py
+        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py
 
       - name: Run unit tests
         run: venv/bin/python3 -m unittest discover -s tests -v
@@ -37,9 +37,11 @@ jobs:
           venv/bin/python3 - <<'PY'
           import web
           client = web.app.test_client()
-          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log']:
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house']:
               response = client.get(path)
               assert response.status_code == 200, f"{path}: {response.status_code}"
+          assert client.get('/api/menu-summary').status_code == 200
+          assert client.get('/api/climate/replay?demo=1').status_code == 200
           PY
 
       - name: Compile and package release

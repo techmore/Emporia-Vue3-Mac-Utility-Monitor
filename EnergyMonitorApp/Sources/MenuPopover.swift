@@ -7,6 +7,22 @@ struct MenuCircuit: Decodable {
     let watts: Double?
 }
 
+struct MenuBreakerSlot: Decodable, Identifiable {
+    let slot: Int
+    let channelName: String?
+    let displayName: String
+    let amps: Int?
+    let poles: Int
+    let watts: Double?
+    let loadPercent: Double?
+    let loadState: String?
+    var id: Int { slot }
+    var circuit: MenuCircuit? {
+        guard let channelName = channelName else { return nil }
+        return MenuCircuit(channelName: channelName, displayName: displayName, watts: watts)
+    }
+}
+
 struct MenuSummary: Decodable {
     let version: String
     let online: Bool
@@ -15,6 +31,9 @@ struct MenuSummary: Decodable {
     let recordedKwh: Double?
     let lastReading: String?
     let topCircuits: [MenuCircuit]
+    let panelLabel: String
+    let panelSlots: Int
+    let breakerSlots: [MenuBreakerSlot]
 }
 
 struct CircuitBucket: Decodable {
@@ -165,12 +184,14 @@ struct MonitorPopover: View {
                 Text(monitor.online ? "Live" : "Offline").font(.caption).foregroundStyle(.secondary)
             }
             Divider()
-            if let circuit = monitor.selectedCircuit {
-                circuitView(circuit)
-            } else {
-                overview
+            ScrollView {
+                if let circuit = monitor.selectedCircuit {
+                    circuitView(circuit)
+                } else {
+                    overview
+                }
             }
-            Spacer(minLength: 0)
+            .scrollIndicators(.hidden)
             Divider()
             HStack {
                 Button("Dashboard", action: openDashboard)
@@ -187,50 +208,94 @@ struct MonitorPopover: View {
             .buttonStyle(.borderless)
         }
         .padding(18)
-        .frame(width: 360, height: 470)
+        .frame(width: 440, height: 560)
         .background(Color(NSColor.windowBackgroundColor))
     }
 
     private var overview: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(monitor.online ? monitor.summary?.currentWatts.map { String(format: "%.0f", $0) } ?? "—" : "—")
-                    .font(.system(size: 38, weight: .medium, design: .rounded)).monospacedDigit()
-                Text("W").foregroundStyle(.secondary)
-                Spacer()
-                if monitor.online, let cost = monitor.summary?.costPerHour {
-                    Text(String(format: "$%.2f/hr", cost)).font(.subheadline).foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 11) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("SERVICE FEED").font(.caption2.weight(.semibold)).tracking(1.1)
+                    Spacer()
+                    Text(monitor.summary?.panelLabel ?? "Service Panel").font(.caption2).lineLimit(1)
+                }.foregroundStyle(Color.white.opacity(0.8))
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(monitor.online ? monitor.summary?.currentWatts.map { String(format: "%.0f", $0) } ?? "—" : "—")
+                        .font(.system(size: 32, weight: .semibold, design: .rounded)).monospacedDigit()
+                    Text("W").font(.caption).foregroundStyle(Color.white.opacity(0.8))
+                    Spacer()
+                    if monitor.online, let cost = monitor.summary?.costPerHour {
+                        Text(String(format: "$%.2f/hr", cost)).font(.caption).foregroundStyle(Color.white.opacity(0.8))
+                    }
+                    Image(systemName: "bolt.fill").font(.caption)
+                }.foregroundStyle(.white)
             }
-            Text("Minute-average power").font(.caption).foregroundStyle(.secondary)
+            .padding(11)
+            .background(Color(red: 0.34, green: 0.37, blue: 0.24), in: RoundedRectangle(cornerRadius: 9))
             HStack {
-                Text("Recorded · last 24 hours").font(.caption).foregroundStyle(.secondary)
+                Label("Last 24 hours", systemImage: "clock.arrow.circlepath")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Text(energy(monitor.summary?.recordedKwh)).font(.subheadline).monospacedDigit()
             }
             if let message = monitor.summaryError {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             }
-            Divider()
-            Text("CIRCUITS").font(.caption2).foregroundStyle(.secondary)
-            if let circuits = monitor.summary?.topCircuits, !circuits.isEmpty {
-                ForEach(circuits, id: \.channelName) { circuit in
-                    Button(action: { monitor.select(circuit) }) {
-                        HStack {
-                            Text(circuit.displayName).lineLimit(1)
-                            Spacer()
-                            Text(monitor.online ? circuit.watts.map { String(format: "%.0f W", $0) } ?? "—" : "—")
-                                .monospacedDigit().foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
-                        }.contentShape(Rectangle()).padding(.vertical, 4)
-                    }.buttonStyle(.plain)
-                    .accessibilityLabel("\(circuit.displayName), view circuit history")
+            HStack {
+                Text("CIRCUIT BREAKERS").font(.caption2.weight(.semibold)).tracking(1.1)
+                Spacer()
+                Text("\(monitor.summary?.panelSlots ?? 0) slots").font(.caption2).foregroundStyle(.secondary)
+            }
+            if let slots = monitor.summary?.breakerSlots, !slots.isEmpty {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                    ForEach(slots) { slot in breakerCard(slot) }
                 }
             } else {
-                Text("Waiting for circuit readings…").font(.subheadline).foregroundStyle(.secondary)
+                Text("Waiting for panel readings…").font(.subheadline).foregroundStyle(.secondary)
             }
             Text(timeLabel(monitor.summary?.lastReading)).font(.caption2).foregroundStyle(.secondary)
         }
+    }
+
+    private func breakerCard(_ slot: MenuBreakerSlot) -> some View {
+        let watts = monitor.online ? slot.watts : nil
+        let active = slot.channelName != nil
+        let fill = slot.loadState == "danger" ? Color.red : slot.loadState == "warn" ? Color.orange : Color.accentColor
+        return Button {
+            if let circuit = slot.circuit { monitor.select(circuit) }
+        } label: {
+            HStack(spacing: 7) {
+                Text(String(format: "%02d", slot.slot))
+                    .font(.caption2.monospacedDigit().weight(.medium))
+                    .foregroundStyle(.secondary).frame(width: 20, alignment: .leading)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(slot.displayName).font(.caption.weight(.medium)).lineLimit(1)
+                        .foregroundStyle(active ? Color.primary : Color.secondary)
+                    HStack(spacing: 3) {
+                        Text(watts.map { String(format: "%.0f W", $0) } ?? (active ? "—" : "Empty"))
+                            .monospacedDigit()
+                        if active, let amps = slot.amps { Text("· \(slot.poles)P/\(amps)A") }
+                    }.font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                    if let percent = slot.loadPercent, active {
+                        GeometryReader { geometry in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.secondary.opacity(0.14))
+                                Capsule().fill(fill).frame(width: geometry.size.width * CGFloat(min(100, percent) / 100))
+                            }
+                        }.frame(height: 3).accessibilityLabel("Estimated breaker load")
+                    }
+                }
+                Spacer(minLength: 0)
+                if active { Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary) }
+            }
+            .padding(.horizontal, 7).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .background(active ? Color(NSColor.controlBackgroundColor) : Color(NSColor.controlBackgroundColor).opacity(0.48), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .disabled(!active)
+        .accessibilityLabel(active ? "Slot \(slot.slot), \(slot.displayName), \(watts.map { String(format: "%.0f watts", $0) } ?? "offline"), view circuit history" : "Slot \(slot.slot), empty")
     }
 
     private func circuitView(_ circuit: MenuCircuit) -> some View {

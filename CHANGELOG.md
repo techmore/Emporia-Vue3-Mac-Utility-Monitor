@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.0 - 2026-10-05
+
+- Native dropdown follows the saved panel breaker slots with a two-column service-panel layout.
+- Homebrew Formula for Apple Silicon; it installs a wheelhouse offline and builds the menu app locally.
+
 ## 2.1.0 - Unreleased
 
 - Experimental House climate extension: SQLite temperature observations, room placement,

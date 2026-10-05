@@ -44,12 +44,13 @@ find "$STAGE" -type d -name __pycache__ -prune -exec rm -rf {} +
 "$PYTHON" "$SCRIPT_DIR/scripts/check_release.py" "$STAGE"
 cat > "$STAGE/RELEASE_NOTES.txt" <<NOTES
 Emporia Energy Monitor $VERSION
-Source-first release for Apple Silicon, macOS 13+.
-Create venv with Python 3.12 and install requirements.lock, then run ./build.sh.
-For an occupied default port: FLASK_PORT=5017 ./build.sh --no-pull
-Credentials, tokens, databases, runtime settings and virtualenv are excluded.
-The app is unsigned and is not a standalone installer.
-See docs/AUDIT.md and docs/ROADMAP.md for validation and remaining work.
+Homebrew Formula source archive for Apple Silicon, macOS 13+.
+Install: brew install techmore/tap/energy-monitor
+Homebrew compiles the menu app locally and installs locked Python dependencies from the arm64 wheelhouse.
+Start with: brew services start techmore/tap/energy-monitor
+Settings, credentials and SQLite history live in \$(brew --prefix)/var/energy-monitor.
+For source development, create venv with Python 3.12 and install requirements.lock, then run ./build.sh.
+See docs/AUDIT.md, docs/ROADMAP.md and docs/CLIMATE_EXTENSION.md.
 NOTES
 "$PYTHON" - "$STAGE" <<'PY'
 import hashlib, sys
@@ -62,4 +63,13 @@ PY
 rm -f "$ARCHIVE"
 (cd "$DIST/stage" && /usr/bin/zip -qry "$ARCHIVE" "$NAME")
 shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
-echo "Release ready: $ARCHIVE"
+WHEELHOUSE="$DIST/${NAME}-arm64-wheels"
+mkdir -p "$WHEELHOUSE"
+"$PYTHON" -m pip download --disable-pip-version-check --only-binary=:all: \
+  --dest "$WHEELHOUSE" --platform macosx_13_0_arm64 --platform macosx_11_0_arm64 \
+  --implementation cp --python-version 312 --abi cp312 --abi abi3 --abi none \
+  -r "$SCRIPT_DIR/requirements.lock"
+WHEELS="$DIST/${NAME}-arm64-wheels.tar.gz"
+tar -czf "$WHEELS" -C "$WHEELHOUSE" .
+shasum -a 256 "$WHEELS" > "$WHEELS.sha256"
+echo "Release ready: $ARCHIVE and $WHEELS"
