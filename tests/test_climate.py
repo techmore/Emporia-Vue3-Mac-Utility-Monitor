@@ -74,8 +74,10 @@ class ClimateTests(unittest.TestCase):
         self.assertEqual(client.post('/api/climate/placement', json={'source':'aqara','sensor_id':'indoor','room_id':'office'}).status_code, 200)
 
     def test_home_assistant_normalization_and_unavailable_states(self):
+        observed = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=5)
+
         def state(entity, value, unit='°F'):
-            return {'entity_id':entity,'state':value,'last_updated':self.now.isoformat(),
+            return {'entity_id':entity,'state':value,'last_updated':observed.isoformat(),
                     'attributes':{'device_class':'temperature','unit_of_measurement':unit}}
         rows = climate_collect.home_assistant_observations([
             state('sensor.office', '68'), state('sensor.outside', 'unavailable'),
@@ -83,4 +85,4 @@ class ClimateTests(unittest.TestCase):
             ['sensor.office', 'sensor.outside', 'sensor.unknown'])
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['temperature_c'], 20)
-        self.assertEqual(rows[0]['timestamp'], self.now.isoformat())
+        self.assertEqual(rows[0]['timestamp'], observed.isoformat())

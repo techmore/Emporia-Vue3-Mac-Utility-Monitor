@@ -23,6 +23,7 @@ Regions:
 import hashlib
 import hmac
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -105,7 +106,7 @@ def _headers(cfg: dict) -> dict:
 
 # ── OAuth flow (to be wired into a Flask route when ready) ────────────────────
 
-def authorize_url(cfg: dict, redirect_uri: str = "http://localhost:5001/api/aqara/callback") -> str:
+def authorize_url(cfg: dict, redirect_uri: str = f"http://localhost:{os.environ.get('FLASK_PORT', '5051')}/api/aqara/callback") -> str:
     """
     Return the URL the user opens in a browser to link their Aqara account.
     After approval, Aqara redirects to redirect_uri?code=<AUTH_CODE>&state=<STATE>.

@@ -24,7 +24,7 @@ app.jinja_env.autoescape = select_autoescape(
     default_for_string=True,
 )
 FLASK_HOST = "127.0.0.1"
-FLASK_PORT = int(os.environ.get("FLASK_PORT", "5001"))
+FLASK_PORT = int(os.environ.get("FLASK_PORT", "5051"))
 
 VERSION = Path(__file__).with_name("VERSION").read_text().strip()
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None, "built_at": 0}

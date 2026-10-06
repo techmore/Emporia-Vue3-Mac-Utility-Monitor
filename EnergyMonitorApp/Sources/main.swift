@@ -80,7 +80,7 @@ private let flaskPort: String = {
     let embedded = Bundle.main.url(forResource: "flask_port", withExtension: "txt")
         .flatMap { try? String(contentsOf: $0, encoding: .utf8) }?
         .trimmingCharacters(in: .whitespacesAndNewlines)
-    return ProcessInfo.processInfo.environment["FLASK_PORT"] ?? embedded ?? "5001"
+    return ProcessInfo.processInfo.environment["FLASK_PORT"] ?? embedded ?? "5051"
 }()
 private let dashboardURL  = URL(string: "http://127.0.0.1:\(flaskPort)")!
 

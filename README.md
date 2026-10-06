@@ -136,11 +136,11 @@ What it does:
 | 1 | Kills this repo's Flask, poller, and menu-app processes |
 | 2 | `git pull --ff-only` unless `--no-pull` |
 | 3 | Compiles `EnergyMonitorApp/Sources/main.swift` and refreshes the `.app` bundle |
-| 4 | Starts `web.py`, waits for `127.0.0.1:${FLASK_PORT:-5001}`, and prints the confirmed version |
+| 4 | Starts `web.py`, waits for `127.0.0.1:${FLASK_PORT:-5051}`, and prints the confirmed version |
 | 5 | Starts `energy.py` unbuffered and waits for the first heartbeat |
 | 6 | Opens `EnergyMonitorApp.app` unless `--no-open` |
 
-If the default port is occupied, use `FLASK_PORT=5017 ./build.sh --no-pull`.
+If the default port is occupied, use `FLASK_PORT=5052 ./build.sh --no-pull`.
 The chosen port is saved in the app bundle for subsequent launches. Startup rejects
 unrelated services on that port and verifies the dashboard version before polling.
 
@@ -170,7 +170,7 @@ venv/bin/python3 energy.py latest
 ```
 
 Defaults:
-- Dashboard → `http://127.0.0.1:5001`
+- Dashboard → `http://127.0.0.1:5051`
 - Override port with `FLASK_PORT`
 
 ---

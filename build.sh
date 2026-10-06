@@ -20,7 +20,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_NAME="$(basename "$SCRIPT_DIR")"
-FLASK_PORT="${FLASK_PORT:-5001}"
+FLASK_PORT="${FLASK_PORT:-5051}"
 FLASK_BASE_URL="http://localhost:${FLASK_PORT}"
 APP_DIR="$SCRIPT_DIR/EnergyMonitorApp"
 SRC="$APP_DIR/Sources/main.swift"

@@ -53,7 +53,7 @@ PYTHONUNBUFFERED=1 venv/bin/python3 -u energy.py
 
 # Run the Flask dashboard
 venv/bin/python3 web.py
-# → http://localhost:5001
+# → http://localhost:5051
 
 # One-shot poll (useful for debugging without running continuous loop)
 venv/bin/python3 energy.py poll
@@ -218,7 +218,7 @@ separately in web.py.
 
 1. `energy.py` and `web.py` communicate **only through `energy.db`** (SQLite file).
 2. `RATE` in `web.py` is always `energy.RATE_CENTS / 100` — never a separate literal.
-3. `web.py` runs on **`127.0.0.1:5001`** only (not `0.0.0.0`).
+3. `web.py` runs on **`127.0.0.1:5051`** only (not `0.0.0.0`).
 4. The `instantaneous_watts` column was removed — do not re-add it.
 5. `ensure_table()` is the single source of truth for the schema.
 6. The poller must be launched with `-u` (unbuffered) or `PYTHONUNBUFFERED=1` so
