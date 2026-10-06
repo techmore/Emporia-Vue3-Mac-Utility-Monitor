@@ -489,7 +489,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             try log.seekToEnd()
             let process = Process()
             process.executableURL = URL(fileURLWithPath: venvPython)
-            process.arguments = ["-u", "energy.py"]
+            process.arguments = ["-u", projectRoot.appendingPathComponent("energy.py").path]
             process.currentDirectoryURL = runtimeDataRoot
             process.standardOutput = log
             process.standardError = log
@@ -509,7 +509,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let pipe    = Pipe()
 
         process.executableURL       = URL(fileURLWithPath: venvPython)
-        process.arguments           = ["web.py"]
+        process.arguments           = [projectRoot.appendingPathComponent("web.py").path]
         do {
             try FileManager.default.createDirectory(at: runtimeDataRoot, withIntermediateDirectories: true)
         } catch {

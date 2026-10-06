@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.2 - 2026-10-06
+
+- Fix Homebrew installs: the menu app launches `web.py` and `energy.py` by absolute path, since it runs them from the data directory.
+
 ## 2.3.1 - 2026-10-06
 
 - Fix uninstall of Homebrew installs launched through the `opt` link, which were treated as plain apps.
