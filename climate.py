@@ -2,8 +2,8 @@
 
 Temperatures are Celsius; observation timestamps are UTC. Demo data never enters SQLite.
 """
-from datetime import datetime, timedelta, timezone
 import math
+from datetime import datetime, timedelta, timezone
 
 import energy
 
@@ -131,7 +131,7 @@ def get_replay(days: int = 1, demo: bool = False, now: datetime | None = None) -
                 AVG(temperature_c) temperature_c,AVG(humidity_pct) humidity_pct,COUNT(*) samples
                 FROM climate_readings WHERE timestamp>=? AND timestamp<=?
                 GROUP BY source,sensor_id,hour ORDER BY hour''', (start.isoformat(), now.isoformat()))
-            by_hour = {stamp.strftime('%Y-%m-%dT%H'): frame for stamp, frame in zip(stamps, frames)}
+            by_hour = {stamp.strftime('%Y-%m-%dT%H'): frame for stamp, frame in zip(stamps, frames, strict=True)}
             for row in rows:
                 frame = by_hour.get(row['hour'])
                 if frame is not None:

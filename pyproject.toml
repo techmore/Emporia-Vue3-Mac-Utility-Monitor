@@ -1,0 +1,9 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["venv", "dist", "data-export-551741-4135581179037204147"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# Existing dense one-line style in tests and the monolithic web.py templates.
+ignore = ["E501", "E701", "E702", "E741"]

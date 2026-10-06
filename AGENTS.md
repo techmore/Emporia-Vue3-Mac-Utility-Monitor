@@ -130,6 +130,7 @@ All have sensible defaults; none are required to run locally with an existing `k
 | `RATE_CENTS`       | `11.04`     | Electricity rate in cents/kWh                |
 | `POLL_INTERVAL`    | `60`        | Seconds between Emporia API polls            |
 | `DB_RETENTION_DAYS`| `365`       | Rows older than this are pruned each poll    |
+| `MINUTE_RETENTION_DAYS` | `30`   | Minute rows older than this are folded into hourly rows (0 = keep all) |
 | `MONTHLY_BUDGET`   | `150`       | Monthly cost budget in dollars (web.py only) |
 | `EMPORIA_EMAIL`    | —           | Only needed on first login (no `keys.json`)  |
 | `EMPORIA_PASSWORD` | —           | Only needed on first login (no `keys.json`)  |

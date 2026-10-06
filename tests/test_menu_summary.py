@@ -1,5 +1,5 @@
-from datetime import datetime, timedelta
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import energy
@@ -20,6 +20,14 @@ class MenuSummaryTests(unittest.TestCase):
              patch.object(energy,'get_main_total',return_value={'total_kwh':3}), \
              patch.object(web,'_poller_status_snapshot',return_value={'ok':True,'poller_running':True}):
             return web.app.test_client().get('/api/menu-summary')
+
+    def test_slots_flag_top_usage_and_relative_load(self):
+        data = self.snapshot(datetime.now().isoformat()).json
+        by_name = {s['channel_name']: s for s in data['breaker_slots'] if s['channel_name']}
+        self.assertTrue(by_name['Pump']['is_peak'])
+        self.assertFalse(by_name['Light']['is_peak'])
+        self.assertEqual(by_name['Pump']['usage_state'], 'heat')
+        self.assertIsNone(by_name['Light']['usage_state'])
 
     def test_native_summary_uses_fresh_power_and_saved_labels(self):
         response=self.snapshot(datetime.now().isoformat())
@@ -44,3 +52,13 @@ class MenuSummaryTests(unittest.TestCase):
         self.assertIsNone(pump_slot['load_percent'])
         self.assertIsNone(pump_slot['load_state'])
         self.assertEqual(data['recorded_kwh'],3)
+
+
+class FillGapsTests(unittest.TestCase):
+    def test_missing_days_and_hours_become_empty_buckets(self):
+        days = web._fill_gaps([{'day': '2026-10-01', 'total_kwh': 1}, {'day': '2026-10-04', 'total_kwh': 2}], 'day')
+        self.assertEqual([d['day'] for d in days], ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'])
+        self.assertIsNone(days[1]['total_kwh'])
+        hours = web._fill_gaps([{'hour': '2026-10-01 01:00', 'total_kwh': 1}, {'hour': '2026-10-01 03:00', 'total_kwh': 1}],
+                               'hour', hourly=True)
+        self.assertEqual(len(hours), 3)

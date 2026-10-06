@@ -1,8 +1,9 @@
 import json
 import os
-from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import energy
@@ -77,7 +78,7 @@ class ReleaseHardeningTests(unittest.TestCase):
             energy.DB_PATH = os.path.join(directory, 'test.db')
             try:
                 energy.ensure_table()
-                with self.assertRaises(Exception):
+                with self.assertRaises((TypeError, ValueError, sqlite3.Error)):
                     energy.save_panel_layout([{'slot': 1, 'label': 'first'},
                                               {'slot': 2, 'label': {'bad': 'type'}}])
                 self.assertEqual(energy.get_panel_layout(), [])

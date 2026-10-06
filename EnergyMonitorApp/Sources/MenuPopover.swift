@@ -16,6 +16,8 @@ struct MenuBreakerSlot: Decodable, Identifiable {
     let watts: Double?
     let loadPercent: Double?
     let loadState: String?
+    let usageState: String?
+    let isPeak: Bool?
     var id: Int { slot }
     var circuit: MenuCircuit? {
         guard let channelName = channelName else { return nil }
@@ -268,6 +270,8 @@ struct MonitorPopover: View {
         let watts = monitor.online ? slot.watts : nil
         let active = slot.channelName != nil
         let fill = slot.loadState == "danger" ? Theme.red : slot.loadState == "warn" ? Theme.amber : Theme.accent
+        let usage: Color? = !active ? nil : slot.usageState == "heat" ? Theme.red : slot.usageState == "high" ? Theme.amber : nil
+        let peak = active && slot.isPeak == true
         return Button {
             if let circuit = slot.circuit { monitor.select(circuit) }
         } label: {
@@ -276,8 +280,14 @@ struct MonitorPopover: View {
                     .font(.caption2.monospacedDigit().weight(.medium))
                     .foregroundStyle(Theme.textLight).frame(width: 20, alignment: .leading)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(slot.displayName).font(.caption.weight(.medium)).lineLimit(1)
-                        .foregroundStyle(active ? Theme.text : Theme.textLight)
+                    HStack(spacing: 3) {
+                        Text(slot.displayName).font(.caption.weight(.medium)).lineLimit(1)
+                            .foregroundStyle(active ? Theme.text : Theme.textLight)
+                        if peak {
+                            Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(Theme.amber)
+                                .accessibilityLabel("Top usage")
+                        }
+                    }
                     HStack(spacing: 3) {
                         Text(watts.map { String(format: "%.0f W", $0) } ?? (active ? "—" : "Empty"))
                             .monospacedDigit()
@@ -298,11 +308,12 @@ struct MonitorPopover: View {
             .padding(.horizontal, 7).padding(.vertical, 6)
             .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
             .background(Theme.surface.opacity(active ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border.opacity(active ? 0.6 : 0.3), lineWidth: 1))
+            .background((usage ?? .clear).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(usage ?? Theme.border.opacity(active ? 0.6 : 0.3), lineWidth: usage == nil ? 1 : 1.5))
         }
         .buttonStyle(.plain)
         .disabled(!active)
-        .accessibilityLabel(active ? "Slot \(slot.slot), \(slot.displayName), \(watts.map { String(format: "%.0f watts", $0) } ?? "offline"), view circuit history" : "Slot \(slot.slot), empty")
+        .accessibilityLabel(active ? "Slot \(slot.slot), \(slot.displayName), \(peak ? "top usage, " : "")\(watts.map { String(format: "%.0f watts", $0) } ?? "offline"), view circuit history" : "Slot \(slot.slot), empty")
     }
 
     private func circuitView(_ circuit: MenuCircuit) -> some View {

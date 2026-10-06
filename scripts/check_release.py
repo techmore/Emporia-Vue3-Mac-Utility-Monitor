@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Check release metadata and the portable source layout before packaging."""
-from pathlib import Path
 import plistlib
 import re
 import sys
+from pathlib import Path
 
 root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
 version = (root / 'VERSION').read_text().strip()

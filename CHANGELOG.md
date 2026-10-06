@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Menu popover themed to match the dashboard; breaker cards show relative-usage highlight and a star on the top three.
+- Default port moved to 5051. `build.sh` stops processes gracefully before force-killing.
+- Minute readings older than `MINUTE_RETENTION_DAYS` (30) are folded into hourly rows; redundant indexes dropped.
+- Poller logs per-poll duration and warns on gaps; charts show unrecorded periods as gaps.
+- Monthly cost-by-circuit report on Reports, `/api/monthly-costs`, and automatic `reports/energy-YYYY-MM.md` files.
+- Ruff configured; lint clean.
+
 ## 2.2.1 - 2026-10-05
 
 - Hide breaker load indicators when live readings are unavailable instead of implying zero load.

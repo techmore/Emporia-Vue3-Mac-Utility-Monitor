@@ -4,15 +4,15 @@
 Run only after configuring and explicitly choosing temperature entities in your setup.
 """
 import argparse
-from datetime import datetime, timezone
 import json
 import logging
 import math
 import os
-from pathlib import Path
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlsplit
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import climate
 

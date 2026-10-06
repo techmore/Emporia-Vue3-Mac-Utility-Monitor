@@ -50,6 +50,17 @@ ok()   { echo "  ✓  $*"; }
 info() { echo "  →  $*"; }
 warn() { echo "  ⚠  $*"; }
 
+# Ask politely (SIGTERM), wait up to ~5s, then force-kill only if it is still alive.
+stop_pid() {
+  local pid="$1" label="$2"
+  kill -TERM "$pid" 2>/dev/null || return 0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$pid" 2>/dev/null || { ok "Stopped $label (PID $pid)"; return 0; }
+    sleep 0.5
+  done
+  kill -KILL "$pid" 2>/dev/null && warn "Force-killed $label (PID $pid)" || true
+}
+
 kill_matching_repo_processes() {
   local pattern="$1"
   local label="$2"
@@ -57,7 +68,7 @@ kill_matching_repo_processes() {
     local CMD
     CMD=$(ps eww -p "$PID" -o command= 2>/dev/null || true)
     if echo "$CMD" | grep -q "$REPO_NAME"; then
-      kill -9 "$PID" 2>/dev/null && ok "Killed $label (PID $PID)" || true
+      stop_pid "$PID" "$label"
     fi
   done
 }
@@ -65,7 +76,7 @@ kill_matching_repo_processes() {
 kill_installed_app() {
   local installed_bin="$APP_INSTALL/Contents/MacOS/EnergyMonitorApp"
   for PID in $(pgrep -f "$installed_bin" 2>/dev/null || true); do
-    kill -9 "$PID" 2>/dev/null && ok "Killed installed app (PID $PID)" || true
+    stop_pid "$PID" "installed app"
   done
 }
 

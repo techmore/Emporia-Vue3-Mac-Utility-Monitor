@@ -3,19 +3,21 @@
 Energy Monitor — Flask web server
 Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
-from datetime import datetime
-from pathlib import Path
-from urllib.parse import urlsplit
-from panel_model import breaker_load
-from flask import Flask, jsonify, redirect, render_template_string, Response, request
-from jinja2 import select_autoescape
-from werkzeug.exceptions import RequestEntityTooLarge
 import json
 import math
 import os
 import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from flask import Flask, Response, jsonify, redirect, render_template_string, request
+from jinja2 import select_autoescape
+from werkzeug.exceptions import RequestEntityTooLarge
+
 import energy
 from extensions import HOUSE_CSS, register_extensions
+from panel_model import breaker_load
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
@@ -945,6 +947,22 @@ def _watts_estimate(kwh_per_minute: float) -> float:
     return kwh_per_minute * 60 * 1000
 
 
+def _fill_gaps(rows: list[dict], key: str, hourly: bool = False) -> list[dict]:
+    """Insert empty buckets (total_kwh None) so charts show unrecorded periods as gaps."""
+    if len(rows) < 2:
+        return rows
+    fmt, step = ("%Y-%m-%d %H:00", timedelta(hours=1)) if hourly else ("%Y-%m-%d", timedelta(days=1))
+    by_key = {row[key]: row for row in rows}
+    cursor = datetime.strptime(rows[0][key], fmt)
+    end = datetime.strptime(rows[-1][key], fmt)
+    filled = []
+    while cursor <= end:
+        label = cursor.strftime(fmt)
+        filled.append(by_key.get(label) or {key: label, "total_kwh": None, "total_cents": None})
+        cursor += step
+    return filled
+
+
 def _render(template: str, **ctx):
     return render_template_string(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
@@ -1521,7 +1539,7 @@ function oliveChart(id, labels, data, color) {
     options: {
       responsive: true,
       plugins: { legend: { display: false }, tooltip: {
-        callbacks: { label: ctx => ` ${ctx.raw.toFixed(2)} kWh` }
+        callbacks: { label: ctx => ` ${ctx.raw == null ? "no data" : ctx.raw.toFixed(2) + " kWh"}` }
       }},
       scales: {
         x: { ticks: { color: textLight, font: { size: 10 }, maxRotation: 45 }, grid: { color: borderCol } },
@@ -1552,7 +1570,7 @@ function thinRowChart(id, labels, data, color) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: { legend: { display: false }, tooltip: {
-        callbacks: { label: ctx => ` ${ctx.raw.toFixed(2)} kWh` }
+        callbacks: { label: ctx => ` ${ctx.raw == null ? "no data" : ctx.raw.toFixed(2) + " kWh"}` }
       }},
       scales: {
         x: {
@@ -1635,9 +1653,33 @@ REPORTS_HTML = """
 
   <div class="page-jump-nav">
     <a href="#reports-overview">Overview</a>
+    <a href="#monthly-costs">Monthly Costs</a>
     <a href="#recommendations">Recommendations</a>
     <a href="#billing-review">Billing Review</a>
     <a href="#pattern-highlights">Pattern Highlights</a>
+  </div>
+
+  <div id="monthly-costs" class="section">
+    <div class="section-head">
+      <h2>Monthly cost by circuit</h2>
+      <span class="section-sub">Recorded data only · partial months show days recorded · reports also saved to reports/</span>
+    </div>
+    {% for m in monthly_costs %}
+    <details class="card" style="margin-bottom:8px;" {% if loop.first %}open{% endif %}>
+      <summary style="cursor:pointer;">
+        <strong>{{ m.month }}</strong> &middot;
+        {% if m.total_cents is not none %}${{ "%.2f"|format(m.total_cents / 100) }} &middot; {{ "%.0f"|format(m.total_kwh) }} kWh{% else %}no whole-home reading{% endif %}
+        <span class="card-meta">&middot; {{ m.days_recorded }} day{{ '' if m.days_recorded == 1 else 's' }} recorded</span>
+      </summary>
+      <table style="width:100%; margin-top:8px;">
+        {% for c in m.circuits[:12] %}
+        <tr><td>{{ c.channel_name }}</td><td style="text-align:right;">{{ "%.1f"|format(c.kwh or 0) }} kWh</td><td style="text-align:right;">${{ "%.2f"|format((c.cents or 0) / 100) }}</td></tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% else %}
+    <div class="card"><div class="card-meta">No monthly history recorded yet.</div></div>
+    {% endfor %}
   </div>
 
   <div id="reports-overview" class="section">
@@ -2462,7 +2504,7 @@ new Chart(document.getElementById('usageChart'), {
   },
   options: {
     responsive:true,
-    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw.toFixed(3)} kWh`}}},
+    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw == null ? "no data" : c.raw.toFixed(3) + " kWh"}`}}},
     scales:{
       x:{ticks:{color:s.getPropertyValue('--olive-600').trim(), font:{size:10}},
          grid:{color:s.getPropertyValue('--olive-200').trim()}},
@@ -2713,7 +2755,7 @@ function mkChart(id, labels, data, color) {
     data:{ labels, datasets:[{ data, backgroundColor:color, borderRadius:3 }] },
     options:{
       responsive:true,
-      plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw.toFixed(2)} kWh`}}},
+      plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw == null ? "no data" : c.raw.toFixed(2) + " kWh"}`}}},
       scales:{
         x:{ticks:{color:textLight, font:{size:10}, maxRotation:45}, grid:{color:gridCol}},
         y:{beginAtZero:true, ticks:{color:textLight, font:{size:10}}, grid:{color:gridCol}}
@@ -3019,7 +3061,6 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
 def _common():
     """Values needed by every page (status indicator + device labels)."""
     active_device_gid = energy.get_active_device_gid()
-    latest = energy.get_latest(active_device_gid)
     last   = energy.get_latest_timestamp(active_device_gid) or "N/A"
     cls, label, _ = _status(last)
     device_labels = energy.get_device_labels()
@@ -3081,7 +3122,7 @@ def _load_panel_display_settings() -> dict:
 def _load_panel_slots(default: int = 16) -> int:
     try:
         with open("settings.json") as f:
-            value = int((json.load(f).get("panel_slots") or default))
+            value = int(json.load(f).get("panel_slots") or default)
     except Exception:
         value = default
     return max(1, value)
@@ -3428,8 +3469,8 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         "partial_history": (main_24h or {}).get("readings", 0) * energy.POLL_INTERVAL < 24 * 3600,
         "budget_pct": budget_pct,
         "rate": RATE,
-        "daily_json": energy.get_daily_data(30, active_device_gid),
-        "hourly_json": energy.get_hourly_data(7, active_device_gid),
+        "daily_json": _fill_gaps(energy.get_daily_data(30, active_device_gid), "day"),
+        "hourly_json": _fill_gaps(energy.get_hourly_data(7, active_device_gid), "hour", hourly=True),
         "intraday_comparison": energy.get_intraday_comparison(active_device_gid),
         "month_comparison": {
             "this_month": month_comparison["this_month"],
@@ -3563,6 +3604,7 @@ def reports_page():
     budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
     return _render(
         REPORTS_HTML,
+        monthly_costs=energy.get_monthly_costs(12),
         active_page="reports",
         total_24h=total_24h,
         monthly_projected=monthly_projected,
@@ -3751,7 +3793,7 @@ def circuits_page():
 @app.route("/circuit/<path:circuit_name>")
 @app.route("/circuit/<path:circuit_name>/<period>")
 def circuit_detail(circuit_name, period="day"):
-    from urllib.parse import unquote, quote
+    from urllib.parse import quote, unquote
     circuit_name = unquote(circuit_name)
     circuit_url  = quote(circuit_name, safe="")
     com = _common()
@@ -3864,8 +3906,8 @@ def trends_page():
         TRENDS_HTML,
         active_page="trends",
         trend=trend,
-        trend_json=trend["daily"],
-        hourly_json=energy.get_hourly_data(7, com["active_device_gid"]),
+        trend_json=_fill_gaps(trend["daily"], "day"),
+        hourly_json=_fill_gaps(energy.get_hourly_data(7, com["active_device_gid"]), "hour", hourly=True),
         mc={"this_month": mc["this_month"], "last_month": mc["last_month"]},
         rate=RATE,
         total_24h=total_24h,
@@ -3891,7 +3933,9 @@ def log_page():
 def api_weather():
     """Fetch 14-day forecast from Open-Meteo for zip 18947 (Pipersville, PA).
     Cached for 30 min to avoid hammering the free API."""
-    import urllib.request, json as _json, time as _time
+    import json as _json
+    import time as _time
+    import urllib.request
     cache = getattr(api_weather, "_cache", None)
     if cache and _time.time() - cache["ts"] < 1800:
         return jsonify(cache["data"])
@@ -3972,7 +4016,7 @@ def api_poller_reconnect():
     Optionally accepts {email, password} to refresh credentials first.
     Writes reconnect.flag which the poller loop checks every cycle.
     """
-    import json as _json, os as _os
+    import json as _json
     data = request.get_json(force=True) or {}
     email = (data.get("email") or "").strip()
     pwd   = data.get("password") or ""
@@ -4029,6 +4073,15 @@ def api_month_comparison():
 def api_peak_usage():
     return jsonify(energy.get_peak_usage())
 
+@app.route("/api/monthly-costs")
+def api_monthly_costs():
+    try:
+        months = max(1, min(36, int(request.args.get("months", "12"))))
+    except ValueError:
+        return jsonify({"error": "months must be an integer"}), 400
+    return jsonify(energy.get_monthly_costs(months))
+
+
 @app.route("/api/menu-summary")
 def api_menu_summary():
     """Small native-menu payload; no templates or dashboard analytics required."""
@@ -4076,6 +4129,14 @@ def api_menu_summary():
             "load_percent": rating["load_bar_w"] if rating and rating["rating_known"] else None,
             "load_state": rating["safe_cls"] if rating and rating["rating_known"] else None,
         })
+    # Same relative-usage rules as the dashboard breaker cards (heat >75%, high >40%, top 3 starred).
+    live = sorted((row["watts"] for row in breaker_slots if row["channel_name"] and row["watts"]), reverse=True)
+    max_watts = live[0] if live else 0
+    peak_threshold = live[min(2, len(live) - 1)] if live else 0
+    for row in breaker_slots:
+        share = (row["watts"] or 0) / max_watts * 100 if max_watts else 0
+        row["usage_state"] = "heat" if share > 75 else "high" if share > 40 else None
+        row["is_peak"] = bool(row["channel_name"] and row["watts"] and row["watts"] >= peak_threshold)
     display = _load_panel_display_settings()
     left = breaker_slots[::2]
     right = breaker_slots[1::2]
@@ -5018,7 +5079,8 @@ def aqara_page():
 
 @app.route("/settings")
 def settings_page():
-    import json as _json, os as _os
+    import json as _json
+    import os as _os
     com = _common()
     cfg = {}
     try:
@@ -5049,7 +5111,8 @@ def settings_page():
 
 @app.route("/api/settings/credentials", methods=["POST"])
 def api_save_credentials():
-    import json as _json, os as _os
+    import json as _json
+    import os as _os
     data = request.get_json(force=True)
     email = (data.get("email") or "").strip()
     pwd   = data.get("password") or ""
@@ -5134,7 +5197,8 @@ def import_page():
 
 @app.route("/api/import-csv", methods=["POST"])
 def api_import_csv():
-    import tempfile, os
+    import os
+    import tempfile
     f = request.files.get("file")
     if not f:
         return jsonify({"error": "No file uploaded"}), 400

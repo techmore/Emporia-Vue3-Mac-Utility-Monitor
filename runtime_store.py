@@ -1,8 +1,8 @@
 """Atomic, owner-only runtime JSON persistence shared by web and poller."""
 import json
 import os
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 
 def write_private_json(path: str | Path, data: dict) -> None:

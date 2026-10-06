@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-import os
 import json
-import time
-import sqlite3
 import logging
+import os
+import sqlite3
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from runtime_store import write_private_json
+
 import pyemvue
 from pyemvue.enums import Scale, Unit
+
+from runtime_store import write_private_json
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
 DB_RETENTION_DAYS = int(os.environ.get("DB_RETENTION_DAYS", "365"))
+# Minute rows older than this are folded into one row per channel per hour (0 = keep all).
+MINUTE_RETENTION_DAYS = int(os.environ.get("MINUTE_RETENTION_DAYS", "30"))
 POLLER_STATUS_FILE = os.environ.get("POLLER_STATUS_FILE", "poller_status.json")
 RECONNECT_FLAG_FILE = "reconnect.flag"
 
@@ -112,12 +116,12 @@ def ensure_table():
         );
         CREATE INDEX IF NOT EXISTS idx_timestamp
             ON readings(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_device_channel
-            ON readings(device_gid, channel_num);
         CREATE INDEX IF NOT EXISTS idx_channel_name
             ON readings(channel_name);
-        CREATE INDEX IF NOT EXISTS idx_device_timestamp
-            ON readings(device_gid, timestamp);
+        -- Superseded: idx_device_timestamp is a prefix of the unique index below and
+        -- idx_device_channel (device, channel_num) is never filtered on.
+        DROP INDEX IF EXISTS idx_device_timestamp;
+        DROP INDEX IF EXISTS idx_device_channel;
         CREATE INDEX IF NOT EXISTS idx_device_channel_timestamp
             ON readings(device_gid, channel_name, timestamp);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
@@ -636,10 +640,132 @@ def poll_and_store(vue, device_gids):
     # Prune old rows to keep the database from growing unboundedly.
     cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
     c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
+    global _last_compaction
+    compacted = 0
+    if time.monotonic() - _last_compaction > 3600:
+        _last_compaction = time.monotonic()
+        compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+        conn.commit()
+        for report in write_monthly_reports():
+            logger.info("Wrote monthly report %s", report)
+    if compacted:
+        logger.info("Compacted %s minute rows into hourly rows", compacted)
 
     conn.commit()
     conn.close()
     logger.info("[%s] Recorded readings", now)
+
+
+_last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
+
+
+def compact_minute_readings(conn, days: int) -> int:
+    """Fold minute rows older than `days` into one row per channel per hour, in place.
+
+    Hourly rows reuse the readings table (timestamp = start of hour, usage and cost summed),
+    like imported 1H CSV buckets, so existing sum-based queries are unchanged. Only whole
+    hours before the cutoff are folded. Returns the number of rows removed. Caller commits.
+    """
+    if days <= 0:
+        return 0
+    cutoff = (datetime.now() - timedelta(days=days)).replace(
+        minute=0, second=0, microsecond=0).isoformat()
+    conn.execute("DROP TABLE IF EXISTS _compact")
+    conn.execute(
+        """CREATE TEMP TABLE _compact AS
+           SELECT device_gid, MIN(channel_num) channel_num, channel_name,
+                  substr(timestamp, 1, 13) || ':00:00' ts,
+                  SUM(usage_kwh) usage_kwh, SUM(cost_cents) cost_cents, COUNT(*) n
+           FROM readings
+           WHERE timestamp < ? AND channel_name IS NOT NULL AND usage_kwh IS NOT NULL
+           GROUP BY device_gid, channel_name, substr(timestamp, 1, 13)
+           HAVING COUNT(*) > 1 OR MIN(timestamp) != substr(MIN(timestamp), 1, 13) || ':00:00'""",
+        (cutoff,),
+    )
+    removed = 0
+    if conn.execute("SELECT COUNT(*) FROM _compact").fetchone()[0]:
+        removed = conn.execute(
+            """DELETE FROM readings WHERE id IN (
+                   SELECT r.id FROM readings r JOIN _compact c
+                     ON r.device_gid = c.device_gid AND r.channel_name = c.channel_name
+                    AND substr(r.timestamp, 1, 13) = substr(c.ts, 1, 13)
+                   WHERE r.timestamp < ?)""", (cutoff,)).rowcount
+        conn.execute(
+            """INSERT INTO readings (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+               SELECT ts, device_gid, channel_num, channel_name, usage_kwh, cost_cents FROM _compact""")
+    conn.execute("DROP TABLE _compact")
+    return removed
+
+
+def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[dict]:
+    """Per-month whole-home and per-circuit recorded energy and cost, newest first.
+
+    Totals come from Main (so circuits are not double counted). `days_recorded` counts
+    distinct calendar days with data so partial months are visible rather than hidden.
+    Costs use the rate stored with each reading, not today's rate.
+    """
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return []
+        first = datetime.now().replace(day=1)
+        for _ in range(max(1, months) - 1):
+            first = (first - timedelta(days=1)).replace(day=1)
+        since = first.strftime("%Y-%m-01")
+        rows = conn.execute(
+            """SELECT substr(timestamp, 1, 7) month, channel_name,
+                      SUM(usage_kwh) kwh, SUM(cost_cents) cents,
+                      COUNT(DISTINCT substr(timestamp, 1, 10)) days
+               FROM readings
+               WHERE device_gid = ? AND timestamp >= ? AND channel_name IS NOT NULL
+                 AND channel_name NOT IN ('Mains_A', 'Mains_B', 'Mains_C')
+               GROUP BY month, channel_name""",
+            (gid, since),
+        ).fetchall()
+    finally:
+        conn.close()
+    by_month: dict[str, dict] = {}
+    for row in rows:
+        entry = by_month.setdefault(row["month"], {
+            "month": row["month"], "total_kwh": None, "total_cents": None,
+            "days_recorded": 0, "circuits": [],
+        })
+        if row["channel_name"] == "Main":
+            entry["total_kwh"], entry["total_cents"] = row["kwh"], row["cents"]
+            entry["days_recorded"] = row["days"]
+        elif row["channel_name"] != "Balance":
+            entry["circuits"].append({"channel_name": row["channel_name"],
+                                      "kwh": row["kwh"], "cents": row["cents"]})
+    result = sorted(by_month.values(), key=lambda m: m["month"], reverse=True)
+    for entry in result:
+        entry["circuits"].sort(key=lambda c: c["cents"] or 0, reverse=True)
+    return result
+
+
+def write_monthly_reports(directory: str | None = None) -> list[str]:
+    """Write a Markdown cost report for each completed month that has none yet."""
+    directory = directory or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "reports")
+    current = datetime.now().strftime("%Y-%m")
+    written = []
+    for month in get_monthly_costs(12):
+        path = os.path.join(directory, f"energy-{month['month']}.md")
+        if month["month"] >= current or os.path.exists(path) or month["total_cents"] is None:
+            continue
+        lines = [
+            f"# Energy report {month['month']}", "",
+            f"- Whole home: {month['total_kwh']:.1f} kWh, ${month['total_cents'] / 100:.2f}",
+            f"- Days with readings: {month['days_recorded']}", "",
+            "| Circuit | kWh | Cost |", "| --- | ---: | ---: |",
+        ]
+        lines += [f"| {c['channel_name']} | {c['kwh'] or 0:.1f} | ${(c['cents'] or 0) / 100:.2f} |"
+                  for c in month["circuits"]]
+        lines += ["", "Recorded data only; gaps are not estimated."]
+        os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+        written.append(path)
+    return written
 
 
 def run_continuous():
@@ -659,6 +785,7 @@ def run_continuous():
     vue = None
     device_gids = []
     consecutive_errors = 0
+    last_ok: float | None = None
     MAX_ERRORS_BEFORE_RELOGIN = 3
     RELOGIN_BACKOFF = [30, 60, 120, 300]
 
@@ -709,7 +836,13 @@ def run_continuous():
             continue
 
         try:
+            started = time.monotonic()
             poll_and_store(vue, device_gids)
+            finished = time.monotonic()
+            if last_ok is not None and started - last_ok > POLL_INTERVAL * 3:
+                logger.warning("Poll gap: %.0fs since last successful poll", started - last_ok)
+            logger.info("Poll took %.2fs", finished - started)
+            last_ok = finished
             consecutive_errors = 0
             write_poller_status(True, consecutive_errors=0)
         except Exception as e:
@@ -1138,19 +1271,15 @@ def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
     if period == "hour":
         since = (now - timedelta(hours=24)).isoformat()
         group_by = "strftime('%Y-%m-%d %H:00', timestamp)"
-        fmt = "%Y-%m-%d %H:00"
     elif period == "day":
         since = (now - timedelta(days=7)).isoformat()
         group_by = "strftime('%Y-%m-%d', timestamp)"
-        fmt = "%Y-%m-%d"
     elif period == "week":
         since = (now - timedelta(days=30)).isoformat()
         group_by = "strftime('%Y-%m-%d', timestamp)"
-        fmt = "%Y-%m-%d"
     elif period == "month":
         since = (now - timedelta(days=365)).isoformat()
         group_by = "strftime('%Y-%m', timestamp)"
-        fmt = "%Y-%m"
     elif period == "year":
         since = (now - timedelta(days=365 * 3)).isoformat()
         group_by = "strftime('%Y', timestamp)"
