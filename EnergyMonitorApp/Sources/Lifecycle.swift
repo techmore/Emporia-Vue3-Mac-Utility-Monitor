@@ -16,7 +16,10 @@ enum LoginItem {
     }
 
     static var executablePath: String { Bundle.main.executablePath ?? CommandLine.arguments[0] }
-    static var isBrewInstall: Bool { executablePath.contains("/Cellar/energy-monitor/") }
+    /// True for both the versioned Cellar path and the `opt` link that the CLI and LaunchAgent use.
+    static var isBrewInstall: Bool {
+        executablePath.contains("/Cellar/energy-monitor/") || executablePath.contains("/opt/energy-monitor/")
+    }
 
     /// Homebrew installs live in a versioned Cellar folder; the `opt` link survives upgrades.
     static var stableExecutable: String {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.1 - 2026-10-06
+
+- Fix uninstall of Homebrew installs launched through the `opt` link, which were treated as plain apps.
+
 ## 2.3.0 - 2026-10-06
 
 - Start at login is on by default and togglable from the menu or `energy-monitor autostart on|off|status`.
