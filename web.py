@@ -4160,8 +4160,12 @@ def api_menu_summary():
     ]
     circuits.sort(key=lambda row: (-(row["watts"] or 0), row["display_name"]))
     total = energy.get_main_total(24, gid)
+    this_month = next(iter(energy.get_monthly_costs(1, gid)), None)
     return jsonify({
         "version": VERSION, "online": online, "current_watts": watts,
+        "cost_24h": total["total_cents"] / 100 if total and total["total_cents"] is not None else None,
+        "month_cost": this_month["total_cents"] / 100 if this_month and this_month["total_cents"] is not None else None,
+        "month_days_recorded": this_month["days_recorded"] if this_month else 0,
         "cost_per_hour": watts / 1000 * RATE if watts is not None else None,
         "recorded_kwh": total["total_kwh"] if total else None,
         "panel_label": panel_label, "panel_slots": panel_slots,

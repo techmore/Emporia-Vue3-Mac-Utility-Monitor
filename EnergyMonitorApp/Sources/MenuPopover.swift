@@ -31,6 +31,9 @@ struct MenuSummary: Decodable {
     let currentWatts: Double?
     let costPerHour: Double?
     let recordedKwh: Double?
+    let cost24h: Double?
+    let monthCost: Double?
+    let monthDaysRecorded: Int?
     let lastReading: String?
     let topCircuits: [MenuCircuit]
     let panelLabel: String
@@ -244,12 +247,12 @@ struct MonitorPopover: View {
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(Theme.red)
             }
-            HStack {
-                Label("Last 24 hours", systemImage: "clock.arrow.circlepath")
-                    .font(.caption).foregroundStyle(Theme.textLight)
-                Spacer()
-                Text(energy(monitor.summary?.recordedKwh)).font(Theme.serif(20)).monospacedDigit()
-            }.themeCard(padding: 11)
+            HStack(spacing: 8) {
+                statCard("24H COST", monitor.summary?.cost24h.map { String(format: "$%.2f", $0) } ?? "—",
+                         energy(monitor.summary?.recordedKwh))
+                statCard("MONTH TO DATE", monitor.summary?.monthCost.map { String(format: "$%.2f", $0) } ?? "—",
+                         (monitor.summary?.monthDaysRecorded).map { "\($0) day\($0 == 1 ? "" : "s") recorded" } ?? "No data")
+            }
             HStack {
                 Text("CIRCUIT BREAKERS").font(.caption2.weight(.semibold)).tracking(1.1)
                 Spacer()
@@ -264,6 +267,17 @@ struct MonitorPopover: View {
             }
             Text(timeLabel(monitor.summary?.lastReading)).font(.caption2).foregroundStyle(Theme.textLight)
         }
+    }
+
+    private func statCard(_ title: String, _ value: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(Theme.textLight)
+            Text(value).font(Theme.serif(24)).monospacedDigit()
+            Text(detail).font(.caption2).foregroundStyle(Theme.textLight).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .themeCard(padding: 11)
+        .accessibilityElement(children: .combine)
     }
 
     private func breakerCard(_ slot: MenuBreakerSlot) -> some View {

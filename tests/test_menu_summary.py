@@ -17,7 +17,8 @@ class MenuSummaryTests(unittest.TestCase):
         with patch.object(energy,'get_active_device_gid',return_value='A'), \
              patch.object(energy,'get_latest',return_value=rows), \
              patch.object(energy,'get_panel_layout',return_value=[{'channel_name':'Pump','label':'Well pump','amps':20,'poles':1}]), \
-             patch.object(energy,'get_main_total',return_value={'total_kwh':3}), \
+             patch.object(energy,'get_main_total',return_value={'total_kwh':3,'total_cents':41}), \
+             patch.object(energy,'get_monthly_costs',return_value=[{'total_cents':250,'days_recorded':4}]), \
              patch.object(web,'_poller_status_snapshot',return_value={'ok':True,'poller_running':True}):
             return web.app.test_client().get('/api/menu-summary')
 
@@ -36,6 +37,7 @@ class MenuSummaryTests(unittest.TestCase):
         self.assertTrue(data['online'])
         self.assertEqual(data['current_watts'],1200)
         self.assertEqual(data['recorded_kwh'],3)
+        self.assertEqual((data['cost_24h'], data['month_cost'], data['month_days_recorded']), (0.41, 2.5, 4))
         self.assertEqual([c['channel_name'] for c in data['top_circuits']],['Pump','Light'])
         self.assertEqual(data['top_circuits'][0]['display_name'],'Well pump')
         self.assertEqual(data['top_circuits'][1]['watts'],0)

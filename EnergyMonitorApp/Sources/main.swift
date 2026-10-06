@@ -539,6 +539,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    private func reportPortConflict() {
+        monitor.summaryError = "Port \(flaskPort) is used by another app. Set FLASK_PORT to a free port and relaunch."
+        let alert = NSAlert()
+        alert.messageText = "Port \(flaskPort) is in use"
+        alert.informativeText = "Another service answers on 127.0.0.1:\(flaskPort), so the dashboard cannot start. Rebuild with FLASK_PORT set to a free port, for example: FLASK_PORT=5052 ./build.sh --no-pull"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     private func waitForFlask() {
         let deadline = Date().addingTimeInterval(probeTimeout)
 
@@ -546,6 +556,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let request = URLRequest(url: dashboardURL.appendingPathComponent("api/version"), timeoutInterval: 2)
 
             URLSession.shared.dataTask(with: request) { data, response, _ in
+                let answered = response is HTTPURLResponse
                 let json = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
                 let ready = (response as? HTTPURLResponse)?.statusCode == 200 && json?["version"] is String
                 DispatchQueue.main.async {
@@ -553,6 +564,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                         print("Flask is ready — menu monitor active")
                         self.fetchVersionFromFlask()
                         self.refreshMonitor()
+                    } else if answered && Date() >= deadline {
+                        self.reportPortConflict()
                     } else if Date() < deadline {
                         DispatchQueue.main.asyncAfter(deadline: .now() + self.probeInterval) {
                             probe()

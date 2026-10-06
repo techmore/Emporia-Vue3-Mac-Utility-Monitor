@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pyemvue
+import requests
 from pyemvue.enums import Scale, Unit
 
 from runtime_store import write_private_json
@@ -579,12 +580,22 @@ def poll_and_store(vue, device_gids):
     conn = _connect()
     c = conn.cursor()
 
-    usage_dict = vue.get_device_list_usage(
-        deviceGids=device_gids,
-        instant=None,
-        scale=Scale.MINUTE.value,
-        unit=Unit.KWH.value,
-    )
+    usage_dict = None
+    for attempt in range(1, 4):
+        try:
+            usage_dict = vue.get_device_list_usage(
+                deviceGids=device_gids,
+                instant=None,
+                scale=Scale.MINUTE.value,
+                unit=Unit.KWH.value,
+            )
+            break
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            if attempt == 3:
+                conn.close()
+                raise
+            logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
+            time.sleep(2 * attempt)
 
     now = datetime.now().isoformat()
 
