@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.2.1-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.3.0-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -25,15 +25,35 @@ On Apple Silicon Macs running macOS 13 or later:
 
 ```sh
 brew install techmore/tap/energy-monitor
-brew services start techmore/tap/energy-monitor
+energy-monitor            # launch the menu bar app
 ```
 
 The Formula installs Python 3.12, prepares an offline wheelhouse, and compiles the
 menu app locally with Swift, so no unsigned downloaded app bundle or Gatekeeper
-bypass is involved. Xcode Command Line Tools are required. `brew services start`
-starts the menu app and polling engine at login; use `brew services stop` to stop it.
+bypass is involved. Xcode Command Line Tools are required.
 Settings, credentials and the SQLite database live in `$(brew --prefix)/var/energy-monitor`.
-Uninstalling the Formula preserves this directory.
+
+**Start at login** is turned on the first time the app runs. Change it any time:
+
+| Action | How |
+| --- | --- |
+| Turn off / on | Menu bar icon → ⋯ → **Start at Login**, or `energy-monitor autostart off` / `on` |
+| Check | `energy-monitor autostart status` |
+| Stop for now | Menu bar icon → ⋯ → **Quit Energy Monitor** |
+
+It is a per-user LaunchAgent (`~/Library/LaunchAgents/com.dolbec.energymonitor.login.plist`).
+If the app is ever removed, the agent deletes itself at the next login.
+`brew services start energy-monitor` still works but is no longer needed.
+
+**Uninstall** (your data is kept by default):
+
+```sh
+energy-monitor uninstall            # turn off start at login, then brew uninstall
+energy-monitor uninstall --purge    # also delete energy history and settings
+brew untap techmore/tap             # optional
+```
+
+The same option is in the menu: ⋯ → **Uninstall…**
 
 ## Circuit quick view (2.1)
 

@@ -50,3 +50,4 @@ EnergyMonitorApp/EnergyMonitorApp.app/
 # Private utility bill baselines
 billing_history.json
 reports/
+.autostart_configured

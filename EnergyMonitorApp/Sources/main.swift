@@ -142,6 +142,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // Keep direct references so titles can be updated without fragile index arithmetic.
     private weak var copyURLMenuItem: NSMenuItem?
     private weak var headerMenuItem: NSMenuItem?
+    private weak var autostartMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard acquireLock() else {
@@ -169,6 +170,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
         NSApp.setActivationPolicy(.accessory)
+        enableAutostartOnFirstRun()
+        monitor.autostart = LoginItem.isEnabled
         startFlaskServer()
         startPollerIfNeeded()
         buildStatusItem()
@@ -224,6 +227,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menu.addItem(copyItem)
         copyURLMenuItem = copyItem
 
+        let autostartItem = NSMenuItem(title: "Start at Login",
+                                       action: #selector(toggleAutostart),
+                                       keyEquivalent: "")
+        autostartItem.target = self
+        autostartItem.state = LoginItem.isEnabled ? .on : .off
+        menu.addItem(autostartItem)
+        autostartMenuItem = autostartItem
+
         menu.addItem(.separator())
 
         // ── Uninstall ──
@@ -250,6 +261,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             monitor: monitor,
             openDashboard: { [weak self] in self?.openInBrowser() },
             openSettings: { [weak self] in self?.openSettings() },
+            toggleAutostart: { [weak self] in self?.toggleAutostart() },
+            uninstall: { [weak self] in self?.showUninstall() },
             quit: { NSApp.terminate(nil) }
         ))
         popover = panel
@@ -267,6 +280,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         monitorTimer = timer
         RunLoop.main.add(timer, forMode: .common)
         refreshMonitor()
+    }
+
+    /// Start at login is on by default; the marker keeps a later "off" choice from being undone.
+    private func enableAutostartOnFirstRun() {
+        let marker = runtimeDataRoot.appendingPathComponent(".autostart_configured")
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+        try? LoginItem.enable()
+        FileManager.default.createFile(atPath: marker.path, contents: nil)
+    }
+
+    @objc private func toggleAutostart() {
+        if LoginItem.isEnabled { LoginItem.disable() } else { try? LoginItem.enable() }
+        monitor.autostart = LoginItem.isEnabled
+        autostartMenuItem?.state = monitor.autostart ? .on : .off
     }
 
     @objc private func openInBrowser() {
@@ -310,46 +337,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // ── Uninstall ─────────────────────────────────────────────────────────────
 
     @objc private func showUninstall() {
+        popover?.performClose(nil)
         let alert = NSAlert()
         alert.messageText = "Uninstall Energy Monitor?"
-        alert.informativeText = "The app will be moved to the Trash. Your energy database and project files will not be affected."
+        alert.informativeText = LoginItem.isBrewInstall
+            ? "Start at login is turned off and Homebrew removes the app. Your energy history and settings are kept unless you choose to delete them."
+            : "Start at login is turned off and the app is moved to the Trash. Your project files and database are not affected."
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Uninstall")
         alert.addButton(withTitle: "Cancel")
-
+        if LoginItem.isBrewInstall {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Also delete my energy history and settings"
+        }
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        // Identify what to trash: walk up from the binary to find a .app bundle,
-        // otherwise fall back to the bare binary itself.
-        let binary = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-        var trashTarget = binary
-        var candidate = binary
-        while candidate.path != "/" {
-            if candidate.pathExtension == "app" {
-                trashTarget = candidate
-                break
-            }
-            candidate = candidate.deletingLastPathComponent()
-        }
-
+        let purge = alert.suppressionButton?.state == .on
         pollerProcess?.terminate()
         flaskProcess?.terminate()
         if ownsLock { releaseLock() }
-
-        var resultURL: NSURL?
-        do {
-            try FileManager.default.trashItem(at: trashTarget, resultingItemURL: &resultURL)
-            print("Moved to Trash: \(trashTarget.path)")
-        } catch {
-            let errAlert = NSAlert()
-            errAlert.messageText = "Could not move to Trash"
-            errAlert.informativeText = error.localizedDescription
-            errAlert.alertStyle = .critical
-            errAlert.addButton(withTitle: "OK")
-            errAlert.runModal()
-            return
-        }
-
+        let message = Uninstaller.run(dataRoot: runtimeDataRoot, purge: purge)
+        let done = NSAlert()
+        done.messageText = "Energy Monitor is being removed"
+        done.informativeText = message
+        done.addButton(withTitle: "OK")
+        done.runModal()
         NSApp.terminate(nil)
     }
 
@@ -583,6 +595,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
+
+private func handleCommandLine(_ args: [String]) -> Int32? {
+    if let index = args.firstIndex(of: "--autostart") {
+        let action = index + 1 < args.count ? args[index + 1] : "status"
+        switch action {
+        case "on":
+            do { try LoginItem.enable() } catch { print("Could not enable: \(error.localizedDescription)"); return 1 }
+            print("Start at login: on")
+        case "off":
+            LoginItem.disable()
+            print("Start at login: off")
+        default:
+            print("Start at login: \(LoginItem.isEnabled ? "on" : "off")")
+        }
+        return 0
+    }
+    if args.contains("--uninstall") {
+        print(Uninstaller.run(dataRoot: runtimeDataRoot, purge: args.contains("--purge")))
+        return 0
+    }
+    return nil
+}
+
+if let code = handleCommandLine(CommandLine.arguments) { exit(code) }
 
 let app      = NSApplication.shared
 let delegate = AppDelegate()

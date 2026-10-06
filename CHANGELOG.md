@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 2.3.0 - 2026-10-06
+
+- Start at login is on by default and togglable from the menu or `energy-monitor autostart on|off|status`.
+- Uninstall from the menu or `energy-monitor uninstall [--purge]`; Homebrew installs are removed through Homebrew and data is kept unless purged.
+- Menu popover shows 24h and month-to-date cost, usage highlights and top-usage stars.
+- Warn when the dashboard port is held by another app; Emporia API timeouts are retried.
 
 - Menu popover themed to match the dashboard; breaker cards show relative-usage highlight and a star on the top three.
 - Default port moved to 5051. `build.sh` stops processes gracefully before force-killing.

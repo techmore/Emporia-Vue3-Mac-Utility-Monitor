@@ -68,6 +68,7 @@ final class MenuMonitor: ObservableObject {
     @Published var historyError: String?
     @Published var days = 1
     @Published var refreshing = false
+    @Published var autostart = false
     var didUpdate: (() -> Void)?
     private let baseURL: URL
     private var historyTask: URLSessionDataTask?
@@ -169,6 +170,8 @@ struct MonitorPopover: View {
     @ObservedObject var monitor: MenuMonitor
     let openDashboard: () -> Void
     let openSettings: () -> Void
+    let toggleAutostart: () -> Void
+    let uninstall: () -> Void
     let quit: () -> Void
 
     private func energy(_ value: Double?) -> String {
@@ -208,6 +211,9 @@ struct MonitorPopover: View {
                 Spacer()
                 Menu {
                     Button("Settings", action: openSettings)
+                    Toggle("Start at Login", isOn: Binding(get: { monitor.autostart }, set: { _ in toggleAutostart() }))
+                    Button("Uninstall…", action: uninstall)
+                    Divider()
                     Button("Quit Energy Monitor", action: quit)
                 } label: { Image(systemName: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Monitor options")
