@@ -268,6 +268,42 @@ def ensure_table():
         );
         CREATE INDEX IF NOT EXISTS idx_climate_timestamp ON climate_readings(timestamp);
 
+        CREATE TABLE IF NOT EXISTS collector_identity (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            source_id TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO collector_identity(singleton, source_id)
+            VALUES (1, lower(hex(randomblob(16))));
+        CREATE TABLE IF NOT EXISTS reading_changes (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation TEXT NOT NULL CHECK (operation IN ('upsert', 'delete')),
+            reading_id INTEGER NOT NULL,
+            timestamp TEXT,
+            device_gid TEXT,
+            channel_num INTEGER,
+            channel_name TEXT,
+            usage_kwh REAL,
+            cost_cents REAL
+        );
+        CREATE TRIGGER IF NOT EXISTS readings_sync_insert AFTER INSERT ON readings
+        BEGIN
+            INSERT INTO reading_changes(operation, reading_id, timestamp, device_gid,
+                channel_num, channel_name, usage_kwh, cost_cents)
+            VALUES ('upsert', NEW.id, NEW.timestamp, NEW.device_gid, NEW.channel_num,
+                NEW.channel_name, NEW.usage_kwh, NEW.cost_cents);
+        END;
+        CREATE TRIGGER IF NOT EXISTS readings_sync_update AFTER UPDATE ON readings
+        BEGIN
+            INSERT INTO reading_changes(operation, reading_id, timestamp, device_gid,
+                channel_num, channel_name, usage_kwh, cost_cents)
+            VALUES ('upsert', NEW.id, NEW.timestamp, NEW.device_gid, NEW.channel_num,
+                NEW.channel_name, NEW.usage_kwh, NEW.cost_cents);
+        END;
+        CREATE TRIGGER IF NOT EXISTS readings_sync_delete AFTER DELETE ON readings
+        BEGIN
+            INSERT INTO reading_changes(operation, reading_id) VALUES ('delete', OLD.id);
+        END;
+
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
             slot        INTEGER PRIMARY KEY,  -- 1-based physical slot
@@ -278,6 +314,20 @@ def ensure_table():
             poles       INTEGER DEFAULT 1   -- 1 = single-pole (120V), 2 = double-pole (240V)
         );
     """)
+    # Seed pre-existing history once, atomically with its migration marker.
+    conn.execute("BEGIN IMMEDIATE")
+    if not conn.execute(
+        "SELECT 1 FROM migrations WHERE name = 'reading_sync_seed_v1'"
+    ).fetchone():
+        conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
+                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+        conn.execute(
+            "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
+            ("reading_sync_seed_v1", datetime.now().isoformat()),
+        )
+    conn.commit()
     # Migrate: add poles column if it doesn't exist yet (existing DBs)
     try:
         conn.execute("ALTER TABLE circuit_labels ADD COLUMN poles INTEGER DEFAULT 1")
@@ -286,6 +336,35 @@ def ensure_table():
         pass  # column already exists
     conn.commit()
     conn.close()
+
+
+def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
+    """Return a bounded page and collector identity from one consistent read transaction."""
+    if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+        raise ValueError("after must be a nonnegative integer")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("limit must be between 1 and 1000")
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        source_id = conn.execute("SELECT source_id FROM collector_identity").fetchone()[0]
+        watermark = conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) FROM reading_changes"
+        ).fetchone()[0]
+        if after > watermark:
+            raise ValueError("Cursor is ahead of this collector; a fresh sync is required")
+        rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM reading_changes WHERE sequence > ? AND sequence <= ? "
+            "ORDER BY sequence LIMIT ?", (after, watermark, limit),
+        ).fetchall()]
+        next_cursor = rows[-1]["sequence"] if rows else after
+        return {
+            "protocol_version": 1, "source_id": source_id, "changes": rows,
+            "next_cursor": next_cursor, "high_watermark": watermark,
+            "has_more": next_cursor < watermark,
+        }
+    finally:
+        conn.close()
 
 
 def get_panel_layout() -> list[dict]:
@@ -1900,14 +1979,13 @@ def import_emporia_csv(
                 )
 
     if rows_to_insert:
-        before_changes = conn.total_changes
         c.executemany(
             """INSERT OR IGNORE INTO readings
                (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
                VALUES (?, ?, ?, ?, ?, ?)""",
             rows_to_insert,
         )
-        imported = conn.total_changes - before_changes
+        imported = c.rowcount
         skipped += len(rows_to_insert) - imported
         for ts_iso, row_device_gid, channel_num, channel_name, usage_kwh, cost_cents in rows_to_insert:
             _upsert_latest_snapshot_with_conn(

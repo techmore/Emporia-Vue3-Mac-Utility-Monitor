@@ -64,6 +64,19 @@ has been verified.
 
 ## Remaining Synchronization Work
 
+Development branch `codex/collector-history-sync` implements a version-1 readings
+change journal with a persistent source identity. Inserts, updates, and deletes
+are recorded in the same SQLite transaction as the original mutation; pre-existing
+history is seeded once. `/api/sync/readings` returns at most 1,000 changes per page
+and requires an `ENERGY_SYNC_TOKEN` of at least 32 characters, passed as a Bearer
+header. It is disabled when the token is absent. Keep access behind the loopback
+SSH tunnel. Tokens must not be committed or put in URLs.
+
+This is not deployed yet. The Mac cache consumer, transactional cursor application,
+offline UI, and journal compaction/retention policy remain to be implemented.
+The initial journal stores full history, and changes currently accumulate; storage
+growth must be resolved before continuous-production rollout.
+
 Define an authenticated, versioned incremental export protocol with stable
 source identities, bounded pagination, and a transactional sync cursor. Account
 for updates, deletions, retention, and imported readings rather than assuming
