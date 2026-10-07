@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.3.3 - 2026-10-07
+
+- Add persistent collector-client connection settings; remote mode starts neither local Flask nor a local poller.
+- Add verified online SQLite backups for history migration.
+- Separate configurable monthly fixed charges from circuit usage costs in Reports.
+- Rank measured usage reviews and show explicitly hypothetical savings scenarios.
+- Gate circuit week comparisons on minute-level capture coverage.
+- Implement Aqara v3 regional endpoints, request signing, token refresh, and sensor discovery with Settings authorization controls. Live authorization still requires approved credentials.
+- Preserve the 2.3.2 menu popover, lifecycle controls, climate extensions, and compaction behavior.
+
 ## 2.3.2 - 2026-10-06
 
 - Fix Homebrew installs: the menu app launches `web.py` and `energy.py` by absolute path, since it runs them from the data directory.
