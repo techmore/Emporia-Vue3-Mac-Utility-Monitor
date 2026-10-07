@@ -1,7 +1,12 @@
+import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import energy
 import web
@@ -90,3 +95,140 @@ class ReadingJournalTests(unittest.TestCase):
             self.assertEqual(client.get(
                 "/api/sync/readings?limit=1001", headers=headers,
             ).status_code, 400)
+
+    def test_cache_resumes_and_applies_updates_and_deletes(self):
+        conn = energy._connect()
+        try:
+            reading_id = self.insert(conn)
+            conn.execute("UPDATE readings SET cost_cents=24 WHERE id=?", (reading_id,))
+            conn.execute("DELETE FROM readings WHERE id=?", (reading_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        first = energy.get_reading_changes(limit=1)
+        state = energy.apply_reading_changes(first)
+        self.assertIsNone(state["synchronized_at"])
+        second = energy.get_reading_changes(state["cursor"], limit=1)
+        state = energy.apply_reading_changes(second)
+        conn = energy._connect()
+        try:
+            self.assertEqual(conn.execute(
+                "SELECT cost_cents FROM sync_cached_readings"
+            ).fetchone()[0], 24)
+        finally:
+            conn.close()
+        energy.apply_reading_changes(energy.get_reading_changes(state["cursor"]))
+        self.assertIsNotNone(energy.get_sync_cache_status()["synchronized_at"])
+        conn = energy._connect()
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sync_cached_readings").fetchone()[0], 0)
+        finally:
+            conn.close()
+
+    def test_cache_rejects_identity_mismatch_and_stale_cursor(self):
+        page = energy.get_reading_changes()
+        energy.apply_reading_changes(page)
+        wrong = deepcopy(page)
+        wrong["source_id"] = "b" * 32
+        with self.assertRaises(ValueError):
+            energy.apply_reading_changes(wrong)
+        conn = energy._connect()
+        try:
+            self.insert(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        page = energy.get_reading_changes()
+        energy.apply_reading_changes(page)
+        with self.assertRaises(ValueError):
+            energy.apply_reading_changes(page)
+
+    def test_cursor_write_failure_rolls_back_all_cached_rows(self):
+        conn = energy._connect()
+        try:
+            self.insert(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        page = energy.get_reading_changes()
+        conn = energy._connect()
+        proxy = MagicMock(wraps=conn)
+
+        def execute(sql, *args):
+            if sql.startswith("INSERT INTO sync_cache_state"):
+                raise RuntimeError("simulated disk failure")
+            return conn.execute(sql, *args)
+
+        proxy.execute.side_effect = execute
+        with patch.object(energy, "_connect", return_value=proxy):
+            with self.assertRaises(RuntimeError):
+                energy.apply_reading_changes(page)
+        self.assertEqual(energy.get_sync_cache_status()["cursor"], 0)
+        conn = energy._connect()
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sync_cached_readings").fetchone()[0], 0)
+        finally:
+            conn.close()
+
+    def test_invalid_payload_cannot_advance_cache_cursor(self):
+        conn = energy._connect()
+        try:
+            self.insert(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        page = energy.get_reading_changes()
+        page["changes"][0]["usage_kwh"] = float("nan")
+        with self.assertRaises(ValueError):
+            energy.apply_reading_changes(page)
+        self.assertEqual(energy.get_sync_cache_status()["cursor"], 0)
+
+    def test_real_http_download_and_resume_in_separate_cache_process(self):
+        conn = energy._connect()
+        try:
+            reading_id = self.insert(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        root = Path(__file__).resolve().parents[1]
+        env = dict(os.environ, DB_PATH=energy.DB_PATH, ENERGY_SYNC_TOKEN="a" * 32)
+        code = (
+            "import web; from werkzeug.serving import make_server; "
+            "s=make_server('127.0.0.1',0,web.app); "
+            "print(s.server_port,flush=True); s.serve_forever()"
+        )
+        server = subprocess.Popen(
+            [sys.executable, "-c", code], cwd=root, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        )
+        try:
+            port = int(server.stdout.readline())
+            cache = Path(self.directory.name) / "cache.db"
+            command = [sys.executable, str(root / "sync_history.py"),
+                       "--collector", f"http://127.0.0.1:{port}", "--cache", str(cache)]
+            first = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            state = json.loads(first.stdout)
+            self.assertIsNotNone(state["synchronized_at"])
+            conn = energy._connect()
+            try:
+                conn.execute("UPDATE readings SET cost_cents=30 WHERE id=?", (reading_id,))
+                conn.commit()
+            finally:
+                conn.close()
+            second = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertGreater(json.loads(second.stdout)["cursor"], state["cursor"])
+            conn = energy._connect(cache)
+            try:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM readings").fetchone()[0], 0)
+                rows = conn.execute("SELECT * FROM sync_cached_readings").fetchall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["cost_cents"], 30)
+            finally:
+                conn.close()
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+        finally:
+            server.terminate()
+            server.wait(timeout=10)
+            server.stdout.close()

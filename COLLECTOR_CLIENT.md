@@ -72,8 +72,21 @@ and requires an `ENERGY_SYNC_TOKEN` of at least 32 characters, passed as a Beare
 header. It is disabled when the token is absent. Keep access behind the loopback
 SSH tunnel. Tokens must not be committed or put in URLs.
 
-This is not deployed yet. The Mac cache consumer, transactional cursor application,
-offline UI, and journal compaction/retention policy remain to be implemented.
+This is not deployed yet. `sync_history.py` downloads pages to isolated cache
+tables and advances the cursor atomically with each page. It refuses collector
+identity changes and HTTP redirects, bounds response memory, and preserves the
+saved cursor on interrupted downloads. The cache file is owner-only. Use a
+separate cache path, never the active collector database:
+
+```bash
+# Supply ENERGY_SYNC_TOKEN privately in the environment on both processes.
+venv/bin/python3 sync_history.py --collector http://127.0.0.1:15001 \
+  --cache /PRIVATE_EXISTING_DIRECTORY/collector-cache.db
+```
+
+`synchronized_at` is only updated when the client has caught up to the page's
+high-water mark. The native offline UI and journal compaction/retention policy
+remain to be implemented. A CLI download alone does not make the Mac app usable offline.
 The initial journal stores full history, and changes currently accumulate; storage
 growth must be resolved before continuous-production rollout.
 

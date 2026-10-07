@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import logging
+import math
 import os
 import sqlite3
 import tempfile
@@ -272,6 +273,22 @@ def ensure_table():
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             source_id TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS sync_cache_state (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            source_id TEXT NOT NULL,
+            cursor INTEGER NOT NULL,
+            high_watermark INTEGER NOT NULL,
+            synchronized_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS sync_cached_readings (
+            reading_id INTEGER PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            device_gid TEXT NOT NULL,
+            channel_num INTEGER,
+            channel_name TEXT,
+            usage_kwh REAL,
+            cost_cents REAL
+        );
         INSERT OR IGNORE INTO collector_identity(singleton, source_id)
             VALUES (1, lower(hex(randomblob(16))));
         CREATE TABLE IF NOT EXISTS reading_changes (
@@ -360,11 +377,102 @@ def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
         next_cursor = rows[-1]["sequence"] if rows else after
         return {
             "protocol_version": 1, "source_id": source_id, "changes": rows,
+            "after_cursor": after,
             "next_cursor": next_cursor, "high_watermark": watermark,
             "has_more": next_cursor < watermark,
         }
     finally:
         conn.close()
+
+
+def get_sync_cache_status() -> dict:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM sync_cache_state WHERE singleton=1").fetchone()
+        return dict(row) if row else {"source_id": None, "cursor": 0,
+                                     "high_watermark": 0, "synchronized_at": None}
+    finally:
+        conn.close()
+
+
+def apply_reading_changes(page: dict) -> dict:
+    """Apply a validated collector page and its cursor atomically to the isolated cache."""
+    if not isinstance(page, dict) or page.get("protocol_version") != 1:
+        raise ValueError("Unsupported sync protocol")
+    source_id = page.get("source_id")
+    if not isinstance(source_id, str) or len(source_id) != 32:
+        raise ValueError("Invalid collector identity")
+    after, next_cursor, watermark = (page.get(key) for key in
+                                     ("after_cursor", "next_cursor", "high_watermark"))
+    if any(type(value) is not int or value < 0 for value in (after, next_cursor, watermark)):
+        raise ValueError("Invalid sync cursors")
+    if not after <= next_cursor <= watermark or page.get("has_more") != (next_cursor < watermark):
+        raise ValueError("Inconsistent sync cursors")
+    changes = page.get("changes")
+    if not isinstance(changes, list) or len(changes) > 1000:
+        raise ValueError("Invalid sync page size")
+    previous = after
+    for row in changes:
+        if not isinstance(row, dict):
+            raise ValueError("Invalid change record")
+        sequence, reading_id = row.get("sequence"), row.get("reading_id")
+        if type(sequence) is not int or not previous < sequence <= next_cursor:
+            raise ValueError("Unordered change records")
+        if type(reading_id) is not int or reading_id <= 0:
+            raise ValueError("Invalid reading identity")
+        if row.get("operation") not in {"upsert", "delete"}:
+            raise ValueError("Invalid change operation")
+        if row["operation"] == "upsert":
+            if not isinstance(row.get("timestamp"), str) or not isinstance(row.get("device_gid"), str):
+                raise ValueError("Invalid reading timestamp or device")
+            datetime.fromisoformat(row["timestamp"])
+            for key in ("usage_kwh", "cost_cents"):
+                value = row.get(key)
+                if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                    raise ValueError("Invalid reading measurement")
+            if row.get("channel_name") is not None and not isinstance(row["channel_name"], str):
+                raise ValueError("Invalid channel name")
+            if row.get("channel_num") is not None and type(row["channel_num"]) not in (int, str):
+                raise ValueError("Invalid channel number")
+        previous = sequence
+    if previous != next_cursor:
+        raise ValueError("Page does not reach its advertised cursor")
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        state = conn.execute("SELECT * FROM sync_cache_state WHERE singleton=1").fetchone()
+        if state and state["source_id"] != source_id:
+            raise ValueError("Collector identity changed; use a fresh cache database")
+        if after != (state["cursor"] if state else 0):
+            raise ValueError("Sync cursor changed; reload cache state and retry")
+        for row in changes:
+            if row["operation"] == "delete":
+                conn.execute("DELETE FROM sync_cached_readings WHERE reading_id=?", (row["reading_id"],))
+            else:
+                conn.execute("""INSERT INTO sync_cached_readings(reading_id, timestamp,
+                    device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(reading_id) DO UPDATE SET timestamp=excluded.timestamp,
+                    device_gid=excluded.device_gid, channel_num=excluded.channel_num,
+                    channel_name=excluded.channel_name, usage_kwh=excluded.usage_kwh,
+                    cost_cents=excluded.cost_cents""",
+                    tuple(row.get(key) for key in ("reading_id", "timestamp", "device_gid",
+                                                  "channel_num", "channel_name", "usage_kwh", "cost_cents")))
+        synchronized_at = datetime.now().isoformat() if not page["has_more"] else (
+            state["synchronized_at"] if state else None
+        )
+        conn.execute("""INSERT INTO sync_cache_state VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(singleton) DO UPDATE SET source_id=excluded.source_id,
+            cursor=excluded.cursor, high_watermark=excluded.high_watermark,
+            synchronized_at=excluded.synchronized_at""",
+            (source_id, next_cursor, watermark, synchronized_at))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return get_sync_cache_status()
 
 
 def get_panel_layout() -> list[dict]:

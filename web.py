@@ -4041,7 +4041,7 @@ def api_sync_readings():
     if len(token) < 32:
         return jsonify({"error": "History sync is not configured"}), 503
     authorization = request.headers.get("Authorization", "")
-    if not hmac.compare_digest(authorization, "Bearer " + token):
+    if not hmac.compare_digest(authorization.encode("utf-8"), ("Bearer " + token).encode("utf-8")):
         return jsonify({"error": "History sync authorization required"}), 401
     try:
         after = int(request.args.get("after", "0"))
