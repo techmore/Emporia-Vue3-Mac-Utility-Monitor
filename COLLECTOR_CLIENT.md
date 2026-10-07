@@ -8,18 +8,20 @@ request, and Copy Dashboard URL action use the configured origin. It rejects
 credentials, paths, query strings, fragments, and non-loopback plain HTTP URLs.
 Without the variable, local mode is unchanged.
 
-This is connected-client groundwork, not an offline database replica. The
-existing separately managed Mac poller is not stopped automatically.
+Version 2.3.4 adds an opt-in local history cache and native offline views, as
+described below. The existing separately managed Mac poller is not stopped
+automatically; stop it only after verifying collection on the SER8.
 
 ## Secure First Deployment
 
-Keep Flask on `127.0.0.1:5001` on the collector. Do not expose the current
+Keep Flask on its configured loopback port on the collector (the source default
+is `127.0.0.1:5051`). Do not expose the current
 unauthenticated backend on a LAN or the public internet. After verifying SSH
 access to the actual collector, forward its loopback port:
 
 ```bash
 ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
-  -L 15001:127.0.0.1:5001 USER@COLLECTOR
+  -L 15001:127.0.0.1:5051 USER@COLLECTOR
 ```
 
 Launch the compiled Mac executable with:
@@ -62,7 +64,7 @@ has been verified.
 7. Stop only the identified Mac poller, then check that server collection continues
    while the Mac sleeps. Keep the backup for rollback.
 
-## Remaining Synchronization Work
+## History Synchronization
 
 Development branch `codex/collector-history-sync` implements a version-2 readings
 change journal with a persistent source identity. Inserts, updates, and deletes
@@ -118,9 +120,7 @@ rebuilds preserve the old cache. Different collector identities are still refuse
 This retention behavior and automatic checkpoint recovery are integration-tested
 but have not been deployed to the running installation.
 
-Define an authenticated, versioned incremental export protocol with stable
-source identities, bounded pagination, and a transactional sync cursor. Account
-for updates, deletions, retention, and imported readings rather than assuming
-an insertion ID alone captures all changes. A Mac cache must display its last
-successful synchronization time and distinguish stale/offline data from live
-readings. Never run a shared SQLite database over SMB or NFS.
+Remaining deployment work is to configure and verify the SER8 services, the
+private connection, and automatic downloads on the actual Mac installation.
+Verify disconnect/reconnect and Mac sleep before retiring local collection.
+Never run a shared SQLite database over SMB or NFS.
