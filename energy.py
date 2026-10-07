@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sqlite3
+import tempfile
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -93,13 +94,109 @@ def _write_json_file(path: str | Path, data: dict) -> None:
     write_private_json(path, data)
 
 
-def _connect() -> sqlite3.Connection:
+def _connect(path: str | Path | None = None) -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with row_factory set."""
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = sqlite3.connect(str(path) if path is not None else DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def backup_database(destination: str | Path) -> dict:
+    """Publish a verified, standalone SQLite snapshot without overwriting a file."""
+    target = Path(destination).expanduser().absolute()
+    if target.exists() or target.is_symlink():
+        raise FileExistsError(f"Backup destination already exists: {target}")
+    fd, name = tempfile.mkstemp(prefix=".energy-backup-", dir=target.parent)
+    os.close(fd)
+    temporary = Path(name)
+    source = None
+    snapshot = None
+    try:
+        source = _connect()
+        snapshot = _connect(temporary)
+        source.backup(snapshot, pages=256)
+        check = snapshot.execute("PRAGMA integrity_check").fetchall()
+        if [row[0] for row in check] != ["ok"]:
+            raise RuntimeError("Backup failed SQLite integrity check")
+        row = snapshot.execute(
+            """SELECT COUNT(*) AS readings, MIN(timestamp) AS first_timestamp,
+                      MAX(timestamp) AS last_timestamp FROM readings"""
+        ).fetchone()
+        manifest = dict(row)
+        snapshot.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        snapshot.execute("PRAGMA journal_mode=DELETE")
+        snapshot.close()
+        snapshot = None
+        # Hard-link publication is atomic and fails if another writer creates the target.
+        os.link(temporary, target)
+        return {"path": str(target), "integrity": "ok", **manifest}
+    finally:
+        if snapshot is not None:
+            snapshot.close()
+        if source is not None:
+            source.close()
+        temporary.unlink(missing_ok=True)
+        Path(str(temporary) + "-wal").unlink(missing_ok=True)
+        Path(str(temporary) + "-shm").unlink(missing_ok=True)
+
+def get_circuit_week_comparison(
+    device_gid: str | None = None, *, end: datetime | None = None,
+) -> list[dict]:
+    """Compare complete seven-day windows, withholding changes for sparse capture."""
+    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    middle = boundary - timedelta(days=7)
+    start = boundary - timedelta(days=14)
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return []
+        rows = conn.execute(
+            """SELECT channel_name,
+                      CASE WHEN timestamp >= ? THEN 'current' ELSE 'previous' END AS period,
+                      SUM(usage_kwh) AS kwh,
+                      COUNT(DISTINCT strftime('%Y-%m-%dT%H:%M', timestamp)) AS minutes
+               FROM readings
+               WHERE device_gid = ? AND timestamp >= ? AND timestamp < ?
+                 AND usage_kwh IS NOT NULL AND usage_kwh >= 0
+               GROUP BY channel_name, period""",
+            (middle.isoformat(), gid, start.isoformat(), boundary.isoformat()),
+        ).fetchall()
+    finally:
+        conn.close()
+    channels = {}
+    for row in rows:
+        name = row["channel_name"]
+        if not name or name in META_CHANNELS:
+            continue
+        channels.setdefault(name, {})[row["period"]] = dict(row)
+    result = []
+    expected_minutes = 7 * 24 * 60
+    for name, periods in channels.items():
+        current = periods.get("current", {})
+        previous = periods.get("previous", {})
+        current_coverage = current.get("minutes", 0) / expected_minutes
+        previous_coverage = previous.get("minutes", 0) / expected_minutes
+        comparable = min(current_coverage, previous_coverage) >= 0.95
+        # Even similar totals can be misleading if one week has materially more gaps.
+        comparable = comparable and abs(current_coverage - previous_coverage) <= 0.01
+        old = previous.get("kwh", 0)
+        new = current.get("kwh", 0)
+        result.append({
+            "channel_name": name,
+            "current_kwh": new,
+            "previous_kwh": old,
+            "current_coverage_pct": current_coverage * 100,
+            "previous_coverage_pct": previous_coverage * 100,
+            "change_pct": ((new / old - 1) * 100) if comparable and old > 0 else None,
+            "comparable": comparable,
+            "start": start.isoformat(),
+            "middle": middle.isoformat(),
+            "end": boundary.isoformat(),
+        })
+    return sorted(result, key=lambda row: row["current_kwh"], reverse=True)
 
 
 def ensure_table():
@@ -1946,7 +2043,11 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) > 1:
-        if sys.argv[1] == "poll":
+        if sys.argv[1] == "backup":
+            if len(sys.argv) != 3:
+                raise SystemExit("Usage: python energy.py backup DESTINATION.db")
+            print(json.dumps(backup_database(sys.argv[2]), indent=2))
+        elif sys.argv[1] == "poll":
             vue = login_vue()
             device_gids, _ = get_devices_with_channels(vue)
             poll_and_store(vue, device_gids)

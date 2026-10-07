@@ -77,11 +77,24 @@ def _read_monthly_budget() -> float:
     return 150.0
 
 
+def _read_monthly_fixed_charge() -> float:
+    """Fixed bill component in dollars; never allocate it to circuit readings."""
+    try:
+        with open("settings.json") as stream:
+            value = float(json.load(stream).get("monthly_fixed_charge", 0))
+            if not math.isfinite(value) or value < 0:
+                raise ValueError("monthly_fixed_charge must be finite and nonnegative")
+            return value
+    except FileNotFoundError:
+        return 0.0
+
+
 def _refresh_runtime_config() -> None:
-    global RATE, MONTHLY_BUDGET
+    global RATE, MONTHLY_BUDGET, MONTHLY_FIXED_CHARGE
     RATE = energy._read_rate_cents() / 100
     energy.RATE_CENTS = RATE * 100
     MONTHLY_BUDGET = _read_monthly_budget()
+    MONTHLY_FIXED_CHARGE = _read_monthly_fixed_charge()
 
 
 _refresh_runtime_config()
@@ -1731,9 +1744,9 @@ REPORTS_HTML = """
         <div class="card-meta">breakers near the 80% line</div>
       </div>
       <div class="card">
-        <div class="card-label">Always-On Load</div>
+        <div class="card-label">Low Loads Right Now</div>
         <div class="card-value">{{ "%.0f"|format(standby_total_w) }}<span class="unit">W</span></div>
-        <div class="card-meta">{{ standby|length }} standby candidates</div>
+        <div class="card-meta">{{ standby|length }} candidates; continuity not verified</div>
       </div>
     </div>
     <div style="display:grid; grid-template-columns:1.15fr 1fr; gap:14px; align-items:start;">
@@ -1777,6 +1790,30 @@ REPORTS_HTML = """
   </div>
 
   <div id="billing-review" class="section">
+    <div class="card" style="margin-bottom:14px; overflow-x:auto;">
+      <div class="card-label">Circuit Week Comparison</div>
+      <div class="card-meta">Two complete seven-day windows ending at midnight today.
+        Changes require at least 95% minute coverage in both weeks, within one percentage point.
+        Weather and activity are not normalized; hourly imports cannot prove minute coverage.</div>
+      <table style="width:100%; margin-top:10px;">
+        <thead><tr><th>Circuit</th><th>Recent week</th><th>Previous week</th><th>Change</th><th>Capture</th></tr></thead>
+        <tbody>{% for row in circuit_week_comparison %}
+          <tr><td>{{ row.channel_name }}</td>
+            <td>{{ "%.2f"|format(row.current_kwh) }} kWh</td>
+            <td>{{ "%.2f"|format(row.previous_kwh) }} kWh</td>
+            <td>{% if row.change_pct is not none %}{{ "%+.1f"|format(row.change_pct) }}%{% elif row.comparable %}No positive baseline{% else %}Insufficient capture{% endif %}</td>
+            <td>{{ "%.1f"|format(row.current_coverage_pct) }}% / {{ "%.1f"|format(row.previous_coverage_pct) }}%</td></tr>
+        {% else %}<tr><td colspan="5">No circuit history for these windows.</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-label">Projected Bill Before Credits</div>
+      <div class="card-value">${{ "%.2f"|format(projected_bill) }}</div>
+      <div class="card-meta">Usage scenario ${{ "%.2f"|format(monthly_projected) }}
+        + monthly fixed charge ${{ "%.2f"|format(monthly_fixed_charge) }}.
+        Based on 30 similar days, not a guaranteed bill. Assistance credits are excluded.
+        Include applicable fixed-charge tax in Settings; no additional tax is applied here.</div>
+    </div>
     <div class="section-head">
       <h2>Billing Review</h2>
       <span class="section-sub">Month-over-month cost and daily extremes</span>
@@ -3526,6 +3563,30 @@ def index():
     )
 
 
+def _usage_cost_recommendations(circuits: list[dict], rate: float) -> list[dict]:
+    """Rank measured consumption, without treating sample counts as capture coverage."""
+    ranked = sorted(
+        (row for row in circuits if (row.get("total_kwh") or 0) > 0),
+        key=lambda row: row["total_kwh"],
+        reverse=True,
+    )[:5]
+    return [
+        {
+            "title": f"Review {row['channel_name']}",
+            "body": (
+                f"{row['total_kwh']:.2f} kWh captured in the last 24 hours "
+                f"(${row['total_kwh'] * rate:.2f} at your current usage rate). "
+                f"Scenario: a 10% reduction sustained for 30 similar days would avoid "
+                f"${row['total_kwh'] * rate * 3:.2f} in usage charges. "
+                "Not guaranteed savings: missing readings, weather, and essential loads "
+                "can change this estimate. Fixed charges are excluded."
+            ),
+            "href": "/trends",
+        }
+        for row in ranked
+    ]
+
+
 @app.route("/reports")
 def reports_page():
     com = _common()
@@ -3599,6 +3660,7 @@ def reports_page():
             "href": "/import",
         },
     ]
+    recommendations = _usage_cost_recommendations(circuits_24, RATE) + recommendations
     mc = energy.get_month_comparison()
     monthly_projected = (total_24h["total_kwh"] or 0) * 30 * RATE
     budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
@@ -3608,6 +3670,9 @@ def reports_page():
         active_page="reports",
         total_24h=total_24h,
         monthly_projected=monthly_projected,
+        projected_bill=monthly_projected + MONTHLY_FIXED_CHARGE,
+        circuit_week_comparison=energy.get_circuit_week_comparison(com["active_device_gid"]),
+        monthly_fixed_charge=MONTHLY_FIXED_CHARGE,
         budget_pct=budget_pct,
         peak_24h=peak_24h,
         standby=standby,
@@ -4320,17 +4385,17 @@ SETTINGS_HTML = """
       </a>
       <a class="sys-link" href="/aqara">
         <span class="sys-dot {{ 'ok' if aqara_configured else 'soon' }}"></span>
-        <div><div class="sys-name">Aqara</div><div class="sys-sub">Sensors and integration</div></div>
+        <div><div class="sys-name">Aqara Sensors</div><div class="sys-sub">Live readings</div></div>
       </a>
       <a class="sys-link" href="/log">
         <span class="sys-dot ok"></span>
         <div><div class="sys-name">Log</div><div class="sys-sub">Poller health and history</div></div>
       </a>
 
-      <div class="sys-nav-group" style="margin-top:0.4rem;">Planned</div>
+      <div class="sys-nav-group" style="margin-top:0.4rem;">Integrations</div>
       <button class="sys-link" onclick="showPanel('aqara',this)">
-        <span class="sys-dot soon"></span>
-        <div><div class="sys-name">Aqara</div><div class="sys-sub">Temp &amp; Humidity</div></div>
+        <span class="sys-dot {{ 'ok' if aqara_configured else 'soon' }}"></span>
+        <div><div class="sys-name">Aqara Account</div><div class="sys-sub">Authorize sensors</div></div>
       </button>
       <button class="sys-link" onclick="showPanel('kasa',this)">
         <span class="sys-dot soon"></span>
@@ -4410,6 +4475,11 @@ SETTINGS_HTML = """
           <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:0.25rem;">
             <label style="font-size:0.82rem; font-weight:600;">Electricity rate (¢/kWh)
               <input type="number" id="cfgRate" step="0.01" value="{{ "%.2f"|format(rate_cents) }}"
+                     style="display:block; width:130px; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">Monthly fixed charge ($, including tax)
+              <input type="number" id="cfgFixedCharge" min="0" step="0.01" value="{{ monthly_fixed_charge }}"
                      style="display:block; width:130px; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit;">
             </label>
@@ -4507,53 +4577,87 @@ SETTINGS_HTML = """
       <!-- ════════════════════════════════ AQARA ════════════════════════════════ -->
       <div id="panel-aqara" class="sys-panel">
         <div class="sys-panel-head">
-          <h3>Aqara — Temperature &amp; Humidity</h3>
-          <span class="int-badge coming">Coming Soon</span>
+          <h3>Aqara Cloud Sensors</h3>
+          {% if aqara_configured %}
+          <span class="int-badge ok">&#10003; Connected</span>
+          {% else %}
+          <span class="int-badge warn">Not Connected</span>
+          {% endif %}
         </div>
 
         <div class="card" style="margin-bottom:1rem;">
           <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
-            Connect your <strong>Aqara Hub M3</strong> to pull temperature, humidity, and contact sensor readings
-            into a dedicated tab. Uses the <strong>Aqara Open Cloud API</strong> with OAuth2.
+            Connect your Aqara developer application and Aqara Home account to read temperature,
+            humidity, and battery resources from supported sensors. Credentials stay in this
+            installation's owner-only <code>settings.json</code>.
           </p>
           <div class="setup-steps">
-            <p>Setup steps (when available):</p>
+            <p>Before connecting:</p>
             <ol>
-              <li>Register at <code>developer.aqara.com</code> → create an Application</li>
-              <li>Copy your <strong>App ID</strong>, <strong>App Key</strong>, and <strong>Key ID</strong> below</li>
-              <li>Click <strong>Authorize</strong> to link your Aqara account via OAuth2</li>
-              <li>Sensor data will appear on the <em>Aqara</em> tab</li>
+              <li>Create an Aqara Cloud API application and copy its App ID, App Key, and Key ID.</li>
+              <li>Select the same cloud region used by your Aqara Home account.</li>
+              <li>If Aqara still shows your developer application as pending moderation, authorization will remain unavailable until approved.</li>
             </ol>
           </div>
-          <form style="display:flex; flex-direction:column; gap:10px; max-width:400px; opacity:0.45; pointer-events:none;">
+          <form id="aqaraForm" onsubmit="return false;"
+                style="display:flex; flex-direction:column; gap:10px; max-width:460px;">
             <label style="font-size:0.82rem; font-weight:600;">App ID
-              <input type="text" id="aqaraAppId" value="{{ aqara_app_id }}" placeholder="axxx000000000000"
+              <input type="text" id="aqaraAppId" value="{{ aqara_app_id }}" autocomplete="off"
                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
             <label style="font-size:0.82rem; font-weight:600;">App Key
-              <input type="password" id="aqaraAppKey" placeholder="••••••••••••••••"
+              <input type="password" id="aqaraAppKey"
+                     placeholder="{{ 'Saved; leave blank to keep current key' if aqara_app_configured else 'App Key' }}"
+                     autocomplete="new-password"
                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
             <label style="font-size:0.82rem; font-weight:600;">Key ID
-              <input type="text" id="aqaraKeyId" value="{{ aqara_key_id }}" placeholder="Kxxx000000000000"
+              <input type="text" id="aqaraKeyId" value="{{ aqara_key_id }}" autocomplete="off"
                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-              <button type="button" style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
-                      border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-                Save Credentials
+            <label style="font-size:0.82rem; font-weight:600;">Aqara Home account (email or phone)
+              <input type="text" id="aqaraAccount" value="{{ aqara_account }}" autocomplete="username"
+                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+            </label>
+            <label style="font-size:0.82rem; font-weight:600;">Cloud region
+              <select id="aqaraRegion"
+                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
+                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
+                {% for region, label in [('US','United States'),('EU','Europe'),('CN','China'),('KR','South Korea'),('RU','Russia'),('SG','Singapore')] %}
+                <option value="{{ region }}" {{ 'selected' if aqara_region == region else '' }}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:0.25rem;">
+              <button type="button" onclick="saveAqaraSettings().catch(() => {})"
+                      style="padding:9px 16px; background:var(--surface2); color:var(--text);
+                             border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                Save App Settings
               </button>
-              <button type="button" style="padding:9px 22px; background:var(--surface2); color:var(--text);
-                      border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-                Authorize →
+              <button type="button" id="aqaraAuthorizeBtn" onclick="authorizeAqara()"
+                      style="padding:9px 18px; background:var(--olive-800); color:var(--olive-50);
+                             border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                {{ 'Reauthorize Aqara Account' if aqara_configured else 'Authorize Aqara Account' }}
               </button>
+              {% if aqara_configured %}
+              <button type="button" onclick="disconnectAqara()"
+                      style="padding:9px 14px; background:var(--surface2); color:var(--text);
+                             border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+                Disconnect
+              </button>
+              {% endif %}
             </div>
           </form>
+          <p id="aqaraMsg" role="status" aria-live="polite"
+             style="font-size:0.8rem; color:var(--text-light); margin-top:0.75rem;">
+            {% if aqara_configured %}Aqara account is connected. <a href="/aqara">View sensor readings</a>.{% else %}Not connected.{% endif %}
+          </p>
           <p style="font-size:0.73rem; color:var(--stone-400); margin-top:0.75rem;">
-            Credentials stored locally in <code>settings.json</code>. Your Aqara password is never stored — only the OAuth token.
+            Uses Aqara's signed v3 account-authorization API; no Aqara password or OAuth redirect is stored.
           </p>
         </div>
       </div><!-- /panel-aqara -->
@@ -4863,9 +4967,10 @@ function saveCreds() {
 function saveConfig() {
   const rate   = parseFloat(document.getElementById('cfgRate').value);
   const budget = parseFloat(document.getElementById('cfgBudget').value);
+  const fixedCharge = parseFloat(document.getElementById('cfgFixedCharge').value);
   fetch('/api/settings/config', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({rate_cents: rate, monthly_budget: budget})
+    body: JSON.stringify({rate_cents: rate, monthly_budget: budget, monthly_fixed_charge: fixedCharge})
   }).then(r=>r.json()).then(() => {
     const m = document.getElementById('cfgMsg');
     m.style.display='inline'; setTimeout(()=>m.style.display='none', 2500);
@@ -4894,6 +4999,62 @@ function savePanelDisplay() {
     const m = document.getElementById('pdMsg');
     m.style.display='inline'; setTimeout(()=>m.style.display='none', 4000);
   });
+}
+
+async function saveAqaraSettings() {
+  const msg = document.getElementById('aqaraMsg');
+  msg.textContent = 'Saving Aqara app settings…';
+  try {
+    const response = await fetch('/api/aqara/config', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        app_id: document.getElementById('aqaraAppId').value.trim(),
+        app_key: document.getElementById('aqaraAppKey').value,
+        key_id: document.getElementById('aqaraKeyId').value.trim(),
+        account: document.getElementById('aqaraAccount').value.trim(),
+        region: document.getElementById('aqaraRegion').value
+      })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Could not save Aqara settings');
+    document.getElementById('aqaraAppKey').value = '';
+    msg.textContent = 'Aqara app settings saved locally.';
+  } catch (error) {
+    msg.textContent = 'Aqara settings error: ' + error.message;
+    throw error;
+  }
+}
+
+async function authorizeAqara() {
+  const button = document.getElementById('aqaraAuthorizeBtn');
+  const msg = document.getElementById('aqaraMsg');
+  button.disabled = true;
+  msg.textContent = 'Saving settings and requesting Aqara account authorization…';
+  try {
+    await saveAqaraSettings();
+    const response = await fetch('/api/aqara/authorize', {method: 'POST'});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Authorization failed');
+    msg.textContent = 'Aqara account connected. Reloading…';
+    setTimeout(() => location.reload(), 900);
+  } catch (error) {
+    msg.textContent = 'Aqara authorization failed: ' + error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function disconnectAqara() {
+  if (!confirm('Disconnect the Aqara account from this app?')) return;
+  const msg = document.getElementById('aqaraMsg');
+  try {
+    const response = await fetch('/api/aqara/disconnect', {method: 'POST'});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Disconnect failed');
+    location.reload();
+  } catch (error) {
+    msg.textContent = 'Aqara disconnect failed: ' + error.message;
+  }
 }
 </script>
 """
@@ -4971,28 +5132,28 @@ AQARA_HTML = """
 <div class="page">
   <div class="section-head" style="margin-top:1.5rem;">
     <h2>Aqara Sensors</h2>
-    <span class="section-sub">Temperature &amp; humidity — Hub M3</span>
+    <span class="section-sub">Temperature, humidity &amp; battery readings</span>
   </div>
 
   {% if not aqara_configured %}
   <!-- Not configured state -->
   <div class="card" style="text-align:center; padding:3rem 2rem;">
     <div style="font-size:3rem; margin-bottom:1rem;">🌡️</div>
-    <h3 style="font-size:1.3rem; margin-bottom:0.5rem;">Aqara not yet connected</h3>
+    <h3 style="font-size:1.3rem; margin-bottom:0.5rem;">Aqara not connected</h3>
     <p style="font-size:0.88rem; color:var(--text-light); max-width:480px; margin:0 auto 1.5rem;">
-      Aqara developer sign-up is temporarily unavailable. Once it reopens, you can connect
-      your <strong>Hub M3</strong> and your temperature &amp; humidity sensors will appear here automatically.
+      Configure the Aqara Cloud API credentials and authorize your Aqara Home account in Settings.
+      Aqara must approve the developer application before cloud API authorization can succeed.
     </p>
     <div style="background:var(--stone-50); border:1px solid var(--border); border-radius:10px;
                 padding:1.25rem; max-width:520px; margin:0 auto 1.5rem; text-align:left;">
       <p style="font-size:0.8rem; font-weight:600; margin:0 0 0.6rem; color:var(--olive-800);">
-        When developer.aqara.com sign-up opens:
+        To connect:
       </p>
       <ol style="font-size:0.8rem; color:var(--text-light); margin:0; padding-left:1.25rem; line-height:2;">
         <li>Create a developer account &amp; app → copy <strong>App ID</strong>, <strong>App Key</strong>, <strong>Key ID</strong></li>
         <li>Enter credentials in <a href="/settings" style="color:var(--olive-300);">Settings → Aqara Integration</a></li>
-        <li>Click <strong>Authorize</strong> to link your account via OAuth</li>
-        <li>Return here — sensors will appear automatically</li>
+        <li>Click <strong>Authorize Aqara Account</strong> to connect via Aqara's signed account API</li>
+        <li>Return here to refresh supported sensor readings</li>
       </ol>
     </div>
     <a href="/settings" style="display:inline-block; padding:9px 24px; background:var(--olive-800);
@@ -5004,9 +5165,9 @@ AQARA_HTML = """
   {% else %}
   <!-- Configured: show sensor grid -->
   {% if aqara_error %}
-  <div style="padding:0.75rem 1rem; background:#fef2f2; border:1px solid #fca5a5;
-              border-radius:8px; font-size:0.82rem; color:#b91c1c; margin-bottom:1rem;">
-    API error: {{ aqara_error }}
+  <div style="padding:0.75rem 1rem; background:var(--surface2); border:1px solid var(--red);
+              border-radius:8px; font-size:0.82rem; color:var(--red); margin-bottom:1rem;">
+    Aqara API error: {{ aqara_error }}
   </div>
   {% endif %}
 
@@ -5030,14 +5191,14 @@ AQARA_HTML = """
       <div class="card-value" style="color:var(--stone-400);">—</div>
       {% endif %}
       {% if s.humidity is not none %}
-      <div class="card-meta">💧 {{ "%.1f"|format(s.humidity) }}% RH</div>
+      <div class="card-meta">{{ "%.1f"|format(s.humidity) }}% RH</div>
       {% endif %}
       {% if s.battery is not none %}
       <div style="margin-top:0.5rem; font-size:0.72rem; color:var(--stone-400);">
-        🔋 {{ s.battery }}%
+        Battery {{ s.battery }}%
         <div style="height:3px; background:var(--border); border-radius:2px; margin-top:3px;">
           <div style="height:3px; border-radius:2px; width:{{ s.battery }}%;
-               background:{{ 'var(--green)' if s.battery > 30 else '#f59e0b' if s.battery > 15 else '#ef4444' }};"></div>
+               background:{{ 'var(--green)' if s.battery > 30 else 'var(--amber)' if s.battery > 15 else 'var(--red)' }};"></div>
         </div>
       </div>
       {% endif %}
@@ -5045,16 +5206,15 @@ AQARA_HTML = """
     </div>
     {% endfor %}
   </div>
-  {% else %}
+  {% elif not aqara_error %}
   <div class="card" style="text-align:center; padding:2rem; color:var(--text-light); font-style:italic;">
-    No TH sensors found. Make sure your sensors are paired to the Hub M3.
+    No compatible temperature or humidity resources were found for this account.
   </div>
   {% endif %}
   {% endif %}
 
   <p style="font-size:0.72rem; color:var(--stone-400); margin-top:1rem;">
-    Data via <strong>Aqara Cloud OpenAPI v3</strong> &bull; Hub: M3 &bull; Region: USA &bull;
-    Refreshes on page load
+    Data via <strong>Aqara Cloud OpenAPI v3</strong>. Resource definitions are discovered per device model.
   </p>
 </div>
 """
@@ -5069,15 +5229,12 @@ def aqara_page():
     if configured:
         try:
             sensors = _aqara.get_sensors()
-        except Exception as e:
+        except _aqara.AqaraError as e:
             error = str(e)
-    cfg = _aqara._load_aqara_config()
     return _render(AQARA_HTML, active_page="settings",
                    aqara_configured=configured,
                    sensors=sensors,
                    aqara_error=error,
-                   aqara_app_id=cfg.get("app_id", ""),
-                   aqara_key_id=cfg.get("key_id", ""),
                    **com)
 
 
@@ -5093,7 +5250,8 @@ def settings_page():
     except Exception:
         pass
     has_tokens = _os.path.exists("keys.json")
-    aq   = cfg.get("aqara", {})
+    import aqara as _aqara
+    aq   = _aqara._load_aqara_config()
     pinv = cfg.get("panel_display", {})
     kasa = cfg.get("kasa", {})
     nuts = cfg.get("nuts", {})
@@ -5101,16 +5259,75 @@ def settings_page():
                    saved_email=cfg.get("emporia_email", ""),
                    has_tokens=has_tokens,
                    rate_cents=energy.RATE_CENTS,
+                   monthly_fixed_charge=MONTHLY_FIXED_CHARGE,
                    monthly_budget=MONTHLY_BUDGET,
                    known_devices=energy.get_known_devices(),
                    aqara_app_id=aq.get("app_id", ""),
                    aqara_key_id=aq.get("key_id", ""),
-                   aqara_configured=bool(aq.get("app_id") and aq.get("key_id")),
+                   aqara_account=aq.get("account", ""),
+                   aqara_region=aq.get("region", "US"),
+                   aqara_app_configured=bool(aq.get("app_key")),
+                   aqara_configured=_aqara.is_configured(),
                    panel_invert_left=pinv.get("invert_left", False),
                    panel_invert_right=pinv.get("invert_right", False),
                    kasa_host=kasa.get("host", ""),
                    nuts_devices=nuts.get("devices", []),
                    **com)
+
+
+def _aqara_local_request_error():
+    """Keep credential-changing Aqara operations bound to this local dashboard."""
+    from urllib.parse import urlsplit
+
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"ok": False, "error": "Aqara settings are available only locally"}), 403
+    origin = request.headers.get("Origin")
+    if origin and urlsplit(origin).netloc.lower() != request.host.lower():
+        return jsonify({"ok": False, "error": "Cross-origin Aqara request rejected"}), 403
+    return None
+
+
+@app.route("/api/aqara/config", methods=["POST"])
+def api_save_aqara_config():
+    guard = _aqara_local_request_error()
+    if guard:
+        return guard
+    import aqara as _aqara
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Expected a JSON object"}), 400
+    try:
+        _aqara.save_app_config(data)
+    except _aqara.AqaraError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/aqara/authorize", methods=["POST"])
+def api_authorize_aqara():
+    guard = _aqara_local_request_error()
+    if guard:
+        return guard
+    import aqara as _aqara
+    try:
+        _aqara.authorize_account()
+    except _aqara.AqaraError as exc:
+        app.logger.warning("Aqara account authorization failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    return jsonify({"ok": True})
+
+
+@app.route("/api/aqara/disconnect", methods=["POST"])
+def api_disconnect_aqara():
+    guard = _aqara_local_request_error()
+    if guard:
+        return guard
+    import aqara as _aqara
+    try:
+        _aqara.disconnect_account()
+    except _aqara.AqaraError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True})
 
 
 @app.route("/api/settings/credentials", methods=["POST"])
@@ -5158,6 +5375,10 @@ def api_save_config():
         if data.get("monthly_budget") is not None:
             cfg["monthly_budget"] = _parse_nonnegative_float(
                 data["monthly_budget"], "monthly_budget", allow_zero=True
+            )
+        if data.get("monthly_fixed_charge") is not None:
+            cfg["monthly_fixed_charge"] = _parse_nonnegative_float(
+                data["monthly_fixed_charge"], "monthly_fixed_charge", allow_zero=True
             )
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
