@@ -85,8 +85,13 @@ venv/bin/python3 sync_history.py --collector http://127.0.0.1:15001 \
 ```
 
 `synchronized_at` is only updated when the client has caught up to the page's
-high-water mark. The native offline UI and journal compaction/retention policy
-remain to be implemented. A CLI download alone does not make the Mac app usable offline.
+high-water mark. The native menu now persists successfully fetched summaries and
+viewed circuit histories per collector endpoint, uses private files, and labels
+offline data with its cache timestamp. Live watts and breaker safety indicators
+are withheld while offline. History never viewed online may not be cached.
+The downloaded SQLite history is not yet connected to this native view, and the
+web dashboard still requires a running server. Journal compaction/retention and
+native display of the full downloaded history remain to be implemented.
 The initial journal stores full history, and changes currently accumulate; storage
 growth must be resolved before continuous-production rollout.
 
