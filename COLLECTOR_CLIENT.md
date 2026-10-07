@@ -98,8 +98,14 @@ not invent trend percentages from sparse offline data. The cache is opened
 without CREATE and with SQLite query-only protection; WAL sidecar access is
 allowed. Collector and client must currently use the same timezone because
 existing readings have naive local timestamps. The web dashboard still requires
-a running server, and automated periodic history downloads are not configured
-by merely selecting a cache file.
+a running server. To enable periodic downloads, select **Download history
+automatically** and enter the matching server token in Collector Connection.
+Tokens are saved in macOS Keychain, not UserDefaults, and passed to the downloader
+through its environment, never command-line arguments. Downloads run every 60
+seconds only in remote-client mode; overlapping requests are skipped and an
+individual subprocess is terminated after ten minutes. A Python environment and
+the bundled sync script are required for downloads, though previously cached
+native views remain usable without a working server. Restart after configuration.
 
 The poller checks journal size hourly. Above the greater of one million changes
 or twice the number of current readings, it transactionally replaces obsolete

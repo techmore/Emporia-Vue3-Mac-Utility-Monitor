@@ -15,6 +15,7 @@ assert f'MARKETING_VERSION: "{version}"' in project, 'Xcode version drift'
 for name in ('web.py', 'energy.py', 'climate.py', 'climate_collect.py', 'extensions.py', 'templates/house.html', 'static/house.js', 'static/cooling-model.js', 'runtime_store.py', 'panel_model.py',
              'EnergyMonitorApp/Sources/main.swift', 'EnergyMonitorApp/Sources/Lifecycle.swift', 'EnergyMonitorApp/Sources/Theme.swift', 'requirements.lock',
              'scripts/check_release.py', 'templates/circuit_overlay.html',
-             'static/circuit-overlay.js', 'EnergyMonitorApp/Sources/MenuPopover.swift', 'sync_history.py'):
+             'static/circuit-overlay.js', 'EnergyMonitorApp/Sources/MenuPopover.swift',
+             'EnergyMonitorApp/Sources/CollectorSync.swift', 'sync_history.py'):
     assert (root / name).is_file(), f'Missing release file: {name}'
 print(version)

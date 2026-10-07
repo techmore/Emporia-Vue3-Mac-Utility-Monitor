@@ -151,6 +151,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var statusItem: NSStatusItem?
     private var ownsLock = false
     private var monitorTimer: Timer?
+    private var syncTimer: Timer?
+    private let syncRunner = CollectorSyncRunner()
     private let monitor = MenuMonitor(baseURL: dashboardURL)
     private var popover: NSPopover?
     private var contextMenu: NSMenu?
@@ -197,6 +199,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             startPollerIfNeeded()
         }
         buildStatusItem()
+        configureAutomaticSync()
         waitForFlask()
     }
 
@@ -364,11 +367,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let paths = UserDefaults.standard.dictionary(forKey: "collectorHistoryCachePaths") as? [String: String]
         cacheField.stringValue = paths?[dashboardURL.absoluteString] ?? ""
         cacheField.placeholderString = "Optional downloaded history cache: /path/collector-cache.db"
-        let inputs = NSStackView(views: [field, cacheField])
+        let tokenField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        tokenField.placeholderString = "Sync token (blank keeps Keychain value)"
+        let automatic = NSButton(checkboxWithTitle: "Download history automatically", target: nil, action: nil)
+        let automaticOrigins = UserDefaults.standard.stringArray(forKey: "collectorAutomaticSyncOrigins") ?? []
+        automatic.state = automaticOrigins.contains(dashboardURL.absoluteString) ? .on : .off
+        let inputs = NSStackView(views: [field, cacheField, tokenField, automatic])
         inputs.orientation = .vertical
         inputs.alignment = .leading
         inputs.spacing = 8
-        inputs.frame = NSRect(x: 0, y: 0, width: 360, height: 56)
+        inputs.frame = NSRect(x: 0, y: 0, width: 360, height: 120)
         alert.accessoryView = inputs
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
@@ -390,12 +398,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             error.runModal()
             return
         }
+        let origin = value.isEmpty ? "http://127.0.0.1:\(flaskPort)" : URL(string: value)!.absoluteString
+        let token = tokenField.stringValue
+        if (!token.isEmpty && token.utf8.count < 32) || (automatic.state == .on && (cachePath.isEmpty || value.isEmpty)) {
+            let error = NSAlert()
+            error.messageText = "Incomplete history download settings"
+            error.informativeText = "Automatic downloads require a collector address, a separate cache path, and a token of at least 32 characters."
+            error.runModal()
+            return
+        }
+        if !token.isEmpty {
+            do { try CollectorSyncCredentials.save(token, origin: origin) }
+            catch {
+                let errorAlert = NSAlert()
+                errorAlert.messageText = "Could not save sync token to Keychain"
+                errorAlert.runModal()
+                return
+            }
+        }
         if value.isEmpty {
             UserDefaults.standard.removeObject(forKey: "collectorURL")
         } else {
             UserDefaults.standard.set(value, forKey: "collectorURL")
         }
-        let origin = value.isEmpty ? "http://127.0.0.1:\(flaskPort)" : URL(string: value)!.absoluteString
         var savedPaths = paths ?? [:]
         if cachePath.isEmpty {
             savedPaths.removeValue(forKey: origin)
@@ -403,6 +428,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             savedPaths[origin] = cachePath
         }
         UserDefaults.standard.set(savedPaths, forKey: "collectorHistoryCachePaths")
+        var origins = Set(automaticOrigins)
+        if automatic.state == .on { origins.insert(origin) } else { origins.remove(origin) }
+        UserDefaults.standard.set(Array(origins), forKey: "collectorAutomaticSyncOrigins")
+    }
+
+    private func configureAutomaticSync() {
+        guard isCollectorClient,
+              (UserDefaults.standard.stringArray(forKey: "collectorAutomaticSyncOrigins") ?? []).contains(dashboardURL.absoluteString),
+              let paths = UserDefaults.standard.dictionary(forKey: "collectorHistoryCachePaths") as? [String: String],
+              let cache = paths[dashboardURL.absoluteString] else { return }
+        guard let token = ProcessInfo.processInfo.environment["ENERGY_SYNC_TOKEN"]
+                ?? CollectorSyncCredentials.load(origin: dashboardURL.absoluteString), token.utf8.count >= 32 else {
+            monitor.syncError = "History downloads need a sync token in Collector Connection."
+            return
+        }
+        let download = { [weak self] in
+            guard let self = self else { return }
+            self.syncRunner.start(python: venvPython,
+                script: projectRoot.appendingPathComponent("sync_history.py").path,
+                origin: dashboardURL, cache: cache, token: token) { [weak self] error in
+                    self?.monitor.syncError = error
+                }
+        }
+        download()
+        let timer = Timer(timeInterval: 60, repeats: true) { _ in download() }
+        syncTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     @objc private func copyLocalURL() {
@@ -469,6 +521,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        syncTimer?.invalidate()
+        syncRunner.stop()
         monitorTimer?.invalidate()
         pollerProcess?.terminate()
         flaskProcess?.terminate()

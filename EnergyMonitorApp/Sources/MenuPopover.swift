@@ -189,6 +189,7 @@ final class MenuMonitor: ObservableObject {
     @Published var days = 1
     @Published var refreshing = false
     @Published var autostart = false
+    @Published var syncError: String?
     @Published var cachedSummaryAt: Date?
     @Published var cachedHistoryAt: Date?
     var didUpdate: (() -> Void)?
@@ -368,6 +369,9 @@ struct MonitorPopover: View {
             if let date = monitor.cachedSummaryAt {
                 Text("Cached " + date.formatted(date: .abbreviated, time: .shortened) + " - not live")
                     .font(.caption2).foregroundStyle(Theme.textLight)
+            }
+            if let error = monitor.syncError {
+                Text(error).font(.caption2).foregroundStyle(Theme.red)
             }
             Divider()
             ScrollView {
