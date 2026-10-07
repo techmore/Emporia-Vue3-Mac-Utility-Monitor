@@ -3,6 +3,7 @@
 Energy Monitor — Flask web server
 Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
+import hmac
 import json
 import math
 import os
@@ -4034,6 +4035,39 @@ def api_weather():
         return jsonify({"days": [], "current_temp": None, "error": str(e)})
 
 
+@app.route("/api/sync/readings")
+def api_sync_readings():
+    token = os.environ.get("ENERGY_SYNC_TOKEN", "")
+    if len(token) < 32:
+        return jsonify({"error": "History sync is not configured"}), 503
+    authorization = request.headers.get("Authorization", "")
+    if not hmac.compare_digest(authorization.encode("utf-8"), ("Bearer " + token).encode("utf-8")):
+        return jsonify({"error": "History sync authorization required"}), 401
+    try:
+        after = int(request.args.get("after", "0"))
+        limit = int(request.args.get("limit", "500"))
+        expected_generation = request.args.get("generation_id")
+        if expected_generation:
+            identity = energy.get_reading_changes(0, 1)
+            if request.args.get("source_id") != identity["source_id"]:
+                return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
+            if expected_generation != identity["generation_id"]:
+                return jsonify({"error": "Stream checkpoint changed", "reset_required": True,
+                                "source_id": identity["source_id"],
+                                "generation_id": identity["generation_id"]}), 409
+        page = energy.get_reading_changes(after, limit)
+        if expected_generation and expected_generation != page["generation_id"]:
+            return jsonify({"error": "Stream checkpoint changed; retry"}), 409
+        expected_source = request.args.get("source_id")
+        if expected_source and expected_source != page["source_id"]:
+            return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    response = jsonify(page)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.route("/api/version")
 def api_version():
     return jsonify({"version": VERSION})
@@ -4228,6 +4262,8 @@ def api_menu_summary():
     this_month = next(iter(energy.get_monthly_costs(1, gid)), None)
     return jsonify({
         "version": VERSION, "online": online, "current_watts": watts,
+        "active_device_gid": gid,
+        "collector_source_id": energy.get_reading_changes(0, 1)["source_id"],
         "cost_24h": total["total_cents"] / 100 if total and total["total_cents"] is not None else None,
         "month_cost": this_month["total_cents"] / 100 if this_month and this_month["total_cents"] is not None else None,
         "month_days_recorded": this_month["days_recorded"] if this_month else 0,

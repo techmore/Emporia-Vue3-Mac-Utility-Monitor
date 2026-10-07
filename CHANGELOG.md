@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.4 - 2026-10-07
+
+- Add token-protected transactional history synchronization with collector identity, paginated changes, and generation checkpoints.
+- Preserve offline caches while rebuilding after journal retention; synchronize repricing, compaction, and deletions.
+- Add private native offline summaries and downloaded device-scoped history with explicit stale-data labels.
+- Add opt-in automatic client downloads, Keychain token storage, overlap prevention, and bounded subprocess lifetime.
+- Keep remote-client mode free of local collection; SER8 deployment still requires verified server access.
+
 ## 2.3.3 - 2026-10-07
 
 - Add persistent collector-client connection settings; remote mode starts neither local Flask nor a local poller.

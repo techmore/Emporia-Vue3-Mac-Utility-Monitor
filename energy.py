@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import logging
+import math
 import os
 import sqlite3
 import tempfile
@@ -268,6 +269,69 @@ def ensure_table():
         );
         CREATE INDEX IF NOT EXISTS idx_climate_timestamp ON climate_readings(timestamp);
 
+        CREATE TABLE IF NOT EXISTS collector_identity (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            source_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sync_cache_state (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            source_id TEXT NOT NULL,
+            cursor INTEGER NOT NULL,
+            high_watermark INTEGER NOT NULL,
+            synchronized_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS sync_cache_generation (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            generation_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS reading_stream_generation (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            generation_id TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO reading_stream_generation VALUES (1, lower(hex(randomblob(16))));
+        CREATE TABLE IF NOT EXISTS sync_cached_readings (
+            reading_id INTEGER PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            device_gid TEXT NOT NULL,
+            channel_num INTEGER,
+            channel_name TEXT,
+            usage_kwh REAL,
+            cost_cents REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_cached_device_channel_timestamp
+            ON sync_cached_readings(device_gid, channel_name, timestamp);
+        INSERT OR IGNORE INTO collector_identity(singleton, source_id)
+            VALUES (1, lower(hex(randomblob(16))));
+        CREATE TABLE IF NOT EXISTS reading_changes (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation TEXT NOT NULL CHECK (operation IN ('upsert', 'delete')),
+            reading_id INTEGER NOT NULL,
+            timestamp TEXT,
+            device_gid TEXT,
+            channel_num INTEGER,
+            channel_name TEXT,
+            usage_kwh REAL,
+            cost_cents REAL
+        );
+        CREATE TRIGGER IF NOT EXISTS readings_sync_insert AFTER INSERT ON readings
+        BEGIN
+            INSERT INTO reading_changes(operation, reading_id, timestamp, device_gid,
+                channel_num, channel_name, usage_kwh, cost_cents)
+            VALUES ('upsert', NEW.id, NEW.timestamp, NEW.device_gid, NEW.channel_num,
+                NEW.channel_name, NEW.usage_kwh, NEW.cost_cents);
+        END;
+        CREATE TRIGGER IF NOT EXISTS readings_sync_update AFTER UPDATE ON readings
+        BEGIN
+            INSERT INTO reading_changes(operation, reading_id, timestamp, device_gid,
+                channel_num, channel_name, usage_kwh, cost_cents)
+            VALUES ('upsert', NEW.id, NEW.timestamp, NEW.device_gid, NEW.channel_num,
+                NEW.channel_name, NEW.usage_kwh, NEW.cost_cents);
+        END;
+        CREATE TRIGGER IF NOT EXISTS readings_sync_delete AFTER DELETE ON readings
+        BEGIN
+            INSERT INTO reading_changes(operation, reading_id) VALUES ('delete', OLD.id);
+        END;
+
         -- Panel layout: one row per physical breaker slot
         CREATE TABLE IF NOT EXISTS circuit_labels (
             slot        INTEGER PRIMARY KEY,  -- 1-based physical slot
@@ -278,6 +342,20 @@ def ensure_table():
             poles       INTEGER DEFAULT 1   -- 1 = single-pole (120V), 2 = double-pole (240V)
         );
     """)
+    # Seed pre-existing history once, atomically with its migration marker.
+    conn.execute("BEGIN IMMEDIATE")
+    if not conn.execute(
+        "SELECT 1 FROM migrations WHERE name = 'reading_sync_seed_v1'"
+    ).fetchone():
+        conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
+                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+        conn.execute(
+            "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
+            ("reading_sync_seed_v1", datetime.now().isoformat()),
+        )
+    conn.commit()
     # Migrate: add poles column if it doesn't exist yet (existing DBs)
     try:
         conn.execute("ALTER TABLE circuit_labels ADD COLUMN poles INTEGER DEFAULT 1")
@@ -286,6 +364,164 @@ def ensure_table():
         pass  # column already exists
     conn.commit()
     conn.close()
+
+
+def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
+    """Return a bounded page and collector identity from one consistent read transaction."""
+    if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+        raise ValueError("after must be a nonnegative integer")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("limit must be between 1 and 1000")
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        source_id = conn.execute("SELECT source_id FROM collector_identity").fetchone()[0]
+        generation_id = conn.execute("SELECT generation_id FROM reading_stream_generation").fetchone()[0]
+        watermark = conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) FROM reading_changes"
+        ).fetchone()[0]
+        if after > watermark:
+            raise ValueError("Cursor is ahead of this collector; a fresh sync is required")
+        rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM reading_changes WHERE sequence > ? AND sequence <= ? "
+            "ORDER BY sequence LIMIT ?", (after, watermark, limit),
+        ).fetchall()]
+        next_cursor = rows[-1]["sequence"] if rows else after
+        return {
+            "protocol_version": 2, "source_id": source_id, "generation_id": generation_id, "changes": rows,
+            "after_cursor": after,
+            "next_cursor": next_cursor, "high_watermark": watermark,
+            "has_more": next_cursor < watermark,
+        }
+    finally:
+        conn.close()
+
+
+def get_sync_cache_status() -> dict:
+    conn = _connect()
+    try:
+        row = conn.execute("""SELECT s.*, g.generation_id FROM sync_cache_state s
+            LEFT JOIN sync_cache_generation g ON g.singleton=s.singleton
+            WHERE s.singleton=1""").fetchone()
+        return dict(row) if row else {"source_id": None, "cursor": 0,
+                                     "high_watermark": 0, "synchronized_at": None, "generation_id": None}
+    finally:
+        conn.close()
+
+
+def apply_reading_changes(page: dict) -> dict:
+    """Apply a validated collector page and its cursor atomically to the isolated cache."""
+    if not isinstance(page, dict) or page.get("protocol_version") != 2:
+        raise ValueError("Unsupported sync protocol")
+    source_id = page.get("source_id")
+    if not isinstance(source_id, str) or len(source_id) != 32:
+        raise ValueError("Invalid collector identity")
+    generation_id = page.get("generation_id")
+    if not isinstance(generation_id, str) or len(generation_id) != 32:
+        raise ValueError("Invalid stream generation")
+    after, next_cursor, watermark = (page.get(key) for key in
+                                     ("after_cursor", "next_cursor", "high_watermark"))
+    if any(type(value) is not int or value < 0 for value in (after, next_cursor, watermark)):
+        raise ValueError("Invalid sync cursors")
+    if not after <= next_cursor <= watermark or page.get("has_more") != (next_cursor < watermark):
+        raise ValueError("Inconsistent sync cursors")
+    changes = page.get("changes")
+    if not isinstance(changes, list) or len(changes) > 1000:
+        raise ValueError("Invalid sync page size")
+    previous = after
+    for row in changes:
+        if not isinstance(row, dict):
+            raise ValueError("Invalid change record")
+        sequence, reading_id = row.get("sequence"), row.get("reading_id")
+        if type(sequence) is not int or not previous < sequence <= next_cursor:
+            raise ValueError("Unordered change records")
+        if type(reading_id) is not int or reading_id <= 0:
+            raise ValueError("Invalid reading identity")
+        if row.get("operation") not in {"upsert", "delete"}:
+            raise ValueError("Invalid change operation")
+        if row["operation"] == "upsert":
+            if not isinstance(row.get("timestamp"), str) or not isinstance(row.get("device_gid"), str):
+                raise ValueError("Invalid reading timestamp or device")
+            datetime.fromisoformat(row["timestamp"])
+            for key in ("usage_kwh", "cost_cents"):
+                value = row.get(key)
+                if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                    raise ValueError("Invalid reading measurement")
+            if row.get("channel_name") is not None and not isinstance(row["channel_name"], str):
+                raise ValueError("Invalid channel name")
+            if row.get("channel_num") is not None and type(row["channel_num"]) not in (int, str):
+                raise ValueError("Invalid channel number")
+        previous = sequence
+    if previous != next_cursor:
+        raise ValueError("Page does not reach its advertised cursor")
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        state = conn.execute("SELECT * FROM sync_cache_state WHERE singleton=1").fetchone()
+        if state and state["source_id"] != source_id:
+            raise ValueError("Collector identity changed; use a fresh cache database")
+        generation = conn.execute("SELECT generation_id FROM sync_cache_generation").fetchone()
+        if state and (not generation or generation[0] != generation_id):
+            raise ValueError("Stream generation changed; a fresh cache snapshot is required")
+        if after != (state["cursor"] if state else 0):
+            raise ValueError("Sync cursor changed; reload cache state and retry")
+        for row in changes:
+            if row["operation"] == "delete":
+                conn.execute("DELETE FROM sync_cached_readings WHERE reading_id=?", (row["reading_id"],))
+            else:
+                conn.execute("""INSERT INTO sync_cached_readings(reading_id, timestamp,
+                    device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(reading_id) DO UPDATE SET timestamp=excluded.timestamp,
+                    device_gid=excluded.device_gid, channel_num=excluded.channel_num,
+                    channel_name=excluded.channel_name, usage_kwh=excluded.usage_kwh,
+                    cost_cents=excluded.cost_cents""",
+                    tuple(row.get(key) for key in ("reading_id", "timestamp", "device_gid",
+                                                  "channel_num", "channel_name", "usage_kwh", "cost_cents")))
+        synchronized_at = datetime.now().isoformat() if not page["has_more"] else (
+            state["synchronized_at"] if state else None
+        )
+        conn.execute("""INSERT INTO sync_cache_state VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(singleton) DO UPDATE SET source_id=excluded.source_id,
+            cursor=excluded.cursor, high_watermark=excluded.high_watermark,
+            synchronized_at=excluded.synchronized_at""",
+            (source_id, next_cursor, watermark, synchronized_at))
+        conn.execute("""INSERT INTO sync_cache_generation VALUES (1, ?)
+            ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id""", (generation_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return get_sync_cache_status()
+
+
+def compact_reading_journal(max_entries: int = 1_000_000) -> bool:
+    """Bound repeated changes to a current-history checkpoint with a new stream generation."""
+    if type(max_entries) is not int or max_entries < 1:
+        raise ValueError("max_entries must be positive")
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        changes = conn.execute("SELECT COUNT(*) FROM reading_changes").fetchone()[0]
+        current = conn.execute("SELECT COUNT(*) FROM readings").fetchone()[0]
+        if changes <= max(max_entries, current * 2):
+            return False
+        conn.execute("DELETE FROM reading_changes")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name='reading_changes'")
+        conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
+                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+        conn.execute("UPDATE reading_stream_generation SET generation_id=lower(hex(randomblob(16)))")
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def get_panel_layout() -> list[dict]:
@@ -894,6 +1130,7 @@ def run_continuous():
     device_gids = []
     consecutive_errors = 0
     last_ok: float | None = None
+    last_journal_check = float("-inf")
     MAX_ERRORS_BEFORE_RELOGIN = 3
     RELOGIN_BACKOFF = [30, 60, 120, 300]
 
@@ -947,6 +1184,13 @@ def run_continuous():
             started = time.monotonic()
             poll_and_store(vue, device_gids)
             finished = time.monotonic()
+            if finished - last_journal_check >= 3600:
+                try:
+                    if compact_reading_journal():
+                        logger.info("History sync journal checkpointed; clients will refresh their cache")
+                    last_journal_check = finished
+                except Exception:
+                    logger.exception("History sync journal maintenance failed")
             if last_ok is not None and started - last_ok > POLL_INTERVAL * 3:
                 logger.warning("Poll gap: %.0fs since last successful poll", started - last_ok)
             logger.info("Poll took %.2fs", finished - started)
@@ -1900,14 +2144,13 @@ def import_emporia_csv(
                 )
 
     if rows_to_insert:
-        before_changes = conn.total_changes
         c.executemany(
             """INSERT OR IGNORE INTO readings
                (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
                VALUES (?, ?, ?, ?, ?, ?)""",
             rows_to_insert,
         )
-        imported = conn.total_changes - before_changes
+        imported = c.rowcount
         skipped += len(rows_to_insert) - imported
         for ts_iso, row_device_gid, channel_num, channel_name, usage_kwh, cost_cents in rows_to_insert:
             _upsert_latest_snapshot_with_conn(

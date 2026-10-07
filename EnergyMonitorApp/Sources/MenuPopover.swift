@@ -1,4 +1,6 @@
 import AppKit
+import CryptoKit
+import SQLite3
 import SwiftUI
 
 struct MenuCircuit: Decodable {
@@ -39,6 +41,8 @@ struct MenuSummary: Decodable {
     let panelLabel: String
     let panelSlots: Int
     let breakerSlots: [MenuBreakerSlot]
+    let activeDeviceGid: String?
+    let collectorSourceId: String?
 }
 
 struct CircuitBucket: Decodable {
@@ -60,6 +64,122 @@ struct CircuitHistory: Decodable {
     let windows: [CircuitWindow]
 }
 
+struct StoredMenuResponse: Codable {
+    let data: Data
+    let fetchedAt: Date
+}
+
+struct MenuDiskCache {
+    let directory: URL
+
+    init(directory: URL? = nil) {
+        self.directory = directory ?? FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        )[0].appendingPathComponent("EnergyMonitor/collector-cache", isDirectory: true)
+    }
+
+    func file(for endpoint: URL) -> URL {
+        let digest = SHA256.hash(data: Data(endpoint.absoluteString.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(digest + ".json")
+    }
+
+    func read(_ endpoint: URL) -> StoredMenuResponse? {
+        let path = file(for: endpoint)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path.path),
+              let size = attributes[.size] as? NSNumber, size.intValue <= 8 * 1024 * 1024,
+              let data = try? Data(contentsOf: path) else { return nil }
+        return try? JSONDecoder().decode(StoredMenuResponse.self, from: data)
+    }
+
+    func write(_ data: Data, for endpoint: URL) throws {
+        guard data.count <= 4 * 1024 * 1024 else { return }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let record = StoredMenuResponse(data: data, fetchedAt: Date())
+        try JSONEncoder().encode(record).write(to: file(for: endpoint), options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                              ofItemAtPath: file(for: endpoint).path)
+    }
+}
+
+struct DownloadedHistoryReader {
+    let database: URL
+
+    func history(channel: String, device: String, source: String, now: Date = Date()) -> (CircuitHistory, Date)? {
+        var connection: OpaquePointer?
+        guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              let connection = connection else {
+            if let connection = connection { sqlite3_close(connection) }
+            return nil
+        }
+        defer { sqlite3_close(connection) }
+        sqlite3_busy_timeout(connection, 1000)
+        guard sqlite3_exec(connection, "PRAGMA query_only=ON", nil, nil, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_exec(connection, "BEGIN", nil, nil, nil) == SQLITE_OK else { return nil }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        func query(_ sql: String, _ values: [String] = []) -> [[String: String]]? {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK,
+                  let statement = statement else { print("History cache SQL preparation failed: " + String(cString: sqlite3_errmsg(connection))); return nil }
+            defer { sqlite3_finalize(statement) }
+            for (index, value) in values.enumerated() {
+                guard sqlite3_bind_text(statement, Int32(index + 1), value, -1, transient) == SQLITE_OK else { return nil }
+            }
+            var rows: [[String: String]] = []
+            var status = sqlite3_step(statement)
+            while status == SQLITE_ROW {
+                var row: [String: String] = [:]
+                for column in 0..<sqlite3_column_count(statement) {
+                    if let text = sqlite3_column_text(statement, column) {
+                        row[String(cString: sqlite3_column_name(statement, column))] = String(cString: text)
+                    }
+                }
+                rows.append(row)
+                status = sqlite3_step(statement)
+            }
+            return status == SQLITE_DONE ? rows : nil
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        guard let state = query("SELECT source_id, synchronized_at, cursor, high_watermark FROM sync_cache_state WHERE singleton=1")?.first,
+              state["source_id"] == source,
+              state["cursor"] == state["high_watermark"],
+              let synced = state["synchronized_at"],
+              let syncedAt = formatter.date(from: String(synced.prefix(19))),
+              let latest = query("SELECT MAX(timestamp) AS timestamp FROM sync_cached_readings WHERE device_gid=? AND channel_name=?", [device, channel])?.first?["timestamp"] else { return nil }
+        let end = formatter.string(from: now)
+        var windows: [CircuitWindow] = []
+        for days in [1, 7, 30] {
+            let start = formatter.string(from: now.addingTimeInterval(-Double(days) * 86400))
+            guard let totals = query("SELECT SUM(usage_kwh) AS kwh, SUM(cost_cents) AS cents, COUNT(*) AS readings FROM sync_cached_readings WHERE device_gid=? AND channel_name=? AND timestamp>=? AND timestamp<?", [device, channel, start, end])?.first,
+                  let buckets = query("SELECT strftime(?,timestamp) AS period, SUM(usage_kwh) AS kwh FROM sync_cached_readings WHERE device_gid=? AND channel_name=? AND timestamp>=? AND timestamp<? GROUP BY period ORDER BY period", [days == 1 ? "%Y-%m-%d %H:00" : "%Y-%m-%d", device, channel, start, end]) else { return nil }
+            let grouped = Dictionary(uniqueKeysWithValues: buckets.compactMap { row -> (String, Double)? in
+                guard let period = row["period"], let number = row["kwh"].flatMap(Double.init) else { return nil }
+                return (period, number)
+            })
+            let labels = DateFormatter()
+            labels.locale = formatter.locale
+            labels.dateFormat = days == 1 ? "yyyy-MM-dd HH:00" : "yyyy-MM-dd"
+            var cursor = Calendar.current.dateInterval(of: days == 1 ? .hour : .day,
+                                                       for: now.addingTimeInterval(-Double(days) * 86400))!.start
+            var series: [CircuitBucket] = []
+            while cursor < now {
+                let label = labels.string(from: cursor)
+                series.append(CircuitBucket(period: label, totalKwh: grouped[label]))
+                guard let next = Calendar.current.date(byAdding: days == 1 ? .hour : .day, value: 1, to: cursor) else { return nil }
+                cursor = next
+            }
+            windows.append(CircuitWindow(days: days, totalKwh: totals["kwh"].flatMap(Double.init),
+                totalCents: totals["cents"].flatMap(Double.init), changePct: nil,
+                readings: Int(totals["readings"] ?? "0") ?? 0, series: series))
+        }
+        return (CircuitHistory(lastReading: latest, windows: windows), syncedAt)
+    }
+}
+
 final class MenuMonitor: ObservableObject {
     @Published var summary: MenuSummary?
     @Published var summaryError: String?
@@ -69,13 +189,28 @@ final class MenuMonitor: ObservableObject {
     @Published var days = 1
     @Published var refreshing = false
     @Published var autostart = false
+    @Published var syncError: String?
+    @Published var cachedSummaryAt: Date?
+    @Published var cachedHistoryAt: Date?
     var didUpdate: (() -> Void)?
     private let baseURL: URL
     private var historyTask: URLSessionDataTask?
     private var historyGeneration = UUID()
+    private let historyCachePath: String?
+    private let diskCache = MenuDiskCache()
 
-    init(baseURL: URL) { self.baseURL = baseURL }
-    var online: Bool { summaryError == nil && summary?.online == true }
+    init(baseURL: URL) {
+        self.baseURL = baseURL
+        let paths = UserDefaults.standard.dictionary(forKey: "collectorHistoryCachePaths") as? [String: String]
+        historyCachePath = paths?[baseURL.absoluteString]
+        if let stored = diskCache.read(baseURL.appendingPathComponent("api/menu-summary")),
+           let decoded = try? decoder().decode(MenuSummary.self, from: stored.data) {
+            summary = decoded
+            cachedSummaryAt = stored.fetchedAt
+            summaryError = "Cached readings; collector connection has not been verified."
+        }
+    }
+    var online: Bool { cachedSummaryAt == nil && summaryError == nil && summary?.online == true }
     var window: CircuitWindow? { history?.windows.first { $0.days == days } }
 
     private func decoder() -> JSONDecoder {
@@ -92,13 +227,20 @@ final class MenuMonitor: ObservableObject {
             guard let self = self else { return }
             let result = (response as? HTTPURLResponse)?.statusCode == 200
                 ? data.flatMap { try? self.decoder().decode(MenuSummary.self, from: $0) } : nil
+            if result != nil, let data = data {
+                do { try self.diskCache.write(data, for: request.url!) }
+                catch { print("Could not cache menu summary: \(error.localizedDescription)") }
+            }
+            let cachedAt = result == nil ? self.diskCache.read(request.url!)?.fetchedAt : nil
             DispatchQueue.main.async {
                 self.refreshing = false
                 if let result = result {
                     self.summary = result
                     self.summaryError = nil
+                    self.cachedSummaryAt = nil
                 } else {
                     self.summaryError = "Monitor unavailable. Open Settings to check the connection."
+                    self.cachedSummaryAt = cachedAt
                 }
                 self.didUpdate?()
             }
@@ -110,6 +252,7 @@ final class MenuMonitor: ObservableObject {
         selectedCircuit = circuit
         days = 1
         history = nil
+        cachedHistoryAt = nil
         loadHistory()
     }
 
@@ -117,6 +260,7 @@ final class MenuMonitor: ObservableObject {
         selectedCircuit = nil
         history = nil
         historyError = nil
+        cachedHistoryAt = nil
         historyGeneration = UUID()
         historyTask?.cancel()
     }
@@ -127,6 +271,8 @@ final class MenuMonitor: ObservableObject {
         historyError = nil
         let generation = UUID()
         historyGeneration = generation
+        let cachedDevice = summary?.activeDeviceGid
+        let cachedSource = summary?.collectorSourceId
         var allowed = CharacterSet.urlPathAllowed
         allowed.remove(charactersIn: "/%?#")
         guard let encoded = circuit.channelName.addingPercentEncoding(withAllowedCharacters: allowed),
@@ -138,9 +284,35 @@ final class MenuMonitor: ObservableObject {
             guard let self = self else { return }
             let result = (response as? HTTPURLResponse)?.statusCode == 200
                 ? data.flatMap { try? self.decoder().decode(CircuitHistory.self, from: $0) } : nil
+            if result != nil, let data = data {
+                do { try self.diskCache.write(data, for: url) }
+                catch { print("Could not cache circuit history: \(error.localizedDescription)") }
+            }
+            let stored = result == nil ? self.diskCache.read(url) : nil
+            let cached = stored.flatMap { try? self.decoder().decode(CircuitHistory.self, from: $0.data) }
+            let downloaded: (CircuitHistory, Date)?
+            if result == nil, let path = self.historyCachePath,
+               let device = cachedDevice, let source = cachedSource {
+                downloaded = DownloadedHistoryReader(database: URL(fileURLWithPath: path))
+                    .history(channel: circuit.channelName, device: device, source: source)
+            } else {
+                downloaded = nil
+            }
             DispatchQueue.main.async {
                 guard self.historyGeneration == generation else { return }
-                self.history = result
+                if let result = result {
+                    self.history = result
+                    self.cachedHistoryAt = nil
+                } else if let downloaded = downloaded {
+                    self.history = downloaded.0
+                    self.cachedHistoryAt = downloaded.1
+                } else if let cached = cached {
+                    self.history = cached
+                    self.cachedHistoryAt = stored?.fetchedAt
+                } else {
+                    self.history = nil
+                    self.cachedHistoryAt = nil
+                }
                 self.historyError = result == nil ? "History unavailable. Try Refresh." : nil
             }
         }
@@ -191,7 +363,15 @@ struct MonitorPopover: View {
                 Spacer()
                 Circle().fill(monitor.online ? Theme.green : Theme.red).frame(width: 8, height: 8)
                     .shadow(color: (monitor.online ? Theme.green : Theme.red).opacity(0.35), radius: 3)
-                Text(monitor.online ? "Live" : "Offline").font(.caption.weight(.medium)).foregroundStyle(Theme.textLight)
+                Text(monitor.online ? "Live" : (monitor.cachedSummaryAt != nil ? "Cached" : "Offline"))
+                    .font(.caption.weight(.medium)).foregroundStyle(Theme.textLight)
+            }
+            if let date = monitor.cachedSummaryAt {
+                Text("Cached " + date.formatted(date: .abbreviated, time: .shortened) + " - not live")
+                    .font(.caption2).foregroundStyle(Theme.textLight)
+            }
+            if let error = monitor.syncError {
+                Text(error).font(.caption2).foregroundStyle(Theme.red)
             }
             Divider()
             ScrollView {
@@ -290,8 +470,8 @@ struct MonitorPopover: View {
         let watts = monitor.online ? slot.watts : nil
         let active = slot.channelName != nil
         let fill = slot.loadState == "danger" ? Theme.red : slot.loadState == "warn" ? Theme.amber : Theme.accent
-        let usage: Color? = !active ? nil : slot.usageState == "heat" ? Theme.red : slot.usageState == "high" ? Theme.amber : nil
-        let peak = active && slot.isPeak == true
+        let usage: Color? = !active || !monitor.online ? nil : slot.usageState == "heat" ? Theme.red : slot.usageState == "high" ? Theme.amber : nil
+        let peak = active && monitor.online && slot.isPeak == true
         return Button {
             if let circuit = slot.circuit { monitor.select(circuit) }
         } label: {
@@ -313,7 +493,7 @@ struct MonitorPopover: View {
                             .monospacedDigit()
                         if active, let amps = slot.amps { Text("· \(slot.poles)P/\(amps)A") }
                     }.font(.system(size: 10)).foregroundStyle(Theme.textLight).lineLimit(1)
-                    if let percent = slot.loadPercent, active {
+                    if let percent = slot.loadPercent, active && monitor.online {
                         GeometryReader { geometry in
                             ZStack(alignment: .leading) {
                                 Capsule().fill(Theme.border.opacity(0.35))
@@ -342,6 +522,10 @@ struct MonitorPopover: View {
                 Label("Overview", systemImage: "chevron.left")
             }.buttonStyle(.borderless)
             Text(circuit.displayName).font(Theme.serif(22)).lineLimit(1)
+            if let date = monitor.cachedHistoryAt {
+                Text("Cached history " + date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption2).foregroundStyle(Theme.textLight)
+            }
             Picker("History period", selection: $monitor.days) {
                 Text("1 day").tag(1)
                 Text("7 days").tag(7)
