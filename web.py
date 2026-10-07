@@ -4262,6 +4262,8 @@ def api_menu_summary():
     this_month = next(iter(energy.get_monthly_costs(1, gid)), None)
     return jsonify({
         "version": VERSION, "online": online, "current_watts": watts,
+        "active_device_gid": gid,
+        "collector_source_id": energy.get_reading_changes(0, 1)["source_id"],
         "cost_24h": total["total_cents"] / 100 if total and total["total_cents"] is not None else None,
         "month_cost": this_month["total_cents"] / 100 if this_month and this_month["total_cents"] is not None else None,
         "month_days_recorded": this_month["days_recorded"] if this_month else 0,

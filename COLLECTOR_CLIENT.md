@@ -89,8 +89,17 @@ high-water mark. The native menu now persists successfully fetched summaries and
 viewed circuit histories per collector endpoint, uses private files, and labels
 offline data with its cache timestamp. Live watts and breaker safety indicators
 are withheld while offline. History never viewed online may not be cached.
-The downloaded SQLite history is not yet connected to this native view, and the
-web dashboard still requires a running server.
+Collector Connection also accepts the absolute path to the downloaded cache,
+saved per collector URL. After restarting, the native circuit view falls back to
+that database when the online history request fails. It requires the collector
+and active-device identities from a previously fetched menu summary, rejects
+partially synchronized caches, and keeps missing chart buckets blank. It does
+not invent trend percentages from sparse offline data. The cache is opened
+without CREATE and with SQLite query-only protection; WAL sidecar access is
+allowed. Collector and client must currently use the same timezone because
+existing readings have naive local timestamps. The web dashboard still requires
+a running server, and automated periodic history downloads are not configured
+by merely selecting a cache file.
 
 The poller checks journal size hourly. Above the greater of one million changes
 or twice the number of current readings, it transactionally replaces obsolete

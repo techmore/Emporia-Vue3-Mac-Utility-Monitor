@@ -11,7 +11,7 @@ class MenuDiskCacheTests(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1]
                   / "EnergyMonitorApp/Sources/MenuPopover.swift").read_text()
         helpers = source[source.index("struct StoredMenuResponse:"):
-                         source.index("final class MenuMonitor:")]
+                         source.index("struct DownloadedHistoryReader")]
         harness = "import Foundation\nimport CryptoKit\n" + helpers + '''
 let directory = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("cache")
 let cache = MenuDiskCache(directory: directory)

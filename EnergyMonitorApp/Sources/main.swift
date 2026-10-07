@@ -360,11 +360,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.stringValue = UserDefaults.standard.string(forKey: "collectorURL") ?? ""
         field.placeholderString = "http://127.0.0.1:15001"
-        alert.accessoryView = field
+        let cacheField = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        let paths = UserDefaults.standard.dictionary(forKey: "collectorHistoryCachePaths") as? [String: String]
+        cacheField.stringValue = paths?[dashboardURL.absoluteString] ?? ""
+        cacheField.placeholderString = "Optional downloaded history cache: /path/collector-cache.db"
+        let inputs = NSStackView(views: [field, cacheField])
+        inputs.orientation = .vertical
+        inputs.alignment = .leading
+        inputs.spacing = 8
+        inputs.frame = NSRect(x: 0, y: 0, width: 360, height: 56)
+        alert.accessoryView = inputs
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cachePath = NSString(string: cacheField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
+            .expandingTildeInPath
+        if !cachePath.isEmpty && !cachePath.hasPrefix("/") {
+            let error = NSAlert()
+            error.messageText = "Invalid cache path"
+            error.informativeText = "Use an absolute path to the downloaded cache database."
+            error.runModal()
+            return
+        }
         if let problem = validateCollectorURL(value.isEmpty ? nil : value) {
             let error = NSAlert()
             error.messageText = "Invalid collector address"
@@ -377,6 +395,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             UserDefaults.standard.set(value, forKey: "collectorURL")
         }
+        let origin = value.isEmpty ? "http://127.0.0.1:\(flaskPort)" : URL(string: value)!.absoluteString
+        var savedPaths = paths ?? [:]
+        if cachePath.isEmpty {
+            savedPaths.removeValue(forKey: origin)
+        } else if cachePath.hasPrefix("/") {
+            savedPaths[origin] = cachePath
+        }
+        UserDefaults.standard.set(savedPaths, forKey: "collectorHistoryCachePaths")
     }
 
     @objc private func copyLocalURL() {

@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import SQLite3
 import SwiftUI
 
 struct MenuCircuit: Decodable {
@@ -40,6 +41,8 @@ struct MenuSummary: Decodable {
     let panelLabel: String
     let panelSlots: Int
     let breakerSlots: [MenuBreakerSlot]
+    let activeDeviceGid: String?
+    let collectorSourceId: String?
 }
 
 struct CircuitBucket: Decodable {
@@ -101,6 +104,82 @@ struct MenuDiskCache {
     }
 }
 
+struct DownloadedHistoryReader {
+    let database: URL
+
+    func history(channel: String, device: String, source: String, now: Date = Date()) -> (CircuitHistory, Date)? {
+        var connection: OpaquePointer?
+        guard sqlite3_open_v2(database.path, &connection, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              let connection = connection else {
+            if let connection = connection { sqlite3_close(connection) }
+            return nil
+        }
+        defer { sqlite3_close(connection) }
+        sqlite3_busy_timeout(connection, 1000)
+        guard sqlite3_exec(connection, "PRAGMA query_only=ON", nil, nil, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_exec(connection, "BEGIN", nil, nil, nil) == SQLITE_OK else { return nil }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        func query(_ sql: String, _ values: [String] = []) -> [[String: String]]? {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(connection, sql, -1, &statement, nil) == SQLITE_OK,
+                  let statement = statement else { print("History cache SQL preparation failed: " + String(cString: sqlite3_errmsg(connection))); return nil }
+            defer { sqlite3_finalize(statement) }
+            for (index, value) in values.enumerated() {
+                guard sqlite3_bind_text(statement, Int32(index + 1), value, -1, transient) == SQLITE_OK else { return nil }
+            }
+            var rows: [[String: String]] = []
+            var status = sqlite3_step(statement)
+            while status == SQLITE_ROW {
+                var row: [String: String] = [:]
+                for column in 0..<sqlite3_column_count(statement) {
+                    if let text = sqlite3_column_text(statement, column) {
+                        row[String(cString: sqlite3_column_name(statement, column))] = String(cString: text)
+                    }
+                }
+                rows.append(row)
+                status = sqlite3_step(statement)
+            }
+            return status == SQLITE_DONE ? rows : nil
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        guard let state = query("SELECT source_id, synchronized_at, cursor, high_watermark FROM sync_cache_state WHERE singleton=1")?.first,
+              state["source_id"] == source,
+              state["cursor"] == state["high_watermark"],
+              let synced = state["synchronized_at"],
+              let syncedAt = formatter.date(from: String(synced.prefix(19))),
+              let latest = query("SELECT MAX(timestamp) AS timestamp FROM sync_cached_readings WHERE device_gid=? AND channel_name=?", [device, channel])?.first?["timestamp"] else { return nil }
+        let end = formatter.string(from: now)
+        var windows: [CircuitWindow] = []
+        for days in [1, 7, 30] {
+            let start = formatter.string(from: now.addingTimeInterval(-Double(days) * 86400))
+            guard let totals = query("SELECT SUM(usage_kwh) AS kwh, SUM(cost_cents) AS cents, COUNT(*) AS readings FROM sync_cached_readings WHERE device_gid=? AND channel_name=? AND timestamp>=? AND timestamp<?", [device, channel, start, end])?.first,
+                  let buckets = query("SELECT strftime(?,timestamp) AS period, SUM(usage_kwh) AS kwh FROM sync_cached_readings WHERE device_gid=? AND channel_name=? AND timestamp>=? AND timestamp<? GROUP BY period ORDER BY period", [days == 1 ? "%Y-%m-%d %H:00" : "%Y-%m-%d", device, channel, start, end]) else { return nil }
+            let grouped = Dictionary(uniqueKeysWithValues: buckets.compactMap { row -> (String, Double)? in
+                guard let period = row["period"], let number = row["kwh"].flatMap(Double.init) else { return nil }
+                return (period, number)
+            })
+            let labels = DateFormatter()
+            labels.locale = formatter.locale
+            labels.dateFormat = days == 1 ? "yyyy-MM-dd HH:00" : "yyyy-MM-dd"
+            var cursor = Calendar.current.dateInterval(of: days == 1 ? .hour : .day,
+                                                       for: now.addingTimeInterval(-Double(days) * 86400))!.start
+            var series: [CircuitBucket] = []
+            while cursor < now {
+                let label = labels.string(from: cursor)
+                series.append(CircuitBucket(period: label, totalKwh: grouped[label]))
+                guard let next = Calendar.current.date(byAdding: days == 1 ? .hour : .day, value: 1, to: cursor) else { return nil }
+                cursor = next
+            }
+            windows.append(CircuitWindow(days: days, totalKwh: totals["kwh"].flatMap(Double.init),
+                totalCents: totals["cents"].flatMap(Double.init), changePct: nil,
+                readings: Int(totals["readings"] ?? "0") ?? 0, series: series))
+        }
+        return (CircuitHistory(lastReading: latest, windows: windows), syncedAt)
+    }
+}
+
 final class MenuMonitor: ObservableObject {
     @Published var summary: MenuSummary?
     @Published var summaryError: String?
@@ -116,10 +195,13 @@ final class MenuMonitor: ObservableObject {
     private let baseURL: URL
     private var historyTask: URLSessionDataTask?
     private var historyGeneration = UUID()
+    private let historyCachePath: String?
     private let diskCache = MenuDiskCache()
 
     init(baseURL: URL) {
         self.baseURL = baseURL
+        let paths = UserDefaults.standard.dictionary(forKey: "collectorHistoryCachePaths") as? [String: String]
+        historyCachePath = paths?[baseURL.absoluteString]
         if let stored = diskCache.read(baseURL.appendingPathComponent("api/menu-summary")),
            let decoded = try? decoder().decode(MenuSummary.self, from: stored.data) {
             summary = decoded
@@ -188,6 +270,8 @@ final class MenuMonitor: ObservableObject {
         historyError = nil
         let generation = UUID()
         historyGeneration = generation
+        let cachedDevice = summary?.activeDeviceGid
+        let cachedSource = summary?.collectorSourceId
         var allowed = CharacterSet.urlPathAllowed
         allowed.remove(charactersIn: "/%?#")
         guard let encoded = circuit.channelName.addingPercentEncoding(withAllowedCharacters: allowed),
@@ -205,11 +289,22 @@ final class MenuMonitor: ObservableObject {
             }
             let stored = result == nil ? self.diskCache.read(url) : nil
             let cached = stored.flatMap { try? self.decoder().decode(CircuitHistory.self, from: $0.data) }
+            let downloaded: (CircuitHistory, Date)?
+            if result == nil, let path = self.historyCachePath,
+               let device = cachedDevice, let source = cachedSource {
+                downloaded = DownloadedHistoryReader(database: URL(fileURLWithPath: path))
+                    .history(channel: circuit.channelName, device: device, source: source)
+            } else {
+                downloaded = nil
+            }
             DispatchQueue.main.async {
                 guard self.historyGeneration == generation else { return }
                 if let result = result {
                     self.history = result
                     self.cachedHistoryAt = nil
+                } else if let downloaded = downloaded {
+                    self.history = downloaded.0
+                    self.cachedHistoryAt = downloaded.1
                 } else if let cached = cached {
                     self.history = cached
                     self.cachedHistoryAt = stored?.fetchedAt

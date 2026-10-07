@@ -298,6 +298,8 @@ def ensure_table():
             usage_kwh REAL,
             cost_cents REAL
         );
+        CREATE INDEX IF NOT EXISTS idx_sync_cached_device_channel_timestamp
+            ON sync_cached_readings(device_gid, channel_name, timestamp);
         INSERT OR IGNORE INTO collector_identity(singleton, source_id)
             VALUES (1, lower(hex(randomblob(16))));
         CREATE TABLE IF NOT EXISTS reading_changes (
