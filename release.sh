@@ -28,7 +28,7 @@ STAGE="$DIST/stage/$NAME"
 ARCHIVE="$DIST/$NAME-macos.zip"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/EnergyMonitorApp"
-for name in README.md CHANGELOG.md LICENSE AGENTS.md VERSION build.sh release.sh \
+for name in README.md CHANGELOG.md COLLECTOR_CLIENT.md LICENSE AGENTS.md VERSION build.sh release.sh \
   setup_launch.sh requirements.txt requirements.lock energy.py web.py aqara.py \
   runtime_store.py panel_model.py climate.py extensions.py climate_collect.py; do
   cp "$SCRIPT_DIR/$name" "$STAGE/"
@@ -39,6 +39,7 @@ done
 cp -R "$APP_DIR/Sources" "$APP_DIR/Resources" "$APP_DIR/project.yml" "$BUNDLE" "$STAGE/EnergyMonitorApp/"
 # Strip machine-specific launch pointers from the distributed app.
 rm -f "$STAGE/EnergyMonitorApp/EnergyMonitorApp.app/Contents/Resources/project_root.txt" \
+      "$STAGE/EnergyMonitorApp/EnergyMonitorApp.app/Contents/Resources/data_root.txt" \
       "$STAGE/EnergyMonitorApp/EnergyMonitorApp.app/Contents/Resources/flask_port.txt"
 find "$STAGE" -type d -name __pycache__ -prune -exec rm -rf {} +
 "$PYTHON" "$SCRIPT_DIR/scripts/check_release.py" "$STAGE"
