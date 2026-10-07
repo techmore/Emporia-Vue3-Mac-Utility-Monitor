@@ -9,7 +9,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-SETTINGS_FILE = Path(__file__).parent / "settings.json"
+# The launcher sets cwd to the runtime data directory, not the installed source directory.
+SETTINGS_FILE = Path("settings.json")
 API_BASES = {
     "US": "https://open-usa.aqara.com",
     "EU": "https://open-ger.aqara.com",

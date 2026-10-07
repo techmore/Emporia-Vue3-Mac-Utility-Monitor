@@ -33,6 +33,24 @@ class AqaraTests(unittest.TestCase):
         module._write_json_file = write_json_file
         return patch.dict("sys.modules", {"energy": module})
 
+    def test_default_settings_follow_installed_runtime_directory(self):
+        self.assertEqual(self.original_settings_file, Path("settings.json"))
+        previous = Path.cwd()
+        try:
+            os.chdir(self.settings_dir.name)
+            with patch.object(aqara, "SETTINGS_FILE", self.original_settings_file):
+                self.settings_path.write_text(json.dumps({
+                    "rate_cents": 22.58, "aqara": {"account": "runtime@example.com"},
+                }))
+                self.assertEqual(aqara._load_aqara_config()["account"], "runtime@example.com")
+                aqara._save_aqara_config({"region": "US"})
+                saved = json.loads(self.settings_path.read_text())
+                self.assertEqual(saved["rate_cents"], 22.58)
+                self.assertEqual(saved["aqara"]["region"], "US")
+                self.assertEqual(self.settings_path.stat().st_mode & 0o777, 0o600)
+        finally:
+            os.chdir(previous)
+
     def test_signature_matches_aqara_documented_vector(self):
         signature = aqara._sign(
             app_id="4e693d54d75db580a56d1263",
