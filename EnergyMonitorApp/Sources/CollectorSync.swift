@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import Darwin
 
 enum CollectorSyncCredentials {
     private static let service = "com.dolbec.energymonitor.history-sync"
@@ -37,6 +38,13 @@ enum CollectorSyncCredentials {
 final class CollectorSyncRunner {
     private let queue = DispatchQueue(label: "com.dolbec.energymonitor.history-sync")
     private var process: Process?
+    private let timeout: TimeInterval
+    private let terminationGrace: TimeInterval
+
+    init(timeout: TimeInterval = 600, terminationGrace: TimeInterval = 2) {
+        self.timeout = timeout
+        self.terminationGrace = terminationGrace
+    }
 
     func start(python: String, script: String, origin: URL, cache: String, token: String,
                completion: @escaping (String?) -> Void) {
@@ -59,8 +67,14 @@ final class CollectorSyncRunner {
                 DispatchQueue.main.async { completion("History download could not start.") }
                 return
             }
-            self.queue.asyncAfter(deadline: .now() + 600) {
-                if self.process === task && task.isRunning { task.terminate() }
+            self.queue.asyncAfter(deadline: .now() + self.timeout) {
+                guard self.process === task && task.isRunning else { return }
+                task.terminate()
+                self.queue.asyncAfter(deadline: .now() + self.terminationGrace) {
+                    if self.process === task && task.isRunning {
+                        Darwin.kill(task.processIdentifier, SIGKILL)
+                    }
+                }
             }
             DispatchQueue.global(qos: .utility).async {
                 _ = output.fileHandleForReading.readDataToEndOfFile()
@@ -76,7 +90,11 @@ final class CollectorSyncRunner {
 
     func stop() {
         queue.sync {
-            if self.process?.isRunning == true { self.process?.terminate() }
+            if let task = self.process, task.isRunning {
+                // App exit cannot rely on a later queued escalation running.
+                Darwin.kill(task.processIdentifier, SIGKILL)
+                task.waitUntilExit()
+            }
         }
     }
 }
