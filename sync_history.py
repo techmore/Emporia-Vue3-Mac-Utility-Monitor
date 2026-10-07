@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +28,8 @@ def fetch_page(origin: str, token: str, state: dict) -> dict:
     query = {"after": state["cursor"], "limit": 500}
     if state.get("source_id"):
         query["source_id"] = state["source_id"]
+    if state.get("generation_id"):
+        query["generation_id"] = state["generation_id"]
     endpoint = origin.rstrip("/") + "/api/sync/readings?" + urllib.parse.urlencode(query)
     request = urllib.request.Request(endpoint, headers={"Authorization": "Bearer " + token})
     opener = urllib.request.build_opener(NoRedirects())
@@ -38,16 +41,60 @@ def fetch_page(origin: str, token: str, state: dict) -> dict:
     return json.loads(payload)
 
 
-def sync_once(origin: str, token: str, *, max_pages: int = 1000) -> dict:
+def _download_pages(origin: str, token: str, max_pages: int, expected_source: str | None = None) -> dict:
     import energy
 
     state = energy.get_sync_cache_status()
     for _ in range(max_pages):
         page = fetch_page(origin, token, state)
+        if expected_source and page.get("source_id") != expected_source:
+            raise ValueError("Collector identity changed during snapshot download")
         state = energy.apply_reading_changes(page)
         if not page["has_more"]:
             return state
     raise RuntimeError("Sync page limit reached; rerun to resume from the saved cursor")
+
+
+def sync_once(origin: str, token: str, *, max_pages: int = 1000) -> dict:
+    import energy
+
+    conn = energy._connect()
+    try:
+        if conn.execute("SELECT COUNT(*) FROM readings").fetchone()[0]:
+            raise ValueError("Refusing to synchronize into a database containing local readings")
+    finally:
+        conn.close()
+    state = energy.get_sync_cache_status()
+    try:
+        return _download_pages(origin, token, max_pages)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 409:
+            raise
+        reset = json.loads(exc.read(4096))
+        if not reset.get("reset_required") or reset.get("source_id") != state.get("source_id"):
+            raise ValueError("Collector identity changed; use a fresh cache database") from exc
+    original = energy.DB_PATH
+    # Keep the old cache available until the entire replacement snapshot is verified.
+    with tempfile.TemporaryDirectory(dir=Path(original).absolute().parent) as directory:
+        staging = Path(directory) / "cache.db"
+        descriptor = os.open(staging, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(descriptor)
+        try:
+            energy.DB_PATH = str(staging)
+            energy.ensure_table()
+            result = _download_pages(origin, token, max_pages, state["source_id"])
+            source = energy._connect()
+            destination = None
+            try:
+                destination = energy._connect(original)
+                source.backup(destination)
+            finally:
+                if destination is not None:
+                    destination.close()
+                source.close()
+            return result
+        finally:
+            energy.DB_PATH = original
 
 
 def main() -> None:

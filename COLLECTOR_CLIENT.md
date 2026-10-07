@@ -64,7 +64,7 @@ has been verified.
 
 ## Remaining Synchronization Work
 
-Development branch `codex/collector-history-sync` implements a version-1 readings
+Development branch `codex/collector-history-sync` implements a version-2 readings
 change journal with a persistent source identity. Inserts, updates, and deletes
 are recorded in the same SQLite transaction as the original mutation; pre-existing
 history is seeded once. `/api/sync/readings` returns at most 1,000 changes per page
@@ -90,10 +90,18 @@ viewed circuit histories per collector endpoint, uses private files, and labels
 offline data with its cache timestamp. Live watts and breaker safety indicators
 are withheld while offline. History never viewed online may not be cached.
 The downloaded SQLite history is not yet connected to this native view, and the
-web dashboard still requires a running server. Journal compaction/retention and
-native display of the full downloaded history remain to be implemented.
-The initial journal stores full history, and changes currently accumulate; storage
-growth must be resolved before continuous-production rollout.
+web dashboard still requires a running server.
+
+The poller checks journal size hourly. Above the greater of one million changes
+or twice the number of current readings, it transactionally replaces obsolete
+changes with a checkpoint of current readings and rotates the stream generation.
+The permanent collector identity does not change. This bounds logical journal
+growth relative to retained history; SQLite may retain allocated pages for reuse.
+The client detects a checkpoint change, downloads to a separate staging database,
+and publishes it through SQLite's backup API only after catching up. Failed
+rebuilds preserve the old cache. Different collector identities are still refused.
+This retention behavior and automatic checkpoint recovery are integration-tested
+but have not been deployed to the running installation.
 
 Define an authenticated, versioned incremental export protocol with stable
 source identities, bounded pagination, and a transactional sync cursor. Account

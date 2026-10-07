@@ -1,14 +1,17 @@
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import energy
+import sync_history
 import web
 
 
@@ -228,7 +231,79 @@ class ReadingJournalTests(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+            before = energy.get_reading_changes()
+            conn = energy._connect()
+            try:
+                conn.execute("DELETE FROM readings WHERE id=?", (reading_id,))
+                replacement_id = self.insert(conn)
+                conn.commit()
+            finally:
+                conn.close()
+            self.assertTrue(energy.compact_reading_journal(max_entries=1))
+            after = energy.get_reading_changes()
+            self.assertEqual(before["source_id"], after["source_id"])
+            self.assertNotEqual(before["generation_id"], after["generation_id"])
+            rebuilt = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
+            self.assertEqual(json.loads(rebuilt.stdout)["generation_id"], after["generation_id"])
+            conn = energy._connect(cache)
+            try:
+                rows = conn.execute("SELECT reading_id FROM sync_cached_readings").fetchall()
+                self.assertEqual([r[0] for r in rows], [replacement_id])
+            finally:
+                conn.close()
         finally:
             server.terminate()
             server.wait(timeout=10)
             server.stdout.close()
+
+    def test_checkpoint_failure_preserves_original_journal_and_generation(self):
+        conn = energy._connect()
+        try:
+            reading_id = self.insert(conn)
+            conn.execute("UPDATE readings SET cost_cents=30 WHERE id=?", (reading_id,))
+            conn.execute("UPDATE readings SET cost_cents=31 WHERE id=?", (reading_id,))
+            conn.commit()
+        finally:
+            conn.close()
+        before = energy.get_reading_changes()
+        conn = energy._connect()
+        proxy = MagicMock(wraps=conn)
+
+        def execute(sql, *args):
+            if sql.startswith("UPDATE reading_stream_generation"):
+                raise RuntimeError("simulated disk failure")
+            return conn.execute(sql, *args)
+
+        proxy.execute.side_effect = execute
+        with patch.object(energy, "_connect", return_value=proxy):
+            with self.assertRaises(RuntimeError):
+                energy.compact_reading_journal(max_entries=1)
+        self.assertEqual(energy.get_reading_changes(), before)
+
+    def test_interrupted_cache_rebuild_keeps_previous_cache(self):
+        conn = energy._connect()
+        try:
+            self.insert(conn)
+            conn.commit()
+        finally:
+            conn.close()
+        page = energy.get_reading_changes()
+        cache = str(Path(self.directory.name) / "cache.db")
+        with patch.object(energy, "DB_PATH", cache):
+            energy.ensure_table()
+            energy.apply_reading_changes(page)
+            before = energy.get_sync_cache_status()
+            error = urllib.error.HTTPError("http://localhost", 409, "reset", {}, io.BytesIO(
+                json.dumps({"reset_required": True, "source_id": page["source_id"]}).encode()
+            ))
+            with patch.object(sync_history, "fetch_page", side_effect=[error, RuntimeError("network lost")]):
+                with self.assertRaises(RuntimeError):
+                    sync_history.sync_once("http://localhost", "a" * 32)
+            self.assertEqual(energy.DB_PATH, cache)
+            self.assertEqual(energy.get_sync_cache_status(), before)
+            conn = energy._connect()
+            try:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM sync_cached_readings").fetchone()[0], 1)
+            finally:
+                conn.close()

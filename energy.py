@@ -280,6 +280,15 @@ def ensure_table():
             high_watermark INTEGER NOT NULL,
             synchronized_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS sync_cache_generation (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            generation_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS reading_stream_generation (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            generation_id TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO reading_stream_generation VALUES (1, lower(hex(randomblob(16))));
         CREATE TABLE IF NOT EXISTS sync_cached_readings (
             reading_id INTEGER PRIMARY KEY,
             timestamp TEXT NOT NULL,
@@ -365,6 +374,7 @@ def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
     try:
         conn.execute("BEGIN")
         source_id = conn.execute("SELECT source_id FROM collector_identity").fetchone()[0]
+        generation_id = conn.execute("SELECT generation_id FROM reading_stream_generation").fetchone()[0]
         watermark = conn.execute(
             "SELECT COALESCE(MAX(sequence), 0) FROM reading_changes"
         ).fetchone()[0]
@@ -376,7 +386,7 @@ def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
         ).fetchall()]
         next_cursor = rows[-1]["sequence"] if rows else after
         return {
-            "protocol_version": 1, "source_id": source_id, "changes": rows,
+            "protocol_version": 2, "source_id": source_id, "generation_id": generation_id, "changes": rows,
             "after_cursor": after,
             "next_cursor": next_cursor, "high_watermark": watermark,
             "has_more": next_cursor < watermark,
@@ -388,20 +398,25 @@ def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
 def get_sync_cache_status() -> dict:
     conn = _connect()
     try:
-        row = conn.execute("SELECT * FROM sync_cache_state WHERE singleton=1").fetchone()
+        row = conn.execute("""SELECT s.*, g.generation_id FROM sync_cache_state s
+            LEFT JOIN sync_cache_generation g ON g.singleton=s.singleton
+            WHERE s.singleton=1""").fetchone()
         return dict(row) if row else {"source_id": None, "cursor": 0,
-                                     "high_watermark": 0, "synchronized_at": None}
+                                     "high_watermark": 0, "synchronized_at": None, "generation_id": None}
     finally:
         conn.close()
 
 
 def apply_reading_changes(page: dict) -> dict:
     """Apply a validated collector page and its cursor atomically to the isolated cache."""
-    if not isinstance(page, dict) or page.get("protocol_version") != 1:
+    if not isinstance(page, dict) or page.get("protocol_version") != 2:
         raise ValueError("Unsupported sync protocol")
     source_id = page.get("source_id")
     if not isinstance(source_id, str) or len(source_id) != 32:
         raise ValueError("Invalid collector identity")
+    generation_id = page.get("generation_id")
+    if not isinstance(generation_id, str) or len(generation_id) != 32:
+        raise ValueError("Invalid stream generation")
     after, next_cursor, watermark = (page.get(key) for key in
                                      ("after_cursor", "next_cursor", "high_watermark"))
     if any(type(value) is not int or value < 0 for value in (after, next_cursor, watermark)):
@@ -443,6 +458,9 @@ def apply_reading_changes(page: dict) -> dict:
         state = conn.execute("SELECT * FROM sync_cache_state WHERE singleton=1").fetchone()
         if state and state["source_id"] != source_id:
             raise ValueError("Collector identity changed; use a fresh cache database")
+        generation = conn.execute("SELECT generation_id FROM sync_cache_generation").fetchone()
+        if state and (not generation or generation[0] != generation_id):
+            raise ValueError("Stream generation changed; a fresh cache snapshot is required")
         if after != (state["cursor"] if state else 0):
             raise ValueError("Sync cursor changed; reload cache state and retry")
         for row in changes:
@@ -466,6 +484,8 @@ def apply_reading_changes(page: dict) -> dict:
             cursor=excluded.cursor, high_watermark=excluded.high_watermark,
             synchronized_at=excluded.synchronized_at""",
             (source_id, next_cursor, watermark, synchronized_at))
+        conn.execute("""INSERT INTO sync_cache_generation VALUES (1, ?)
+            ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id""", (generation_id,))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -473,6 +493,33 @@ def apply_reading_changes(page: dict) -> dict:
     finally:
         conn.close()
     return get_sync_cache_status()
+
+
+def compact_reading_journal(max_entries: int = 1_000_000) -> bool:
+    """Bound repeated changes to a current-history checkpoint with a new stream generation."""
+    if type(max_entries) is not int or max_entries < 1:
+        raise ValueError("max_entries must be positive")
+    conn = _connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        changes = conn.execute("SELECT COUNT(*) FROM reading_changes").fetchone()[0]
+        current = conn.execute("SELECT COUNT(*) FROM readings").fetchone()[0]
+        if changes <= max(max_entries, current * 2):
+            return False
+        conn.execute("DELETE FROM reading_changes")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name='reading_changes'")
+        conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
+                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+        conn.execute("UPDATE reading_stream_generation SET generation_id=lower(hex(randomblob(16)))")
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def get_panel_layout() -> list[dict]:
@@ -1081,6 +1128,7 @@ def run_continuous():
     device_gids = []
     consecutive_errors = 0
     last_ok: float | None = None
+    last_journal_check = float("-inf")
     MAX_ERRORS_BEFORE_RELOGIN = 3
     RELOGIN_BACKOFF = [30, 60, 120, 300]
 
@@ -1134,6 +1182,13 @@ def run_continuous():
             started = time.monotonic()
             poll_and_store(vue, device_gids)
             finished = time.monotonic()
+            if finished - last_journal_check >= 3600:
+                try:
+                    if compact_reading_journal():
+                        logger.info("History sync journal checkpointed; clients will refresh their cache")
+                    last_journal_check = finished
+                except Exception:
+                    logger.exception("History sync journal maintenance failed")
             if last_ok is not None and started - last_ok > POLL_INTERVAL * 3:
                 logger.warning("Poll gap: %.0fs since last successful poll", started - last_ok)
             logger.info("Poll took %.2fs", finished - started)

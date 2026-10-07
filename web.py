@@ -4046,7 +4046,18 @@ def api_sync_readings():
     try:
         after = int(request.args.get("after", "0"))
         limit = int(request.args.get("limit", "500"))
+        expected_generation = request.args.get("generation_id")
+        if expected_generation:
+            identity = energy.get_reading_changes(0, 1)
+            if request.args.get("source_id") != identity["source_id"]:
+                return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
+            if expected_generation != identity["generation_id"]:
+                return jsonify({"error": "Stream checkpoint changed", "reset_required": True,
+                                "source_id": identity["source_id"],
+                                "generation_id": identity["generation_id"]}), 409
         page = energy.get_reading_changes(after, limit)
+        if expected_generation and expected_generation != page["generation_id"]:
+            return jsonify({"error": "Stream checkpoint changed; retry"}), 409
         expected_source = request.args.get("source_id")
         if expected_source and expected_source != page["source_id"]:
             return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
