@@ -414,6 +414,8 @@ def ensure_table():
             snapshot TEXT NOT NULL,
             PRIMARY KEY (serial, queried_at)
         );
+        CREATE INDEX IF NOT EXISTS idx_mitsubishi_queried_at
+            ON mitsubishi_observations(queried_at);
         CREATE TABLE IF NOT EXISTS kasa_circuit_links (
             device_id TEXT PRIMARY KEY,
             energy_device_gid TEXT NOT NULL,
