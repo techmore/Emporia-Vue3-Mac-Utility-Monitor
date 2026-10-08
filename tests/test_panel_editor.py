@@ -10,6 +10,11 @@ from panel_model import breaker_load
 
 
 class PanelEditorTests(unittest.TestCase):
+    def test_physical_panel_stays_two_columns_at_narrow_widths(self):
+        self.assertIn('.panel-grid {\n  display: grid; grid-template-columns: '
+                      'repeat(2, minmax(0, 1fr));', web.BASE_CSS)
+        self.assertEqual(web.BASE_CSS.count('.panel-grid {'), 1)
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.db = patch.object(energy, 'DB_PATH', str(Path(self.directory.name) / 'panel.db'))
