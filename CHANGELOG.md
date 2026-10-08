@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.26 - 2026-10-07
+
+- Update six vulnerable locked dependencies while preserving Emporia/Cognito/Kasa library versions. Isolated resolution passes dependency checks, all application tests, and a zero-known-advisory scan. Add strict dependency auditing on lock changes, manual runs and weekly CI. Actual deployed polling verification remains a release gate.
+
 ## 2.3.25 - 2026-10-07
 
 - Prevent competing continuous and one-shot Emporia pollers on the same canonical database path with nonblocking OS ownership before authentication. Preserve stable owner-only lock files and release ownership on exit. Test cross-process exclusion, aliases, independent databases and failure/crash cleanup. Older poller processes must be stopped explicitly during upgrade.
