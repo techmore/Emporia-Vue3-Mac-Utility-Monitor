@@ -70,3 +70,19 @@ rm ~/Library/LaunchAgents/com.dolbec.energymonitor.tunnel-watchdog.plist
 
 Keep the original tunnel loaded for normal SSH connectivity. Reinstalling
 recovery updates only its own helper/agent, not the native application or server.
+
+## Verified Mac/SER8 installation - 2026-10-08
+
+The watchdog was installed with the persistent Homebrew Python runtime and the
+existing Tailscale SSH forward (local 15001 to SER8 loopback 5051). A healthy
+baseline produced zero restarts. In a controlled fault test, only the verified
+owned SSH process was suspended. Failed HTTP probes caused the watchdog to
+replace that process through its exact LaunchAgent label; HTTP recovered and
+private status returned `healthy`, zero failures and one recovery. The test
+included a resume-on-failure guard.
+
+SER8 remained online, its four checked collector services remained active, and
+the recorded reading timestamp advanced from 18:43:16 to 18:44:17 local time.
+The independent Incus staging dashboard continued serving 2.3.31. This validates
+SSH transport repair, not a completed production container cutover or public
+OAuth login. Sleep and full-machine reboot recovery still require testing.
