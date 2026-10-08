@@ -43,7 +43,10 @@ class RadonTests(unittest.TestCase):
         client = web.app.test_client()
         for invalid in ({**self.row, 'timestamp': 'unknown'},
                         {**self.row, 'timestamp': self.now.replace(tzinfo=None).isoformat()},
-                        {**self.row, 'unit': 'pCL/L'}, {**self.row, 'value': None}):
+                        {**self.row, 'unit': 'pCL/L'}, {**self.row, 'value': None},
+                        {**self.row, 'value': 10 ** 400},
+                        {**self.row, 'timestamp': '0001-01-01T00:00:00+01:00'},
+                        {**self.row, 'timestamp': '9999-12-31T23:59:59-01:00'}):
             response = client.post('/api/radon/readings',
                                    json={'observations': [self.row, invalid]})
             self.assertEqual(response.status_code, 400)

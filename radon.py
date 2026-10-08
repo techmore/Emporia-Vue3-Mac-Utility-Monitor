@@ -32,13 +32,19 @@ def ingest_observations(observations: list[dict], now: datetime | None = None) -
         stamp = datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00'))
         if stamp.tzinfo is None:
             raise ValueError('timestamp requires a timezone')
-        stamp = stamp.astimezone(timezone.utc)
+        try:
+            stamp = stamp.astimezone(timezone.utc)
+        except OverflowError as exc:
+            raise ValueError('timestamp outside supported UTC range') from exc
         if not now - timedelta(days=energy.DB_RETENTION_DAYS) <= stamp <= now + timedelta(minutes=5):
             raise ValueError('timestamp outside retention or in the future')
         value = row.get('value')
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError('value must be a measured number; skip unavailable samples')
-        value = float(value)
+        try:
+            value = float(value)
+        except OverflowError as exc:
+            raise ValueError('value must be finite and nonnegative') from exc
         unit = row.get('unit')
         if unit not in ('pCi/L', 'Bq/m3'):
             raise ValueError('unit must be pCi/L or Bq/m3')
