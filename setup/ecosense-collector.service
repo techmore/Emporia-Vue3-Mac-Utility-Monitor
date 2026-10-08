@@ -1,0 +1,20 @@
+[Unit]
+Description=EcoSense automatic radon collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/energy-monitor
+Environment=DB_PATH=%h/.local/share/energy-monitor/energy.db
+Environment=ECOSENSE_STATE_ROOT=%h/.local/share/energy-monitor
+Environment=ENERGY_CODE_ROOT=%h/.local/lib/energy-monitor/radon-runtime
+ExecStart=%h/.local/lib/energy-monitor/radon-runtime/venv/bin/python3 -u %h/.local/lib/energy-monitor/ecosense_collect.py
+Restart=always
+RestartSec=30
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

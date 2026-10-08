@@ -1,8 +1,10 @@
 """Explicit built-in extension registry. No arbitrary plugin loading or background jobs."""
 import asyncio
 import hmac
+import json
 import os
 import threading
+from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
@@ -25,7 +27,7 @@ def register_extensions(app, render, common) -> None:
 
     @blueprint.after_request
     def protect_probe_response(response):
-        if request.path.startswith('/api/kasa/') or request.path == '/kasa':
+        if request.path.startswith(('/api/kasa/', '/api/ecosense/')) or request.path in ('/kasa', '/radon'):
             response.headers['Cache-Control'] = 'no-store'
         return response
 
@@ -149,9 +151,19 @@ def register_extensions(app, render, common) -> None:
             selected = sensors[0]
             source, sensor_id = selected['source'], selected['sensor_id']
         rows = radon.get_history(source, sensor_id, days=days) if selected else []
+        status_path = Path(energy.DB_PATH).parent / 'ecosense-status.json'
+        collection = {'state': 'not_installed'}
+        try:
+            collection = json.loads(status_path.read_text())
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):
+            app.logger.warning('Could not read EcoSense collector status')
+            collection = {'state': 'status_unavailable'}
         return render('{% include "radon.html" %}', active_page='radon',
                       sensors=sensors, selected=selected, rows=rows, days=days,
                       radon_cache=radon.get_cache_status(),
+                      radon_collection=collection,
                       chart=radon.hourly_chart(rows, days=days), **common())
 
     @blueprint.post('/api/radon/readings')
@@ -160,6 +172,25 @@ def register_extensions(app, render, common) -> None:
             return jsonify(radon.ingest_observations(request.get_json().get('observations')))
         except (ValueError, TypeError) as exc:
             return jsonify({'error': str(exc)}), 400
+
+    @blueprint.post('/api/ecosense/connect')
+    def ecosense_connect():
+        from ecosense_collect import connect_account
+
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or set(data) != {'email', 'password'}:
+            return jsonify({'error': 'Supply the EcoSense email and password'}), 400
+        try:
+            return jsonify(connect_account(data['email'], data['password']))
+        except Exception as exc:
+            code = getattr(exc, 'response', {}).get('Error', {}).get('Code', '')
+            if code in ('NotAuthorizedException', 'UserNotFoundException'):
+                return jsonify({'error': 'EcoSense rejected the email or password. '
+                                'Existing saved credentials were not changed.'}), 401
+            if isinstance(exc, ValueError):
+                return jsonify({'error': 'Enter a valid EcoSense email and password.'}), 400
+            app.logger.warning('EcoSense connection failed (%s)', type(exc).__name__)
+            return jsonify({'error': 'Could not connect to EcoSense. Please try again.'}), 502
 
     @blueprint.get('/api/sync/radon')
     def radon_changes():
