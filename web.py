@@ -119,6 +119,10 @@ _refresh_runtime_config()
 # ── Shared design tokens (mirrors techmore.github.io) ─────────────────────────
 BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+.kasa-controls-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:14px; margin-top:16px; }
+.kasa-controls-grid label { display:grid; gap:4px; margin:12px 0; }
+.kasa-controls-grid input, .kasa-controls-grid select { width:100%; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
+.kasa-actions { display:flex; gap:8px; margin:12px 0; }
 .power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px; }
 .power-heatmap th { font-size: 0.7rem; padding: 3px; }
 .power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); min-width: 140px; text-align: left; }
@@ -856,6 +860,7 @@ NAV_HTML = """
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
       <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
+      <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}">Kasa</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>

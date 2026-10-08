@@ -1,6 +1,6 @@
 # Kasa Integration Verification Plan
 
-Status: issue #66. Settings provides a single-device read-only state probe.
+Status: issue #66. Dedicated `/kasa` controls and circuit associations are implemented; physical control verification remains outstanding. Settings provides a single-device read-only state probe.
 No successful physical switch or off-network test is recorded. Device registration
 and a separate read-only collector are implemented; automatic service startup,
 remote replication and control remain incomplete.
@@ -109,3 +109,21 @@ verification, use `sudo systemctl daemon-reload` and
 and journal, and confirm new query timestamps after restarting the host.
 No service is enabled automatically by registration or the macOS app.
 Actual SER8 installation and reboot persistence remain unverified.
+
+## Dedicated Control Pane
+
+Open **Kasa** in the main navigation. ON, OFF and HS220 brightness actions require
+confirmation, a same-origin request and a fresh hardware identity check. Success
+requires a fresh post-command state read. Failed or ambiguous outcomes display
+unknown and are never automatically retried. Brightness changes can turn a light on.
+
+Circuit assignments are explicit, reversible associations with recorded non-main
+Emporia channels. Displayed 24-hour costs belong to the entire selected circuit;
+HS220 and HS103 state observations do not measure light watts or energy. Schedules
+and automatic controls are not enabled.
+
+On October 8, read-only SER8 discovery identified four HS220 dimmers and two HS103
+plugs. Barn-1st was registered and its OFF state queried by the enabled collector.
+This establishes network communication, not successful physical control. Before
+closing issue #66, approve one noncritical light, verify its actual operation and
+restore the initial state. Restart/reboot and off-network control remain separate gates.

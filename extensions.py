@@ -2,13 +2,17 @@
 import asyncio
 import hmac
 import os
+import threading
 
 from flask import Blueprint, jsonify, request
 
 import climate
+import energy
 import kasa_history
 import kasa_monitor
 import radon
+
+_kasa_control_lock = threading.Lock()
 
 CATALOG = ({'id': 'climate', 'name': 'House climate', 'status': 'experimental',
             'url': '/house', 'sources': ['aqara', 'home_assistant', 'manual']},
@@ -21,13 +25,64 @@ def register_extensions(app, render, common) -> None:
 
     @blueprint.after_request
     def protect_probe_response(response):
-        if request.path.startswith('/api/kasa/'):
+        if request.path.startswith('/api/kasa/') or request.path == '/kasa':
             response.headers['Cache-Control'] = 'no-store'
         return response
 
     @blueprint.get('/api/extensions')
     def catalog():
         return jsonify({'extensions': CATALOG})
+
+    @blueprint.get('/kasa')
+    def kasa_page():
+        context = common()
+        circuits = [row for row in energy.get_summary(24, context['active_device_gid'])
+                    if row['channel_name'] not in energy.META_CHANNELS]
+        return render('{% include "kasa.html" %}', active_page='kasa',
+                      devices=kasa_history.get_devices(), links=kasa_history.circuit_links(),
+                      circuits=circuits, **context)
+
+    @blueprint.post('/api/kasa/devices/<identifier>/circuit')
+    def kasa_circuit(identifier):
+        data = request.get_json()
+        if set(data) != {'energy_device_gid', 'channel_name'}:
+            return jsonify({'error': 'Supply device and circuit, or two nulls to unlink'}), 400
+        try:
+            kasa_history.link_circuit(identifier, data['energy_device_gid'], data['channel_name'])
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        return jsonify({'saved': True})
+
+    @blueprint.post('/api/kasa/devices/<identifier>/control')
+    def kasa_control(identifier):
+        if request.headers.get('Origin', '').rstrip('/') != request.host_url.rstrip('/'):
+            return jsonify({'error': 'Explicit same-origin control required'}), 403
+        data = request.get_json()
+        if (data.get('confirmed') is not True or set(data) - {'confirmed', 'is_on', 'brightness'}
+                or ('is_on' in data) == ('brightness' in data)):
+            return jsonify({'error': 'Confirm exactly one explicit control action'}), 400
+        device = next((row for row in kasa_history.get_devices() if row['id'] == identifier), None)
+        if not device or not device['reported_device_id']:
+            return jsonify({'error': 'Query and register this device before controlling it'}), 409
+        if not _kasa_control_lock.acquire(blocking=False):
+            return jsonify({'error': 'Another control is in progress; wait and retry'}), 409
+        try:
+            snapshot = asyncio.run(kasa_monitor.control(
+                device['host'], device['reported_device_id'],
+                is_on=data.get('is_on'), brightness=data.get('brightness')))
+            if not kasa_history.record_query(identifier, snapshot):
+                raise RuntimeError('Device identity changed')
+            return jsonify(snapshot)
+        except ValueError:
+            kasa_history.record_query(identifier, None, 'ControlRejected')
+            return jsonify({'error': 'Control rejected or not verified. Refresh before retrying.'}), 400
+        except Exception as exc:
+            kasa_history.record_query(identifier, None, type(exc).__name__)
+            app.logger.warning('Kasa control could not be verified (%s)', type(exc).__name__)
+            return jsonify({'error': 'Outcome unknown; refresh before retrying. No automatic retry.',
+                            'error_type': type(exc).__name__}), 502
+        finally:
+            _kasa_control_lock.release()
 
     @blueprint.route('/api/kasa/devices', methods=['GET', 'POST'])
     def kasa_devices():
