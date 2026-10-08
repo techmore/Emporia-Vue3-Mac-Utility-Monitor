@@ -1,5 +1,53 @@
 # Always-On Collector and Mac Client
 
+## Actual SER8 Deployment — 2026-10-08
+
+Release 2.3.26 is installed on the verified Ubuntu SER8. SSH was verified over
+Tailscale before deployment; Flask remains bound to 127.0.0.1:5051. No public
+listener, port forwarding or Tailscale Funnel was enabled. The Mac connects
+through an owner-only, reconnecting SSH LaunchAgent and loopback port 15001.
+
+The released dependency lock installed successfully on Python 3.14.4 with no
+dependency conflicts. The actual Linux host passed 170 tests (six Swift-only
+tests skipped). A final online SQLite snapshot was taken after quitting the
+identified Mac app and confirming its Flask and poller children had exited.
+The transferred snapshot passed integrity verification with exactly 85,474
+readings, through 2026-10-08T07:24:17.978654. Earlier staging and final source
+backups were retained for rollback. Private settings and authentication files
+were transferred via SSH, not committed to Git.
+
+Passwordless administrator access is unavailable. Instead, the existing
+lingering user manager runs enabled energy-poller and energy-dashboard services.
+Their private deployment uses owner-only files, a restrictive umask, unbuffered
+Python, restart backoff and NoNewPrivileges. These user units do not claim the
+system templates' ProtectSystem/ProtectHome filesystem isolation. The release
+lives under ~/.local/lib/energy-monitor/releases/2.3.26 and writable state under
+~/.local/share/energy-monitor on SER8. Secrets remain outside the checkout.
+
+The server successfully authenticated, discovered actual Emporia devices and
+recorded its first new readings at 07:25:00 with the preserved 22.58-cent rate.
+The Mac was reopened in persisted remote-client mode, with a private separate
+history cache and automatic downloads using a Keychain token. Its downloader
+started and completed; no local Flask or poller process remained.
+
+Controlled disconnection was verified by unloading only the tunnel LaunchAgent.
+The native view labeled cached data not live, withheld circuit watts and showed
+cached Heat Pump history (1,164 readings, with missing periods kept as gaps).
+SER8 continued recording while the Mac connection was unavailable. Restoring
+the tunnel restored live readings; the automatic downloader subsequently caught
+up with matching cursor/high-water mark and cleared its temporary failure label.
+Reports, Trends, Settings and Radon rendered through the actual tunnel without
+horizontal overflow at the inspected browser viewport. Radon correctly showed
+no readings, not zero concentration.
+
+This is deployment and reconnect evidence, not reboot/sleep verification.
+Collector reboot and Mac sleep checks remain required.
+The copied snapshot retains its collector identity: never restart the
+old Mac poller while SER8 is collecting, and never merge divergent copies.
+For rollback, stop SER8 polling first, then explicitly restore local Mac mode.
+The older sections below describe mechanisms and original verification gates;
+their pending-deployment wording predates this deployment record.
+
 ## Implemented
 
 The Mac wrapper accepts `ENERGY_COLLECTOR_URL`. When set, it skips local
