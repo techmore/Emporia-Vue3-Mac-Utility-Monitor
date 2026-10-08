@@ -1,7 +1,8 @@
 # Kasa Integration Verification Plan
 
-Status: issue #66. The current Settings pane is a placeholder, not an active
-integration. No successful physical switch or off-network test is recorded.
+Status: issue #66. Settings provides a single-device read-only state probe.
+No successful physical switch or off-network test is recorded. Control, device
+registration and continuous monitoring remain incomplete.
 
 ## Compatibility
 
@@ -38,6 +39,21 @@ CSRF/authentication safeguards, bounded requests, capability checks, and fresh
 post-command verification. Credential storage and collector-to-client protocol
 must be implemented and verified before remote control is considered complete.
 
-Remaining: identify actual devices, prove local communication, implement the
-backend, and prove the off-network path. No current compatibility or remote-control
+Remaining: identify actual devices, prove local communication, implement
+continuous monitoring and safeguarded controls, and prove the off-network path. No current compatibility or remote-control
 claim is justified by mock tests alone.
+
+## Read-Only Probe
+
+Open Settings, select Kasa, enter one router-assigned private IPv4 address, and
+select **Check state — no control**. Supply an account and password only if the
+actual device requires authentication. The server does not persist credentials;
+the form clears both fields after success or failure. Requests are bounded to
+ten seconds plus up to two seconds of disconnect cleanup. No subnet broadcast,
+command, pairing or firmware operation is performed. Query time is shown, not
+a claimed sensor measurement time. Failed requests show unknown, never OFF.
+
+For collector-side diagnostics, use `venv/bin/python3 kasa_monitor.py --host DEVICE_IP`
+or add `--login` for hidden-password entry. Do not put credentials in command
+arguments or chat. The locked library is python-kasa 0.11.0.1. Test fixtures prove
+request guards, cleanup and error handling; they do not prove hardware support.
