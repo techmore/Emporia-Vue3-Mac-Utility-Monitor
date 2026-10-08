@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.7 - 2026-10-07
+
+- Lead the Guide with a linked setup checklist, collection verification, separate billing configuration, and truthful integration status; make reference cards responsive.
+
 ## 2.3.6 - 2026-10-07
 
 - Add a recorded EcoQube/radon dashboard with sensor selection and day, week, month, and year history. Missing data stays blank; collection remains unconnected pending verified source timestamps.
