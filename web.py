@@ -492,7 +492,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--olive-500);
 }
 .panel-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
 }
 .panel-view-layout {
   display: grid;
@@ -523,7 +523,6 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   nav.topnav .nav-links { order:3; width:100%; overflow-x:auto; }
   .page { padding-left:12px; padding-right:12px; }
   .grid-2, .grid-3 { grid-template-columns: minmax(0, 1fr); }
-  .panel-grid { grid-template-columns: minmax(0, 1fr); }
   .panel-view-metrics { grid-template-columns: 1fr; }
 }
 .breaker {
