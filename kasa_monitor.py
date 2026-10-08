@@ -39,6 +39,7 @@ async def probe(host: str, username: str | None = None,
             await device.update()
             state = device.is_on
             return {'host': host, 'model': device.model, 'alias': device.alias,
+                    'device_id': device.device_id,
                     'is_on': state if type(state) is bool else None,
                     'queried_at': datetime.now(timezone.utc).isoformat(),
                     'read_only': True}

@@ -1,8 +1,9 @@
 # Kasa Integration Verification Plan
 
 Status: issue #66. Settings provides a single-device read-only state probe.
-No successful physical switch or off-network test is recorded. Control, device
-registration and continuous monitoring remain incomplete.
+No successful physical switch or off-network test is recorded. Device registration
+and a separate read-only collector are implemented; automatic service startup,
+remote replication and control remain incomplete.
 
 ## Compatibility
 
@@ -40,7 +41,7 @@ post-command verification. Credential storage and collector-to-client protocol
 must be implemented and verified before remote control is considered complete.
 
 Remaining: identify actual devices, prove local communication, implement
-continuous monitoring and safeguarded controls, and prove the off-network path. No current compatibility or remote-control
+automatic monitoring startup and safeguarded controls, and prove the off-network path. No current compatibility or remote-control
 claim is justified by mock tests alone.
 
 ## Read-Only Probe
@@ -57,3 +58,28 @@ For collector-side diagnostics, use `venv/bin/python3 kasa_monitor.py --host DEV
 or add `--login` for hidden-password entry. Do not put credentials in command
 arguments or chat. The locked library is python-kasa 0.11.0.1. Test fixtures prove
 request guards, cleanup and error handling; they do not prove hardware support.
+
+## Registered Monitoring
+
+Register a label and private IPv4 address under Settings > Kasa. Registration
+stores no credentials and makes no device request. Start the separate collector
+from the same installation and with the same `DB_PATH` as the dashboard:
+
+```bash
+venv/bin/python3 -u kasa_collect.py --once
+venv/bin/python3 -u kasa_collect.py --interval 60
+```
+
+Devices needing authentication require `KASA_USERNAME` and `KASA_PASSWORD` in
+the collector's private process environment. The one-shot Settings probe does
+not supply credentials to this separate process. Do not put secrets in command
+arguments or committed service files.
+
+Reload Settings to see the latest recorded query. Failed queries become unknown,
+not OFF; timestamps are collector query times, not device measurement times.
+The first successful query pins the reported hardware identity. If another
+device subsequently occupies that IP, it is reported as `DeviceIdentityChanged`
+rather than silently accepted. Remove and re-register only after verifying the
+physical replacement; removal deletes that device's local observation history.
+Registered monitoring is local to this database and is not yet replicated to
+remote clients. It does not provide power measurements or switch controls.

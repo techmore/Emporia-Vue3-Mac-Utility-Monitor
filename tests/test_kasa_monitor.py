@@ -13,7 +13,7 @@ import web
 class KasaProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_reads_selected_device_and_disconnects(self):
         device = SimpleNamespace(update=AsyncMock(), disconnect=AsyncMock(),
-                                 is_on=True, model='fixture-switch', alias='Fixture')
+                                 is_on=True, model='fixture-switch', alias='Fixture', device_id='fixture-id')
         discovery = AsyncMock(return_value=device)
         with patch.dict(sys.modules, {'kasa': SimpleNamespace(
                 Discover=SimpleNamespace(discover_single=discovery))}):
@@ -98,3 +98,29 @@ class KasaSettingsTests(unittest.TestCase):
         self.assertIn('Check state — no control', html)
         self.assertNotIn('id="kasaSubnet"', html)
         self.assertNotIn('No cloud credentials needed for local access', html)
+
+    def test_registry_round_trip_does_not_query_hardware(self):
+        with patch.object(kasa_monitor, 'probe', new=AsyncMock()) as probe:
+            response = self.client.post('/api/kasa/devices', json={
+                'host': '192.168.222.10', 'label': 'Fixture light'})
+            self.assertEqual(response.status_code, 201)
+            identifier = response.get_json()['id']
+            listing = self.client.get('/api/kasa/devices')
+            self.assertEqual(listing.headers['Cache-Control'], 'no-store')
+            device = listing.get_json()['devices'][0]
+            self.assertIsNone(device['is_on'])
+            self.assertIsNone(device['status'])
+            self.assertEqual(self.client.delete(
+                f'/api/kasa/devices/{identifier}', json={}).status_code, 200)
+            self.assertEqual(self.client.get('/api/kasa/devices').get_json()['devices'], [])
+            self.assertEqual(self.client.delete(
+                f'/api/kasa/devices/{identifier}', json={}).status_code, 404)
+            probe.assert_not_awaited()
+
+    def test_registry_rejects_credentials_and_cross_origin_changes(self):
+        payload = {'host': '192.168.222.10', 'label': 'Fixture'}
+        self.assertEqual(self.client.post('/api/kasa/devices', json={
+            **payload, 'password': 'must-not-be-stored'}).status_code, 400)
+        self.assertEqual(self.client.post('/api/kasa/devices', json=payload,
+            headers={'Origin': 'https://untrusted.example'}).status_code, 403)
+        self.assertEqual(self.client.get('/api/kasa/devices').get_json()['devices'], [])
