@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.18 - 2026-10-07
+
+- Add explicit same-window solar offset scenarios in Reports using recorded Main demand, separate avoided usage charges/export credits, unknown compensation handling and capture-quality caveats. Fixed charges and payback are excluded.
+- Make Reports overview cards responsive to prevent narrow-window overflow.
+
 ## 2.3.17 - 2026-10-07
 
 - Add private local panel-reference photos in Settings with a Panel Editor link, JPEG/PNG upload and deletion. Bound uploads to six images, 10 MiB and 24 megapixels; apply phone orientation, resize and strip metadata. Keep photo files outside Git/releases and protect concurrent upload limits.

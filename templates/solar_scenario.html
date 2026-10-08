@@ -1,0 +1,25 @@
+<section id="solar-offset" class="card" style="margin-bottom:16px">
+  <h2>Solar Offset Scenario</h2>
+  <p>Scenario only, not solar sizing, a production forecast or guaranteed savings. Use generation for the same last-24-hour window as the recorded Main consumption below.</p>
+  {% if solar_main %}<p>Recorded Main: <strong>{{ '%.2f'|format(solar_main.total_kwh) }} kWh</strong> in the last 24 hours. Current usage rate: {{ '%.2f'|format(solar_rate_cents) }} cents/kWh.</p>
+  {% else %}<p>No recorded Main consumption in this window. Missing data is not zero consumption; calculation is unavailable.</p>{% endif %}
+  <p class="card-meta">Capture context: {{ solar_dense_hours }}/24 completed hours have at least 57 distinct Main reading minutes. This excludes the current partial hour and does not prove complete imported-history coverage. Sparse readings can understate demand and overstate surplus. <a href="/log">Review capture history</a>.</p>
+  <form method="get" action="/reports#solar-offset" style="display:flex;flex-wrap:wrap;gap:12px;align-items:end">
+    <label>Generation in the same 24h (kWh)<br><input name="solar_generation" type="number" min="0" max="1000000" step="any" required value="{{ solar_inputs.solar_generation }}"></label>
+    <label>Assumed self-consumption (%)<br><input name="solar_self_pct" type="number" min="0" max="100" step="any" required value="{{ solar_inputs.solar_self_pct }}"></label>
+    <label>Export credit (cents/kWh; blank = unknown)<br><input name="solar_export_rate" type="number" min="0" max="1000000" step="any" value="{{ solar_inputs.solar_export_rate }}"></label>
+    <button type="submit">Calculate Scenario</button>
+  </form>
+  {% if solar_error %}<p role="alert">{{ solar_error }}</p>{% endif %}
+  {% if solar_result %}
+  <dl>
+    <dt>Assumed self-consumed solar, capped at recorded demand</dt><dd>{{ '%.2f'|format(solar_result.self_consumed_kwh) }} kWh</dd>
+    <dt>Remaining modeled grid consumption</dt><dd>{{ '%.2f'|format(solar_result.remaining_grid_kwh) }} kWh</dd>
+    <dt>Avoided usage charges in this window</dt><dd>${{ '%.2f'|format(solar_result.avoided_usage_cost) }}</dd>
+    <dt>Modeled surplus/export</dt><dd>{{ '%.2f'|format(solar_result.exported_kwh) }} kWh</dd>
+    <dt>Export credit</dt><dd>{% if solar_result.export_credit is none %}Unknown: no export rate supplied{% else %}${{ '%.2f'|format(solar_result.export_credit) }}{% endif %}</dd>
+    <dt>Combined modeled value</dt><dd>{% if solar_result.total_value is none %}Unknown until export compensation is specified{% else %}${{ '%.2f'|format(solar_result.total_value) }}{% endif %}</dd>
+  </dl>
+  {% endif %}
+  <p class="card-meta">Self-consumption is an assumption, not hourly matching or a battery model. Fixed monthly charges remain unchanged. No installation cost, financing, incentives, tariff eligibility or payback is modeled. An export rate does not establish a utility compensation agreement.</p>
+</section>
