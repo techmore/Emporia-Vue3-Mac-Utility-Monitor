@@ -5,6 +5,39 @@ on:
   pull_request:
 
 jobs:
+  linux-service:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify rendered Kasa service without starting it
+        run: |
+          python3 -m venv venv
+          python3 - <<'PY'
+          import getpass
+          import os
+          from pathlib import Path
+          root = Path.cwd()
+          stage = Path(os.environ['RUNNER_TEMP']) / 'kasa-service-verification'
+          stage.mkdir(mode=0o700)
+          data = stage / 'data'
+          data.mkdir(mode=0o700)
+          environment = stage / 'kasa.env'
+          environment.write_text(f'DB_PATH={data}/energy.db\n')
+          environment.chmod(0o600)
+          unit = (root / 'setup/kasa-collector.service').read_text()
+          for key, value in {
+              '__COLLECTOR_USER__': getpass.getuser(),
+              '__PROJECT_ROOT__': str(root),
+              '__DATA_ROOT__': str(data),
+              '__PRIVATE_ENV_FILE__': str(environment),
+          }.items():
+              unit = unit.replace(key, value)
+          assert '__' not in unit
+          (stage / 'energy-monitor-kasa.service').write_text(unit)
+          PY
+          systemd-analyze verify "$RUNNER_TEMP/kasa-service-verification/energy-monitor-kasa.service"
+
   test:
     runs-on: macos-latest
 
