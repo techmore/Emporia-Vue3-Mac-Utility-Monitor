@@ -4,9 +4,11 @@ This is not a documented vendor API. It does not ingest readings because source
 measurement timestamp semantics have not been verified against a real device.
 """
 import argparse
+import getpass
 import json
 import math
 import os
+import warnings
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -100,10 +102,21 @@ def describe_devices(devices: list[dict]) -> list[dict]:
 
 
 def main() -> None:
-    argparse.ArgumentParser(description=__doc__).parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--login', action='store_true',
+                        help='Prompt for account email and a hidden password; save neither')
+    args = parser.parse_args()
     try:
-        client = EcoSenseClient(os.environ.get('ECOSENSE_EMAIL', ''),
-                               os.environ.get('ECOSENSE_PASSWORD', ''))
+        if args.login:
+            username = input('EcoSense account email: ').strip()
+            with warnings.catch_warnings():
+                # Refuse getpass's visible-input fallback when no terminal is available.
+                warnings.simplefilter('error', getpass.GetPassWarning)
+                password = getpass.getpass('EcoSense password (not saved): ')
+        else:
+            username = os.environ.get('ECOSENSE_EMAIL', '')
+            password = os.environ.get('ECOSENSE_PASSWORD', '')
+        client = EcoSenseClient(username, password)
         print(json.dumps({'devices': describe_devices(client.get_devices())}, indent=2))
     except Exception as exc:
         # Authentication and HTTP errors may contain tokens/account URLs.

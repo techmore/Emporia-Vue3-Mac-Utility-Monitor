@@ -64,3 +64,16 @@ class EcoSenseTests(unittest.TestCase):
                 opener.return_value.open.return_value = response
                 with self.assertRaises(ValueError):
                     self.client.get_devices()
+
+    def test_interactive_login_does_not_print_or_persist_credentials(self):
+        output = io.StringIO()
+        with patch('sys.argv', ['ecosense.py', '--login']), \
+             patch('builtins.input', return_value='account@example.com'), \
+             patch('ecosense.getpass.getpass', return_value='private-password'), \
+             patch('ecosense.EcoSenseClient') as client, patch('sys.stdout', output):
+            client.return_value.get_devices.return_value = []
+            ecosense.main()
+            client.assert_called_once_with('account@example.com', 'private-password')
+        self.assertNotIn('private-password', output.getvalue())
+        self.assertNotIn('account@example.com', output.getvalue())
+        self.assertEqual(json.loads(output.getvalue()), {'devices': []})

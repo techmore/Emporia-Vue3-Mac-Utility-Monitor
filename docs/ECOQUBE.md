@@ -49,3 +49,7 @@ and read timeouts. Failures report only their class, not secret-bearing content.
 Live authentication is not verified. A real response still needs to establish
 the actual device model, units, unavailable-value semantics, and measurement
 timestamp before enabling recorded history collection.
+
+For a one-time interactive login, run `venv/bin/python3 ecosense.py --login`.
+The password prompt is hidden and neither credential is saved by the probe.
+Do not run this with shell tracing or paste passwords into chat.
