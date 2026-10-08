@@ -1,29 +1,11 @@
 <div id="panel-kasa" class="sys-panel">
-  <div class="sys-panel-head"><h3>Kasa — Smart Light Switches</h3><span class="int-badge">Read-only probe</span></div>
-  <div class="card">
-    <p>Select one known switch IP from your router. This checks current state without toggling, pairing, resetting, or scanning the subnet.</p>
-    <p>Some newer devices require your TP-Link account. Credentials are used for this request only and are not saved. Model/revision compatibility still needs verification.</p>
-    <form id="kasaProbeForm" class="kasa-probe-form">
-      <label>Device IPv4 address<input id="kasaProbeHost" required value="{{ kasa_host }}" placeholder="192.168.222.10" maxlength="45"></label>
-      <label>Account (if required)<input id="kasaProbeUsername" autocomplete="off" maxlength="1000"></label>
-      <label>Password (if required)<input id="kasaProbePassword" type="password" autocomplete="off" maxlength="1000"></label>
-      <button type="submit">Check state — no control</button>
-    </form>
-    <p id="kasaProbeStatus" role="status" aria-live="polite">Not queried. No physical device connection has been verified.</p>
-    <pre id="kasaProbeResult" class="kasa-probe-result"></pre>
-  </div>
-  <section class="card" style="margin-top:16px">
-    <h4>Registered devices · recorded query status</h4>
-    <p>Registration does not query a device or start collection. Run the separate collector explicitly on the always-on host. Saved query results are not a live connection indicator.</p>
-    <form id="kasaRegisterForm" class="kasa-probe-form">
-      <label>Device label<input id="kasaRegisterLabel" required maxlength="100"></label>
-      <label>Device IPv4 address<input id="kasaRegisterHost" required maxlength="45" placeholder="192.168.222.10"></label>
-      <button type="submit">Register for read-only monitoring</button>
-    </form>
-    <p id="kasaRegistryStatus" role="status" aria-live="polite"></p>
-    <div style="overflow-x:auto"><table><thead><tr><th>Device</th><th>Last recorded state</th><th>Query time (UTC)</th><th>Manage</th></tr></thead><tbody id="kasaDeviceRows"></tbody></table></div>
-    <p>Collector: <code>venv/bin/python3 -u kasa_collect.py</code>. Credentials, if needed, come from the collector's private process environment, not this registry. No switches are controlled.</p>
-  </section>
+  <div class="sys-panel-head"><div><h3>Kasa devices</h3><p class="kasa-muted">Lights, outlets and fans — their latest observed state, in one place.</p></div><button id="kasaRefresh" type="button">Refresh</button></div>
+  <div id="kasaSummary" class="kasa-summary" aria-live="polite"></div>
+  <div class="kasa-toolbar"><label>Find a device<input id="kasaSearch" type="search" placeholder="Search name, model or address"></label><label>Show<select id="kasaFilter"><option value="all">All devices</option><option value="on">On</option><option value="off">Off</option><option value="unknown">Needs attention</option></select></label><span class="kasa-muted">Updates every 30 seconds · Monitoring only</span></div>
+  <p id="kasaRegistryStatus" role="status" aria-live="polite" class="kasa-muted"></p>
+  <div id="kasaDeviceCards" class="kasa-grid"></div>
+  <details class="card kasa-tools"><summary>Add a device</summary><p class="kasa-muted">Add its local address to monitoring. Its first reading will appear after the collector checks it.</p><form id="kasaRegisterForm" class="kasa-probe-form"><label>Device name<input id="kasaRegisterLabel" required maxlength="100" placeholder="e.g. Workshop fan"></label><label>IP address<input id="kasaRegisterHost" required maxlength="45" placeholder="192.168.222.10"></label><button type="submit">Add to monitoring</button></form></details>
+  <details class="card kasa-tools"><summary>Connection diagnostics</summary><p class="kasa-muted">Check one device directly. Account details are only needed for devices that require them.</p><form id="kasaProbeForm" class="kasa-probe-form"><label>IP address<input id="kasaProbeHost" required value="{{ kasa_host }}" placeholder="192.168.222.10" maxlength="45"></label><label>TP-Link email (optional)<input id="kasaProbeUsername" autocomplete="off" maxlength="1000"></label><label>Password (optional)<input id="kasaProbePassword" type="password" autocomplete="off" maxlength="1000"></label><button type="submit">Check state — no control</button></form><p id="kasaProbeStatus" role="status" aria-live="polite"></p><pre id="kasaProbeResult" class="kasa-probe-result"></pre></details>
 </div>
 <script>
 document.getElementById('kasaProbeForm').addEventListener('submit', async event => {
@@ -52,49 +34,33 @@ document.getElementById('kasaProbeForm').addEventListener('submit', async event 
 });
 </script>
 <script>
-(function() {
-  const status = document.getElementById('kasaRegistryStatus');
-  async function request(url, options = {}) {
-    const response = await fetch(url, options), data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Request failed');
-    return data;
+(() => {
+  const $ = id => document.getElementById(id);
+  let devices = [], busy = false;
+  const node = (tag, text, cls) => {const el = document.createElement(tag); el.textContent = text; if(cls) el.className = cls; return el;};
+  const age = d => {const stamp = Date.parse((d.queried_at || '').replace(' ', 'T') + (/Z$|[+-]\d\d:\d\d$/.test(d.queried_at || '') ? '' : 'Z')); return Number.isFinite(stamp) ? Math.max(0, (Date.now()-stamp)/1000) : Infinity;};
+  const state = d => d.status === 'ok' && age(d) >= 0 && age(d) < 180 && (d.is_on === 0 || d.is_on === 1) ? (d.is_on === 1 ? 'on' : 'off') : 'unknown';
+  const when = d => {const seconds = age(d); return !Number.isFinite(seconds) ? 'Awaiting first reading' : seconds < 60 ? 'Checked just now' : seconds < 3600 ? `Checked ${Math.floor(seconds/60)} min ago` : `Checked ${Math.floor(seconds/3600)} hr ago`;};
+  async function request(url, options = {}) {const response = await fetch(url, options); const data = await response.json(); if (!response.ok) throw Error(data.error || 'Request failed'); return data;}
+  function render() {
+    const counts = {on:0, off:0, unknown:0}; devices.forEach(d => counts[state(d)]++);
+    $('kasaSummary').replaceChildren(...[[devices.length,'Devices'],[counts.on,'On'],[counts.off,'Off'],[counts.unknown,'Need attention']].map(([count,label]) => {const box=node('div','','card');box.append(node('strong',String(count)),node('span',label));return box;}));
+    const query = $('kasaSearch').value.toLowerCase(), filter = $('kasaFilter').value;
+    const matches = devices.filter(d => `${d.label} ${d.alias} ${d.model} ${d.host}`.toLowerCase().includes(query) && (filter === 'all' || state(d) === filter)).sort((a,b) => a.label.localeCompare(b.label));
+    const cards = matches.map(d => {
+      const s = state(d), card=node('article','','card kasa-device kasa-'+s), top=node('div','','kasa-card-top');
+      top.append(node('span',d.model === 'HS220' ? '☼' : '⏻','kasa-icon'),node('span',s === 'unknown' ? 'Needs attention' : s.toUpperCase(),'kasa-state'));
+      card.append(top,node('h4',d.label || d.alias || 'Unnamed device'),node('p',`${d.model || 'Kasa'} · ${d.model === 'HS220' ? 'Dimmer switch' : 'Smart outlet'}`,'kasa-muted'),node('p',when(d),'kasa-checked'));
+      if(s === 'unknown') card.append(node('p',d.status === 'unavailable' ? 'Device could not be reached. Check its power and network connection.' : age(d) >= 180 && d.queried_at ? 'Reading is out of date. Waiting for the collector.' : 'Waiting for a device reading.','kasa-muted'));
+      const details=node('details','','kasa-device-details');details.append(node('summary','Device details'),node('p','IP address: '+d.host),node('p','Reported name: '+(d.alias || 'Pending')),node('p','Last reading: '+(d.queried_at ? new Date(Date.now()-age(d)*1000).toLocaleString() : 'None')));
+      const remove=node('button','Remove from monitoring','kasa-remove');remove.type='button'; remove.addEventListener('click',async () => {if(!confirm('Remove '+d.label+' and its saved query history?')) return; remove.disabled=true;try{await request('/api/kasa/devices/'+encodeURIComponent(d.id),{method:'DELETE',headers:{'Content-Type':'application/json'},body:'{}'});await refresh();}catch(e){$('kasaRegistryStatus').textContent=e.message;remove.disabled=false;}});details.append(remove);card.append(details);return card;
+    });
+    $('kasaDeviceCards').replaceChildren(...cards);
+    if(!matches.length) $('kasaDeviceCards').append(node('p',devices.length ? 'No devices match this view.' : 'No devices yet. Add a device below to begin monitoring.','card kasa-empty'));
   }
-  async function refresh() {
-    const data = await request('/api/kasa/devices');
-    const rows = document.getElementById('kasaDeviceRows'); rows.replaceChildren();
-    for (const device of data.devices) {
-      const row = document.createElement('tr');
-      const state = device.status === 'ok' ? 'Last observed ' + (device.is_on === 1 ? 'ON' : 'OFF') :
-                    device.status === 'unavailable' ? 'Unknown · ' + (device.error_type || 'Unavailable') : 'Not queried';
-      for (const text of [device.label + ' · ' + device.host, state, device.queried_at || 'No query recorded']) {
-        const cell = document.createElement('td'); cell.textContent = text; row.append(cell);
-      }
-      const cell = document.createElement('td'), remove = document.createElement('button');
-      remove.type = 'button'; remove.textContent = 'Remove';
-      remove.addEventListener('click', async () => {
-        if (!confirm('Remove this device and its local query history? No physical device settings will change.')) return;
-        remove.disabled = true;
-        try {
-          await request('/api/kasa/devices/' + encodeURIComponent(device.id), {
-            method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: '{}'});
-          status.textContent = 'Device removed.'; await refresh();
-        } catch (error) { status.textContent = error.message; remove.disabled = false; }
-      });
-      cell.append(remove); row.append(cell); rows.append(row);
-    }
-    if (!data.devices.length) status.textContent = 'No registered devices. Collection is not configured here.';
-  }
-  document.getElementById('kasaRegisterForm').addEventListener('submit', async event => {
-    event.preventDefault(); const form = event.currentTarget, button = form.querySelector('button');
-    button.disabled = true;
-    try {
-      await request('/api/kasa/devices', {method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({host:document.getElementById('kasaRegisterHost').value.trim(),
-                             label:document.getElementById('kasaRegisterLabel').value.trim()})});
-      form.reset(); status.textContent = 'Registered. Start the separate collector to record queries.'; await refresh();
-    } catch (error) { status.textContent = error.message; }
-    finally { button.disabled = false; }
-  });
-  refresh().catch(error => { status.textContent = 'Device list unavailable: ' + error.message; });
+  async function refresh() {if(busy) return;busy=true;$('kasaRefresh').disabled=true;try{devices=(await request('/api/kasa/devices')).devices;render();$('kasaRegistryStatus').textContent='';}catch(e){$('kasaRegistryStatus').textContent='Unable to refresh. '+e.message;}finally{busy=false;$('kasaRefresh').disabled=false;}}
+  $('kasaSearch').addEventListener('input',render);$('kasaFilter').addEventListener('change',render);$('kasaRefresh').addEventListener('click',refresh);
+  $('kasaRegisterForm').addEventListener('submit',async e => {e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;try{await request('/api/kasa/devices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:$('kasaRegisterHost').value.trim(),label:$('kasaRegisterLabel').value.trim()})});e.target.reset();await refresh();}catch(err){$('kasaRegistryStatus').textContent=err.message;}finally{button.disabled=false;}});
+  refresh();setInterval(() => {if(!document.hidden) refresh();},30000);
 })();
 </script>

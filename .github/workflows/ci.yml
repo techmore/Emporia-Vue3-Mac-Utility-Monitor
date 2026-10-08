@@ -31,7 +31,7 @@ jobs:
               '__DATA_ROOT__': str(data),
               '__PRIVATE_ENV_FILE__': str(environment),
           }
-          for name in ('kasa-collector', 'energy-poller', 'energy-dashboard', 'mitsubishi-collector'):
+          for name in ('kasa-collector', 'energy-poller', 'energy-dashboard', 'mitsubishi-collector', 'aqara-local-collector'):
               unit = (root / f'setup/{name}.service').read_text()
               for key, value in replacements.items():
                   unit = unit.replace(key, value)
@@ -62,7 +62,7 @@ jobs:
         run: venv/bin/python3 scripts/check_release.py
 
       - name: Syntax check
-        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py radon.py ecosense.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py mitsubishi.py mitsubishi_collect.py
+        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py radon.py ecosense.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_matter_collect.py
 
       - name: Run unit tests
         run: venv/bin/python3 -m unittest discover -s tests -v
@@ -72,7 +72,7 @@ jobs:
           venv/bin/python3 - <<'PY'
           import web
           client = web.app.test_client()
-          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/radon', '/panel/photos', '/kasa', '/mitsubishi']:
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara']:
               response = client.get(path, follow_redirects=True)
               assert response.status_code == 200, f"{path}: {response.status_code}"
           assert client.get('/api/menu-summary').status_code == 200

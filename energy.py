@@ -389,12 +389,35 @@ def ensure_table():
             PRIMARY KEY (source, sensor_id, timestamp)
         );
         CREATE INDEX IF NOT EXISTS idx_radon_timestamp ON radon_readings(timestamp);
+        CREATE TABLE IF NOT EXISTS aqara_local_labels (
+            device_id TEXT PRIMARY KEY, name TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS aqara_local_observations (
+            device_id TEXT NOT NULL, timestamp TEXT NOT NULL, name TEXT NOT NULL,
+            model TEXT, temperature REAL, humidity REAL, battery REAL,
+            online INTEGER NOT NULL, source TEXT NOT NULL,
+            PRIMARY KEY (device_id,timestamp)
+        );
+        CREATE INDEX IF NOT EXISTS idx_aqara_local_timestamp ON aqara_local_observations(timestamp);
         CREATE TABLE IF NOT EXISTS kasa_devices (
             id TEXT PRIMARY KEY,
             host TEXT NOT NULL UNIQUE,
             label TEXT NOT NULL,
             reported_device_id TEXT,
             created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS kasa_query_metrics (
+            device_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            duration_ms REAL,
+            brightness INTEGER,
+            source TEXT NOT NULL,
+            PRIMARY KEY (device_id, timestamp)
+        );
+        CREATE INDEX IF NOT EXISTS idx_kasa_query_timestamp ON kasa_query_metrics(timestamp);
+        CREATE TABLE IF NOT EXISTS kasa_device_tags (
+            device_id TEXT PRIMARY KEY,
+            tag TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS kasa_observations (
             device_id TEXT NOT NULL,

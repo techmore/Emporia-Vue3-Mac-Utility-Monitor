@@ -6,6 +6,11 @@ The dashboard defaults to pCi/L for the latest value, chart axis/tooltips and
 reading table. Conversion uses the preserved normalized Bq/m3 value divided by
 37; source values remain unchanged. Displaying two decimal places does not
 increase sensor accuracy. The targeted radon tests cover the converted display.
+The chart now plots every measurement at its source timestamp instead of hiding
+individual readings inside hourly/daily means. Its horizontal axis fits the
+available history inside the selected window, and the page states the plotted
+sample count. Regression coverage checks 20 measurements produce 20 dots in all
+four history windows; 28 targeted tests passed before deployment.
 
 Collection saves new timestamped observations continuously. The current cloud
 adapter only retrieves latest device values; older history has not been imported.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Local Aqara M3 Matter controller
+After=network-online.target
+[Service]
+ExecStart=__NODE_BIN__ __MATTER_ROOT__/node_modules/matter-server/dist/esm/MatterServer.js --storage-path __MATTER_STORAGE__ --listen-address 127.0.0.1 --port 5580 --primary-interface __MATTER_INTERFACE__ --disable-ota --disable-thread-diagnostics --disable-dashboard --log-level warning --default-fabric-label EnergyMonitor
+Restart=on-failure
+RestartSec=10
+UMask=0077
+[Install]
+WantedBy=default.target

@@ -195,7 +195,7 @@ def register_extensions(app, render, common) -> None:
                       sensors=sensors, selected=selected, rows=rows, days=days,
                       radon_cache=radon.get_cache_status(),
                       radon_collection=collection,
-                      chart=radon.hourly_chart(rows, days=days), **common())
+                      chart=radon.observation_chart(rows, days=days), **common())
 
     @blueprint.post('/api/radon/readings')
     def radon_readings():

@@ -2,6 +2,8 @@
 
 ## 2.3.30 - 2026-10-08
 
+- Preserve and integrate live EcoQube per-measurement pCi/L charts, Kasa rocker/dimmer controls and diagnostics, and local Aqara Matter history. Validate sensor values, stream spreadsheet-safe CSV exports, clear unknown Kasa states and remove orphaned query metrics. Generalize optional service templates.
+
 - Add optional read-only Mitsubishi Comfort module: private token-only connection, cloud snapshots, separate opt-in collector, stale/offline handling and removal without deleting recorded history. No HVAC writes, adapter reboots or new dependencies. Physical telemetry validation remains required.
 
 ## 2.3.29 - 2026-10-08
