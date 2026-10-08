@@ -12,7 +12,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from flask import Flask, Response, jsonify, redirect, render_template_string, request
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template_string,
+    request,
+    stream_with_context,
+)
 from jinja2 import select_autoescape
 from werkzeug.exceptions import RequestEntityTooLarge
 
@@ -4091,7 +4099,7 @@ def api_events():
             time.sleep(5)
 
     return Response(
-        event_stream(),
+        stream_with_context(event_stream()),
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
