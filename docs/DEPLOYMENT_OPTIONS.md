@@ -17,6 +17,8 @@ scripts retain the native app, icon, and menu dropdown. Do not start a native
 poller when SER8 is already authoritative. Configure Collector Connection in
 the menu to use a remote collector; see COLLECTOR_CLIENT.md for cached history.
 Browser OAuth onboarding is planned in issue #123, not shipped yet.
+For optional automatic repair of a stalled private SSH forward, see
+[Connection recovery](CONNECTION_RECOVERY.md).
 
 ## Native Linux or a Linux container
 
