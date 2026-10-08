@@ -41,6 +41,23 @@ than accepting an arbitrary responding service as the collector.
 
 ## Required Verification Before Cutover
 
+For a verified Linux/systemd collector, `setup/energy-poller.service` and
+`setup/energy-dashboard.service` are opt-in templates for the two core processes.
+They are not installed or enabled automatically. Render the placeholders with
+the non-root service user, absolute project and private data directories, and a
+root-owned 0600 environment file outside the repository. Use paths without spaces.
+Both units must use the same absolute `DB_PATH`; keep the working/data directory
+owner-only and writable by that user. Install locked dependencies into the
+project's `venv` first. The poller uses unbuffered output and restart backoff;
+the dashboard binds to `127.0.0.1` in code and defaults to port 5051.
+
+Verify rendered units with `systemd-analyze verify` before installing them under
+`/etc/systemd/system/`. After the cutover checks below, reload systemd and enable
+the explicitly selected units. Confirm service journal output, fresh readings,
+loopback-only listening and collection after a collector reboot and Mac sleep.
+Do not run a second Emporia poller against the same deployment. Templates and
+Linux CI syntax validation do not establish actual SER8 installation or cutover.
+
 Create a consistent standalone snapshot while the existing poller is running:
 
 ```bash
