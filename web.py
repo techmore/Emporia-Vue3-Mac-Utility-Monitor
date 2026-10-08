@@ -119,6 +119,16 @@ _refresh_runtime_config()
 # ── Shared design tokens (mirrors techmore.github.io) ─────────────────────────
 BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+.power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px; }
+.power-heatmap th { font-size: 0.7rem; padding: 3px; }
+.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); min-width: 140px; text-align: left; }
+.power-heatmap .heat-cell { padding: 0; height: 20px; min-width: 8px; border-radius: 2px; }
+.heat-missing { background: var(--stone-200); opacity: 0.15; }
+.heat-1 { background: var(--olive-900); }
+.heat-2 { background: var(--olive-700); }
+.heat-3 { background: var(--olive-500); }
+.heat-4 { background: var(--olive-300); }
+.heat-5 { background: var(--olive-100); }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -2636,6 +2646,25 @@ TRENDS_HTML = """
     <span class="section-sub">14-day usage analysis</span>
   </div>
 
+  <section class="card" style="margin-bottom:1.5rem;">
+    <h2>Weekly Power Heatmap</h2>
+    <p class="card-meta">Last seven complete days · hourly recorded kWh · brighter means more energy.
+      Blank cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
+      Sample counts do not prove coverage; imports may represent longer intervals.</p>
+    {% if heatmap.circuits %}
+    <div style="overflow-x:auto;">
+      <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
+        <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
+        <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ hour[-2:] if hour[-2:] in ['00','06','12','18'] else '' }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
+        {% for cell in circuit.cells %}<td class="heat-cell {{ 'heat-' ~ cell.level if cell else 'heat-missing' }}"
+          tabindex="0" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
+          title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }}{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% else %}<p>No circuit history recorded in this window.</p>{% endif %}
+  </section>
+
   {% if trend.slope is not none %}
   <div class="trend-banner" style="margin-bottom:1.5rem;">
     <span class="trend-icon">{{ '📈' if trend.slope > 0.1 else ('📉' if trend.slope < -0.1 else '➡️') }}</span>
@@ -4088,6 +4117,7 @@ def trends_page():
         TRENDS_HTML,
         active_page="trends",
         trend=trend,
+        heatmap=energy.get_power_heatmap(com["active_device_gid"]),
         trend_json=_fill_gaps(trend["daily"], "day"),
         hourly_json=_fill_gaps(energy.get_hourly_data(7, com["active_device_gid"]), "hour", hourly=True),
         mc={"this_month": mc["this_month"], "last_month": mc["last_month"]},

@@ -217,6 +217,42 @@ def get_circuit_week_comparison(
     return sorted(result, key=lambda row: row["current_kwh"], reverse=True)
 
 
+def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
+    """Recorded circuit energy in hourly buckets; absent hours are never zero-filled."""
+    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = boundary - timedelta(days=7)
+    hours = [(start + timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        rows = conn.execute(
+            """SELECT channel_name, strftime('%Y-%m-%dT%H', timestamp) hour,
+                      SUM(usage_kwh) kwh, COUNT(*) samples
+               FROM readings WHERE device_gid = ? AND timestamp >= ? AND timestamp < ?
+                 AND usage_kwh >= 0
+               GROUP BY channel_name, hour""",
+            (gid, start.isoformat(), boundary.isoformat()),
+        ).fetchall() if gid else []
+    finally:
+        conn.close()
+    channels = {}
+    for row in rows:
+        name = row['channel_name']
+        if name and name not in META_CHANNELS:
+            channels.setdefault(name, {})[row['hour']] = dict(row)
+    maximum = max((row['kwh'] for cells in channels.values() for row in cells.values()),
+                  default=0) or 1
+    return {
+        'hours': hours,
+        'days': [(start + timedelta(days=i)).strftime('%a %m/%d') for i in range(7)],
+        'start': start.isoformat(), 'end': boundary.isoformat(),
+        'circuits': [{'name': name, 'cells': [
+            ({**cells[hour], 'level': min(5, int(cells[hour]['kwh'] / maximum * 5) + 1)}
+             if hour in cells else None) for hour in hours
+        ]} for name, cells in sorted(channels.items())],
+    }
+
+
 def ensure_table():
     """Create the readings table and indexes if they don't exist yet."""
     conn = _connect()

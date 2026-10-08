@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.27 - 2026-10-08
+
+- Add circuit-by-hour energy heatmap to Trends for the last seven complete days.
+  Preserve missing hours, recorded zero values, device boundaries and hover cost/sample details.
+  Historical sample counts are not represented as proven coverage or predictive confidence.
+
 ## 2.3.26 - 2026-10-07
 
 - Update six vulnerable locked dependencies while preserving Emporia/Cognito/Kasa library versions. Isolated resolution passes dependency checks, all application tests, and a zero-known-advisory scan. Add strict dependency auditing on lock changes, manual runs and weekly CI. Actual deployed polling verification remains a release gate.
