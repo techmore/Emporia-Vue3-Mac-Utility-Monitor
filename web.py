@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from flask import (
     Flask,
     Response,
+    has_request_context,
     jsonify,
     redirect,
     render_template_string,
@@ -1013,7 +1014,7 @@ WORKSPACE_NAV_HTML = """
 
 
 def _render(template: str, **ctx):
-    if request.path in WORKSPACE_PAGES:
+    if has_request_context() and request.path in WORKSPACE_PAGES:
         ctx.update(workspace_pages=WORKSPACE_PAGES, workspace_path=request.path)
         template = ('<div class="page"><div class="section-head"><h2>Settings Workspace</h2>'
                     '</div><div class="settings-wrap">' + WORKSPACE_NAV_HTML
