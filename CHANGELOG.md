@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.16 - 2026-10-07
+
+- Expose normalized, explicitly unverified timestamp candidates in the read-only EcoSense probe. Omit naive and numeric dates instead of guessing; retain secret redaction and no-write behavior. Live collection remains unverified.
+
 ## 2.3.15 - 2026-10-07
 
 - Replace only energy cache tables during checkpoint recovery, preserving unrelated sensor history. Verify atomic rollback on replacement failure and radon preservation on successful reset. This does not enable radon replication or live collection.

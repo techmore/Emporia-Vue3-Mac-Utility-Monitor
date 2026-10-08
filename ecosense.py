@@ -9,6 +9,7 @@ import json
 import math
 import os
 import warnings
+from datetime import datetime, timezone
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -81,6 +82,18 @@ def describe_devices(devices: list[dict]) -> list[dict]:
     """Expose field names and candidate values, not an invented live measurement."""
     result = []
     for device in devices:
+        timestamps = {}
+        for field in ('timestamp', 'measured_at', 'measurement_time', 'last_updated',
+                      'updated_at', 'last_seen', 'created_at'):
+            raw = device.get(field)
+            if not isinstance(raw, str) or len(raw) > 100:
+                continue
+            try:
+                stamp = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+                if stamp.tzinfo is not None:
+                    timestamps[field] = stamp.astimezone(timezone.utc).isoformat()
+            except (ValueError, OverflowError):
+                continue
         value = device.get('radon_level')
         if isinstance(value, bool):
             value = None
@@ -95,6 +108,7 @@ def describe_devices(devices: list[dict]) -> list[dict]:
             'has_serial_number': isinstance(device.get('serial_number'), str)
                                  and bool(device['serial_number']),
             'candidate_radon_bq_m3': value,
+            'candidate_timestamps_utc': timestamps,
             'measurement_time_verified': False,
             'history_ingested': False,
         })
