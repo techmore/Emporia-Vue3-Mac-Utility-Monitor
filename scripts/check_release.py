@@ -17,6 +17,6 @@ for name in ('web.py', 'energy.py', 'climate.py', 'climate_collect.py', 'extensi
              'scripts/check_release.py', 'templates/circuit_overlay.html',
              'static/circuit-overlay.js', 'EnergyMonitorApp/Sources/MenuPopover.swift',
              'EnergyMonitorApp/Sources/CollectorSync.swift', 'sync_history.py', 'radon.py',
-             'templates/radon.html'):
+             'templates/radon.html', 'ecosense.py'):
     assert (root / name).is_file(), f'Missing release file: {name}'
 print(version)

@@ -2,6 +2,8 @@
 
 ## 2.3.5 - Unreleased
 
+- Add an experimental bounded EcoSense cloud probe with private environment credentials; no history is ingested until actual measurement timestamp semantics are verified.
+
 - Add validated radon observation storage with original units, UTC measurement timestamps, sensor isolation, and atomic duplicate/conflict handling. Add a read-only recorded-history page with empty/stale states. EcoQube collection and Mac radon synchronization are not yet connected.
 
 ## 2.3.4 - 2026-10-07

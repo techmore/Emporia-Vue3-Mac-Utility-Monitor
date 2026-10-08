@@ -28,3 +28,24 @@ Next steps:
 5. Verify live readings and disconnect/reconnect behavior before closing #83.
 
 No mitigation advice or safety classification is implemented here.
+
+## Read-Only Cloud Probe
+
+`ecosense.py` uses the account endpoint and Cognito identifiers inspected in the
+[community adapter source](https://github.com/rwestergren/hass-ecosense-radon/tree/master/custom_components/ecosense_radon).
+This is experimental, not a supported vendor API contract. Its sensor code
+interprets `radon_level` as Bq/m3 but does not establish measurement timestamp
+semantics. Our probe therefore writes no database records. Zero remains a
+candidate value, not a confirmed valid measurement or a safety indication.
+
+Supply `ECOSENSE_EMAIL` and `ECOSENSE_PASSWORD` privately in the process
+environment, then run `venv/bin/python3 ecosense.py`. Never put credentials in
+Git or command-line arguments. Output contains device field names and candidate
+values, not serial values, account credentials, or authorization tokens.
+The request is bounded to 1 MiB and 15 seconds, refuses redirects, and retries
+an expired authorization once. Authentication requests have bounded connection
+and read timeouts. Failures report only their class, not secret-bearing content.
+
+Live authentication is not verified. A real response still needs to establish
+the actual device model, units, unavailable-value semantics, and measurement
+timestamp before enabling recorded history collection.
