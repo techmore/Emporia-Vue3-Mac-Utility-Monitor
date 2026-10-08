@@ -1,0 +1,19 @@
+<style>
+.mobile-sections { display:none; }
+@media (max-width: 760px) {
+  .mobile-sections { display:flex; gap:4px; overflow-x:auto; position:sticky; top:0;
+    z-index:20; padding:6px; background:var(--stone-100); border-bottom:1px solid var(--stone-300); }
+  .mobile-sections a { flex:0 0 auto; padding:10px 12px; color:var(--olive-950);
+    text-decoration:none; border-radius:8px; font-size:0.85rem; }
+  .mobile-sections a[aria-current="page"] { background:var(--olive-200); font-weight:700; }
+  .page { padding-left:10px; padding-right:10px; }
+  .settings-wrap { display:block; }
+  .workspace-content { min-width:0; }
+}
+</style>
+<nav class="mobile-sections" aria-label="Device sections">
+{% for path, label in [('/circuits', 'Circuits'), ('/aqara', 'Aqara'), ('/radon', 'EcoQube'), ('/mitsubishi', 'Mitsubishi'), ('/kasa', 'Kasa')] %}
+  <a href="{{ path }}" {% if mobile_path == path %}aria-current="page"{% endif %}>{{ label }}</a>
+{% endfor %}
+</nav>
+<script src="/static/mobile-navigation.js" defer></script>

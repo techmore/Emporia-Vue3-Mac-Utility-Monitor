@@ -1092,7 +1092,7 @@ def _fill_gaps(rows: list[dict], key: str, hourly: bool = False) -> list[dict]:
 
 WORKSPACE_PAGES = {
     '/circuits': 'Circuits', '/panel': 'Panel Editor', '/import': 'Import',
-    '/aqara': 'Aqara Sensors', '/log': 'Logs', '/panel/photos': 'Panel Photos',
+    '/log': 'Logs', '/panel/photos': 'Panel Photos',
 }
 
 WORKSPACE_NAV_HTML = """
@@ -1112,6 +1112,7 @@ WORKSPACE_NAV_HTML = """
 
 
 def _render(template: str, **ctx):
+    ctx["mobile_path"] = request.path if has_request_context() else ""
     if has_request_context() and request.path in WORKSPACE_PAGES:
         ctx.update(workspace_pages=WORKSPACE_PAGES, workspace_path=request.path)
         template = ('<div class="page"><div class="section-head"><h2>Settings Workspace</h2>'
@@ -1121,7 +1122,8 @@ def _render(template: str, **ctx):
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
-        + NAV_HTML + template + '{% include "circuit_overlay.html" %}</body></html>',
+        + NAV_HTML + '{% include "mobile_navigation.html" %}' + template
+        + '{% include "circuit_overlay.html" %}</body></html>',
         **ctx
     )
 

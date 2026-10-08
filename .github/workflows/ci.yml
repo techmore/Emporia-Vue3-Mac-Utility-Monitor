@@ -67,6 +67,11 @@ jobs:
       - name: Run unit tests
         run: venv/bin/python3 -m unittest discover -s tests -v
 
+      - name: Check mobile navigation gestures
+        run: |
+          node --check static/mobile-navigation.js
+          node scripts/test_mobile_navigation.cjs
+
       - name: Smoke test Flask routes
         run: |
           venv/bin/python3 - <<'PY'
