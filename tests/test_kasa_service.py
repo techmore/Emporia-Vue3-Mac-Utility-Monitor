@@ -3,6 +3,21 @@ from pathlib import Path
 
 
 class KasaServiceTemplateTests(unittest.TestCase):
+    def test_core_processes_share_private_data_and_unbuffered_startup(self):
+        root = Path(__file__).resolve().parents[1]
+        for name, module in (('energy-poller', 'energy.py'),
+                             ('energy-dashboard', 'web.py')):
+            with self.subTest(service=name):
+                unit = (root / f'setup/{name}.service').read_text()
+                self.assertIn(f'python3 -u __PROJECT_ROOT__/{module}', unit)
+                self.assertIn('WorkingDirectory=__DATA_ROOT__', unit)
+                self.assertIn('ReadWritePaths=__DATA_ROOT__', unit)
+                self.assertIn('User=__COLLECTOR_USER__', unit)
+                self.assertIn('UMask=0077', unit)
+                self.assertIn('EnvironmentFile=__PRIVATE_ENV_FILE__', unit)
+                self.assertNotIn('User=root', unit)
+        self.assertIn('FLASK_HOST = "127.0.0.1"', (root / 'web.py').read_text())
+
     def test_service_is_opt_in_unprivileged_and_limits_writes(self):
         root = Path(__file__).resolve().parents[1]
         template = (root / 'setup/kasa-collector.service').read_text()

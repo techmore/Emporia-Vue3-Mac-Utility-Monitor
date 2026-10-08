@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Verify rendered Kasa service without starting it
+      - name: Verify rendered collector services without starting them
         run: |
           python3 -m venv venv
           python3 - <<'PY'
@@ -25,18 +25,20 @@ jobs:
           environment = stage / 'kasa.env'
           environment.write_text(f'DB_PATH={data}/energy.db\n')
           environment.chmod(0o600)
-          unit = (root / 'setup/kasa-collector.service').read_text()
-          for key, value in {
+          replacements = {
               '__COLLECTOR_USER__': getpass.getuser(),
               '__PROJECT_ROOT__': str(root),
               '__DATA_ROOT__': str(data),
               '__PRIVATE_ENV_FILE__': str(environment),
-          }.items():
-              unit = unit.replace(key, value)
-          assert '__' not in unit
-          (stage / 'energy-monitor-kasa.service').write_text(unit)
+          }
+          for name in ('kasa-collector', 'energy-poller', 'energy-dashboard'):
+              unit = (root / f'setup/{name}.service').read_text()
+              for key, value in replacements.items():
+                  unit = unit.replace(key, value)
+              assert '__' not in unit
+              (stage / f'{name}.service').write_text(unit)
           PY
-          systemd-analyze verify "$RUNNER_TEMP/kasa-service-verification/energy-monitor-kasa.service"
+          systemd-analyze verify "$RUNNER_TEMP/kasa-service-verification/"*.service
 
   test:
     runs-on: macos-latest
