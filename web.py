@@ -3177,11 +3177,18 @@ def _load_panel_slots(default: int = 16) -> int:
     return max(1, value)
 
 
+def _panel_slot_reserved(row: dict) -> bool:
+    return (any(row.get(field) for field in ("channel_name", "label", "note", "amps"))
+            or row.get("poles", 1) not in (None, 1))
+
+
 def _normalize_panel_layout(layout: dict[int, dict], channel_names: list[str], minimum_slots: int = 20) -> tuple[dict[int, dict], int]:
     normalized = {slot: dict(row) for slot, row in layout.items()}
     assigned = {row.get("channel_name") for row in normalized.values() if row.get("channel_name")}
     missing = [name for name in channel_names if name not in assigned]
-    empty_slots = sorted(slot for slot, row in normalized.items() if not row.get("channel_name"))
+    # Labeled or rated unmonitored breakers are reserved physical positions.
+    empty_slots = sorted(slot for slot, row in normalized.items()
+                         if not _panel_slot_reserved(row))
 
     for name in missing:
         if empty_slots:
@@ -3222,6 +3229,8 @@ def _seed_layout_from_latest(
         if slot < 1:
             continue
         current = seeded.get(slot)
+        if current and not current.get("channel_name") and _panel_slot_reserved(current):
+            continue
         if current and current.get("channel_name") and current.get("channel_name") != name:
             continue
         seeded[slot] = {

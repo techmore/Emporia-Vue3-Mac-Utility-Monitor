@@ -46,3 +46,17 @@ class PanelEditorTests(unittest.TestCase):
                                         content_type='application/json')
             self.assertEqual(response.status_code, 400, body)
             self.assertEqual(energy.get_panel_layout(), before)
+
+    def test_channel_autoplacement_preserves_reserved_unmonitored_breakers(self):
+        for attributes in ({'label': 'Unmonitored oven'}, {'note': 'Physical breaker'},
+                           {'amps': 30}, {'poles': 2}):
+            reserved = {'slot': 1, 'channel_name': None, **attributes}
+            layout = {1: reserved, 2: {'slot': 2, 'channel_name': None}}
+            seeded = web._seed_layout_from_latest(layout, [
+                {'channel_name': 'New sensor', 'channel_num': 1}], ['New sensor'])
+            self.assertEqual(seeded[1], reserved)
+            normalized, size = web._normalize_panel_layout(seeded, ['New sensor'], 40)
+            self.assertEqual(normalized[1], reserved)
+            self.assertEqual(normalized[2]['channel_name'], 'New sensor')
+            self.assertEqual(size, 40)
+            self.assertEqual(layout[1], reserved)

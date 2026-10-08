@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.9 - Unreleased
+
+- Preserve labeled, noted, rated, or double-pole unmonitored breaker slots during automatic channel placement.
+
 ## 2.3.8 - 2026-10-07
 
 - Restore the compact native menu to side-by-side physical slot rows: 1/2, 3/4, and onward.
