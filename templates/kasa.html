@@ -1,0 +1,94 @@
+<div class="page">
+  <div class="section-head"><h2>Kasa · Lights &amp; Devices</h2><a href="/settings">Register devices in Settings</a></div>
+  <p class="card-meta">SER8 observes device state. Controls require confirmation and fresh identity checks.
+    HS220/HS103 state is not a power measurement. No schedules run automatically.</p>
+  <p id="kasaStatus" role="status" aria-live="polite"></p>
+  <div class="kasa-controls-grid">
+  {% for device in devices %}
+    <section class="card" data-device="{{ device.id }}">
+      <h3>{{ device.label }}</h3><p>{{ device.model or 'Model not queried' }} · {{ device.host }}</p>
+      <p class="kasa-state">{% if device.status == 'ok' %}Last observed {{ 'ON' if device.is_on else 'OFF' }}{% else %}State unknown{% endif %}</p>
+      <p class="card-meta kasa-time">{{ device.queried_at or 'No query recorded' }}</p>
+      <div class="kasa-actions">
+        <button type="button" data-command="on" {% if not device.reported_device_id %}disabled{% endif %}>Turn ON</button>
+        <button type="button" data-command="off" {% if not device.reported_device_id %}disabled{% endif %}>Turn OFF</button>
+      </div>
+      {% if device.model == 'HS220' %}
+      <label>Desired brightness (%) <input class="kasa-brightness" type="number" min="1" max="100" step="1" value="50"></label>
+      <button type="button" data-command="brightness">Apply brightness (may turn light on)</button>
+      {% endif %}
+      <label>Associated monitored circuit
+        <select class="kasa-circuit"><option value="">Unassigned</option>
+          {% for circuit in circuits %}<option value="{{ circuit.channel_name }}" {% if links.get(device.id) and links[device.id].energy_device_gid == active_device_gid and links[device.id].channel_name == circuit.channel_name %}selected{% endif %}>{{ circuit.channel_name }} · ${{ '%.2f'|format(circuit.total_cents / 100) }} circuit / 24h</option>{% endfor %}
+        </select>
+      </label><button type="button" class="kasa-link">Save circuit association</button>
+      <p class="card-meta">Circuit cost includes every load on that circuit, not just this device. Association is user supplied, not inferred.</p>
+    </section>
+  {% else %}<div class="card">No registered Kasa devices. Add a known device in Settings first.</div>{% endfor %}
+  </div>
+  <section class="card" style="margin-top:1rem;"><h3>Costs &amp; Future Scheduling</h3>
+    <p>State history and explicit circuit associations are the foundation for future comparisons.
+      Individual light costs require measured device power or a clearly entered wattage assumption.
+      Dimming percentage does not reliably equal power percentage. Multiple devices sharing a circuit must not each be charged its entire usage.</p>
+    <p>Scheduling and rules are not enabled here. Future rules will need explicit targets, timezone, limits and manual override.</p>
+  </section>
+</div>
+<script>
+(() => {
+  const status = document.getElementById('kasaStatus');
+  const gid = {{ active_device_gid|tojson }};
+  async function post(url, data) {
+    const response = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Request failed');
+    return result;
+  }
+  async function refresh() {
+    try {
+      const response = await fetch('/api/kasa/devices', {cache:'no-store'});
+      if (!response.ok) throw new Error('Status query failed');
+      const data = await response.json();
+      for (const d of data.devices) {
+        const card = [...document.querySelectorAll('[data-device]')].find(c => c.dataset.device === d.id);
+        if (!card) continue;
+        const fresh = d.queried_at && Date.now() - Date.parse(d.queried_at) < 120000;
+        card.querySelector('.kasa-state').textContent = d.status === 'ok' && fresh ? 'Last observed ' + (d.is_on ? 'ON' : 'OFF') : 'State unknown or stale';
+        card.querySelector('.kasa-time').textContent = d.queried_at || 'No query recorded';
+      }
+    } catch (error) { status.textContent = 'Monitor unavailable; displayed observations may be stale.'; }
+  }
+  document.querySelectorAll('[data-device]').forEach(card => {
+    card.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', async () => {
+      const command = button.dataset.command;
+      const brightness = command === 'brightness' ? Number(card.querySelector('.kasa-brightness').value) : null;
+      if (brightness !== null && (!Number.isInteger(brightness) || brightness < 1 || brightness > 100)) {
+        status.textContent = 'Enter brightness from 1 to 100.'; return;
+      }
+      const label = card.querySelector('h3').textContent;
+      const action = command === 'brightness' ? `set brightness to ${brightness}% (may turn ON)` : `turn ${command.toUpperCase()}`;
+      if (!confirm(`${label}: ${action}? This changes the actual device.`)) return;
+      const buttons = card.querySelectorAll('[data-command]'); buttons.forEach(b => b.disabled = true);
+      status.textContent = 'Sending one command and verifying state…';
+      try {
+        const data = command === 'brightness' ? {confirmed:true,brightness} : {confirmed:true,is_on:command === 'on'};
+        const result = await post('/api/kasa/devices/' + card.dataset.device + '/control', data);
+        status.textContent = `Verified ${label}: ${result.is_on ? 'ON' : 'OFF'}` + (result.brightness !== null ? ` · brightness ${result.brightness}%` : '');
+        await refresh();
+      } catch (error) {
+        card.querySelector('.kasa-state').textContent = 'Command outcome unknown — check actual device';
+        status.textContent = error.message;
+      } finally { buttons.forEach(b => b.disabled = false); }
+    }));
+    card.querySelector('.kasa-link').addEventListener('click', async event => {
+      const button = event.currentTarget, channel = card.querySelector('.kasa-circuit').value;
+      button.disabled = true;
+      try {
+        await post('/api/kasa/devices/' + card.dataset.device + '/circuit', {energy_device_gid:channel ? gid : null,channel_name:channel || null});
+        status.textContent = 'Circuit association saved. This does not attribute the circuit’s total cost to this device.';
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+  });
+  refresh(); setInterval(refresh, 30000);
+})();
+</script>

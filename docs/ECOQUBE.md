@@ -1,6 +1,74 @@
 # EcoQube Radon Integration
 
-Status: issue #83; validated storage and a read-only `/radon` history table and seven-day chart. No live EcoQube credentials, device
+## Display units and older history
+
+The dashboard defaults to pCi/L for the latest value, chart axis/tooltips and
+reading table. Conversion uses the preserved normalized Bq/m3 value divided by
+37; source values remain unchanged. Displaying two decimal places does not
+increase sensor accuracy. The targeted radon tests cover the converted display.
+
+Collection saves new timestamped observations continuously. The current cloud
+adapter only retrieves latest device values; older history has not been imported.
+EcoSense's official EcoQube product page confirms app history and data export:
+https://ecosense.io/products/ecoqube . A real exported history file is required
+to verify its timestamp, unit and sensor columns before implementing a backfill
+parser. No historical samples or timestamps should be synthesized. Public API
+documentation routes returned HTTP 403; this does not establish that a history
+API is unavailable, only that an authenticated history contract is unverified.
+
+## Persistent SER8 collector — 2026-10-08
+
+`ecosense_collect.py` and `setup/ecosense-collector.service` implement unattended
+collection. The user service is installed and enabled on SER8, independently of
+the Mac, and `/radon` now displays its actual status. The deployed process was
+verified running. A valid account was subsequently saved through the Radon page;
+live ingestion and dashboard rendering were verified at 09:26 EDT. Two devices
+were returned; one available reading of 23 Bq/m3 was imported with the actual
+source time 2026-10-08T13:22:10.203726+00:00. The unavailable zero-valued device
+was skipped. The first Mac diagnostic authenticated and discovered two
+devices, but saved neither credentials nor readings; a later login was rejected.
+
+The service reads owner-only `ecosense-private.json` beside the database, with
+`email` and `password` fields. No credentials enter Git, command-line arguments,
+or journal messages. Replacing this file is picked up automatically. The service
+polls every minute, reauthenticates on expired authorization, backs off on network
+failure and rejected credentials, and resumes after process or host restart.
+No interactive prompts are issued by the service.
+
+The Radon page now has a one-time connection form when credentials are missing or
+rejected. `/api/ecosense/connect` verifies the supplied EcoSense account before
+atomically saving its owner-only credential file. It imports the first available
+measurements immediately; the persistent service continues polling thereafter.
+Failed authentication preserves any previously saved credentials. Responses and
+the page are marked `no-store`, passwords are never prefilled or returned, and
+the existing loopback/same-origin mutation guards apply. The connection form
+and endpoint were verified on SER8, and 35 targeted tests pass locally.
+
+`ecosense-status.json` records health; `ecosense-device-snapshot.json` privately
+retains only the device fields needed to diagnose timestamp mapping. Inspect logs
+with `journalctl --user -u ecosense-collector`. The process logs counts and error
+classes rather than exception strings that could contain secrets.
+
+The mapper uses only `last_radon_update_time`, accepting explicit offset/UTC ISO
+times and plausible Unix seconds/milliseconds. Actual EcoQube dates omit the UTC
+suffix; these are accepted only when the same response's `last_update_time`
+matches its explicit Unix `last_update_ts` within one second, corroborating UTC.
+The device's `time_zone` is a display preference, not a source-time offset.
+Missing, uncorroborated naive, stale or future times are skipped rather than
+replaced with retrieval time. `radon_level` is
+interpreted as Bq/m3 following the community adapter implementation, and zero
+is skipped as unavailable. The actual timestamp encoding was verified against
+the independent epoch field. Exact retries use the existing idempotent
+radon ingestion function.
+
+Deployment preserves the previous dashboard files in a timestamped radon-service
+backup. `radon-runtime` points at the matching installed Python release; update
+that link during a future release upgrade. Existing energy polling is unchanged.
+
+The following design/probe notes describe the earlier unconnected implementation;
+the persistent deployment status above supersedes their pending items.
+
+Initial status: issue #83; validated storage and a read-only `/radon` history table and seven-day chart. No live EcoQube credentials, device
 model, API payload, or measurement timestamp semantics have been verified.
 Do not configure DNS interception or change pairing as part of installation.
 

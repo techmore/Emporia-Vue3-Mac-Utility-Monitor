@@ -39,6 +39,22 @@ class RadonTests(unittest.TestCase):
         duplicate = client.post('/api/radon/readings', json={'observations': [observation]})
         self.assertEqual(duplicate.get_json()['duplicates'], 1)
 
+    def test_connection_endpoint_requires_local_origin_and_hides_password(self):
+        client = web.app.test_client()
+        credentials = {'email': 'test@example.com', 'password': 'private-password'}
+        with patch('ecosense_collect.connect_account', return_value={
+            'ok': True, 'state': 'collecting', 'devices': 1, 'inserted': 1,
+        }) as connect:
+            rejected = client.post('/api/ecosense/connect', json=credentials,
+                                   headers={'Origin': 'https://untrusted.example'})
+            self.assertEqual(rejected.status_code, 403)
+            connect.assert_not_called()
+            response = client.post('/api/ecosense/connect', json=credentials)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn('private-password', response.get_data(as_text=True))
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            connect.assert_called_once_with('test@example.com', 'private-password')
+
     def test_api_rejects_invalid_batches_without_partial_history(self):
         client = web.app.test_client()
         for invalid in ({**self.row, 'timestamp': 'unknown'},
@@ -143,7 +159,7 @@ class RadonTests(unittest.TestCase):
         self.assertIn(b'No measurements recorded', week.data)
         year = client.get('/radon?days=365')
         self.assertEqual(year.status_code, 200)
-        self.assertIn(b'Latest recorded: 2.5', year.data)
+        self.assertIn(b'Latest recorded: <strong>2.50 pCi/L</strong>', year.data)
         self.assertIn(b'daily averages', year.data)
         for window in (1, 7, 30, 365):
             self.assertEqual(client.get(f'/radon?days={window}').status_code, 200)

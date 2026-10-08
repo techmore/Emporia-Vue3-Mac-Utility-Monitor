@@ -1,5 +1,22 @@
 <section id="solar-offset" class="card" style="margin-bottom:16px">
   <h2>Solar Offset Scenario</h2>
+  <details style="margin:12px 0">
+    <summary>Panel baseline for the 80% peak-power goal · Callsun 450 W two-pack</summary>
+    <p>Use two 450 W panels per pack: <strong>900 W DC nameplate</strong>, with a
+    <strong>$760 per pack planning allowance</strong> ($380 per panel, about $0.84/W).
+    This rounds the Amazon listing's $759.99 offer checked October 8, 2026.
+    <a href="https://www.amazon.com/gp/product/B0GJ5KLM1B" target="_blank" rel="noopener noreferrer">Panel reference</a>.</p>
+    <p>This is the retail panel-cost baseline. Prices may change; taxes, delivery,
+    inverter, batteries, mounting, wiring, permits and installation are additional.
+    No extra bifacial gain is assumed. The advertised cell efficiency is not a
+    multiplier on the 450 W rating.</p>
+    <p>The peak-power goal is to reduce grid demand to 20% of its measured peak.
+    Required offset power = measured peak kW × 0.80. Panel DC nameplate alone
+    does not establish that offset: usable AC output depends on sunlight, losses
+    and inverter capacity. Batteries or shifted loads are needed when the peak
+    occurs outside sufficient solar production. Battery energy also depends on
+    how long the peak lasts. The energy-cost scenario below uses kWh separately.</p>
+  </details>
   <p>Scenario only, not solar sizing, a production forecast or guaranteed savings. Use generation for the same last-24-hour window as the recorded Main consumption below.</p>
   {% if solar_main %}<p>Recorded Main: <strong>{{ '%.2f'|format(solar_main.total_kwh) }} kWh</strong> in the last 24 hours. Current usage rate: {{ '%.2f'|format(solar_rate_cents) }} cents/kWh.</p>
   {% else %}<p>No recorded Main consumption in this window. Missing data is not zero consumption; calculation is unavailable.</p>{% endif %}

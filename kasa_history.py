@@ -42,8 +42,38 @@ def remove_device(identifier: str) -> bool:
     conn = energy._connect()
     try:
         with conn:
+            conn.execute('DELETE FROM kasa_circuit_links WHERE device_id=?', (identifier,))
             conn.execute('DELETE FROM kasa_observations WHERE device_id=?', (identifier,))
             return conn.execute('DELETE FROM kasa_devices WHERE id=?', (identifier,)).rowcount == 1
+    finally:
+        conn.close()
+
+
+def circuit_links() -> dict:
+    conn = energy._connect()
+    try:
+        return {row['device_id']: dict(row) for row in conn.execute('SELECT * FROM kasa_circuit_links')}
+    finally:
+        conn.close()
+
+
+def link_circuit(identifier: str, gid: str | None, channel: str | None) -> None:
+    conn = energy._connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if not conn.execute('SELECT 1 FROM kasa_devices WHERE id=?', (identifier,)).fetchone():
+                raise ValueError('Device not registered')
+            if gid is None and channel is None:
+                conn.execute('DELETE FROM kasa_circuit_links WHERE device_id=?', (identifier,))
+                return
+            if (not isinstance(gid, str) or not isinstance(channel, str) or
+                    channel in energy.META_CHANNELS or not conn.execute(
+                        'SELECT 1 FROM readings WHERE device_gid=? AND channel_name=? LIMIT 1',
+                        (gid, channel)).fetchone()):
+                raise ValueError('Select a recorded circuit; mains cannot be assigned')
+            conn.execute('INSERT OR REPLACE INTO kasa_circuit_links VALUES (?,?,?)',
+                         (identifier, gid, channel))
     finally:
         conn.close()
 

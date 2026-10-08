@@ -52,6 +52,58 @@ async def probe(host: str, username: str | None = None,
     return await asyncio.wait_for(read(), timeout=10)
 
 
+async def control(host: str, expected_id: str, *, is_on: bool | None = None,
+                  brightness: int | None = None) -> dict:
+    """Explicit command to a pinned device, with fresh identity and outcome checks."""
+    host = validate_host(host)
+    if not expected_id or (is_on is None) == (brightness is None):
+        raise ValueError('Select one explicit action on a verified device')
+    if is_on is not None and type(is_on) is not bool:
+        raise ValueError('State must be true or false')
+    if brightness is not None and (type(brightness) is not int or not 1 <= brightness <= 100):
+        raise ValueError('Brightness must be an integer from 1 to 100; use OFF separately')
+    from kasa import Discover, Module
+
+    async def run():
+        device = await Discover.discover_single(host, discovery_timeout=3, timeout=3,
+                                               username=os.environ.get('KASA_USERNAME'),
+                                               password=os.environ.get('KASA_PASSWORD'))
+        if device is None:
+            raise ConnectionError('No device response')
+        try:
+            await device.update()
+            if device.device_id != expected_id:
+                raise ValueError('Device identity changed; no command sent')
+            if device.model not in ('HS220', 'HS103'):
+                raise ValueError('Controls are not enabled for this model')
+            light = device.modules.get(Module.Light)
+            if brightness is not None:
+                if device.model != 'HS220' or light is None:
+                    raise ValueError('Brightness is unavailable; no command sent')
+                await light.set_brightness(brightness)
+            elif is_on:
+                await device.turn_on()
+            else:
+                await device.turn_off()
+            await device.update()
+            actual_brightness = light.brightness if light is not None else None
+            if (is_on is not None and device.is_on != is_on) or (
+                brightness is not None and (actual_brightness != brightness or not device.is_on)
+            ):
+                raise RuntimeError('Command outcome not verified')
+            return {'host': host, 'device_id': device.device_id, 'model': device.model,
+                    'alias': device.alias, 'is_on': device.is_on,
+                    'brightness': actual_brightness, 'verified': True,
+                    'queried_at': datetime.now(timezone.utc).isoformat()}
+        finally:
+            try:
+                await asyncio.wait_for(device.disconnect(), timeout=2)
+            except Exception as exc:
+                logging.warning('Kasa disconnect failed: %s', type(exc).__name__)
+
+    return await asyncio.wait_for(run(), timeout=15)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', required=True, help='One private IPv4 device address')
