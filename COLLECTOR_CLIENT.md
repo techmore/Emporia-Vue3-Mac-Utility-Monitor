@@ -66,7 +66,7 @@ has been verified.
 
 ## History Synchronization
 
-Development branch `codex/collector-history-sync` implements a version-2 readings
+Released collector/client code implements a version-2 readings
 change journal with a persistent source identity. Inserts, updates, and deletes
 are recorded in the same SQLite transaction as the original mutation; pre-existing
 history is seeded once. `/api/sync/readings` returns at most 1,000 changes per page
@@ -74,7 +74,8 @@ and requires an `ENERGY_SYNC_TOKEN` of at least 32 characters, passed as a Beare
 header. It is disabled when the token is absent. Keep access behind the loopback
 SSH tunnel. Tokens must not be committed or put in URLs.
 
-This is not deployed yet. `sync_history.py` downloads pages to isolated cache
+The code is included in the release, but the actual SER8 connection and automatic
+downloads have not been configured or verified. `sync_history.py` downloads pages to isolated cache
 tables and advances the cursor atomically with each page. It refuses collector
 identity changes and HTTP redirects, bounds response memory, and preserves the
 saved cursor on interrupted downloads. The cache file is owner-only. Use a
@@ -117,8 +118,13 @@ growth relative to retained history; SQLite may retain allocated pages for reuse
 The client detects a checkpoint change, downloads to a separate staging database,
 and publishes it through SQLite's backup API only after catching up. Failed
 rebuilds preserve the old cache. Different collector identities are still refused.
-This retention behavior and automatic checkpoint recovery are integration-tested
-but have not been deployed to the running installation.
+This retention behavior and automatic checkpoint recovery are integration-tested.
+Their operation across the actual SER8/Mac connection remains unverified.
+
+Energy history synchronization does not yet replicate radon observations. The
+Radon dashboard and local ingestion API are separate capabilities; do not assume
+EcoQube data will appear in the Mac's offline cache until radon replication is
+implemented and verified.
 
 Remaining deployment work is to configure and verify the SER8 services, the
 private connection, and automatic downloads on the actual Mac installation.
