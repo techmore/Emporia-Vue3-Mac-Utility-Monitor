@@ -30,7 +30,8 @@ def register_extensions(app, render, common) -> None:
                          if sensor['source'] == source and sensor['sensor_id'] == sensor_id), None)
         rows = radon.get_history(source, sensor_id) if selected else []
         return render('{% include "radon.html" %}', active_page='radon',
-                      sensors=sensors, selected=selected, rows=rows, **common())
+                      sensors=sensors, selected=selected, rows=rows,
+                      chart=radon.hourly_chart(rows), **common())
 
     @blueprint.get('/api/climate/replay')
     def replay():

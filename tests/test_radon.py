@@ -85,3 +85,19 @@ class RadonTests(unittest.TestCase):
         self.assertNotIn(b'<script>bad()</script>', response.data)
         self.assertIn(b'&lt;script&gt;', response.data)
         self.assertIn(b'Older history is not a current reading', response.data)
+
+    def test_chart_averages_only_recorded_hours_and_preserves_zero(self):
+        hour = self.now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
+        rows = [{'timestamp': hour.isoformat(), 'radon_bq_m3': 37},
+                {'timestamp': (hour + timedelta(minutes=5)).isoformat(), 'radon_bq_m3': 111},
+                {'timestamp': (hour + timedelta(hours=2)).isoformat(), 'radon_bq_m3': 0},
+                {'timestamp': (hour - timedelta(days=8)).isoformat(), 'radon_bq_m3': 999}]
+        chart = radon.hourly_chart(rows, self.now)
+        self.assertEqual(len(chart['points']), 2)
+        self.assertEqual(chart['points'][0]['mean'], 74)
+        self.assertEqual(chart['points'][0]['samples'], 2)
+        self.assertEqual(chart['points'][1]['mean'], 0)
+        self.assertEqual(chart['points'][1]['y'], 180)
+        self.assertEqual(chart['scale'], 74)
+        self.assertLess(chart['points'][0]['x'], chart['points'][1]['x'])
+        self.assertEqual(radon.hourly_chart([], self.now)['points'], [])

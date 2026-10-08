@@ -95,3 +95,34 @@ def get_sensors() -> list[dict]:
             FROM radon_readings GROUP BY source,sensor_id ORDER BY source,sensor_id''')]
     finally:
         conn.close()
+
+
+def hourly_chart(rows: list[dict], now: datetime | None = None) -> dict:
+    """Plot seven days of sample means; no interpolation or duration weighting.
+
+    Input is already validated, sensor-scoped storage output. Blank hours produce
+    no point. An hour containing one sample is not a full hour of coverage.
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError('now requires a timezone')
+    end = now.astimezone(timezone.utc)
+    start = end - timedelta(days=7)
+    buckets = {}
+    for row in rows:
+        stamp = datetime.fromisoformat(row['timestamp'])
+        if not start <= stamp <= end:
+            continue
+        hour = stamp.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        buckets.setdefault(hour, []).append(row['radon_bq_m3'])
+    points = []
+    for hour, values in sorted(buckets.items()):
+        mean = math.fsum(value / len(values) for value in values)
+        center = min(end, max(start, hour + timedelta(minutes=30)))
+        points.append({'timestamp': hour.isoformat(), 'mean': mean, 'samples': len(values),
+                       'x': 50 + 900 * (center-start).total_seconds() / (7*86400)})
+    peak = max((point['mean'] for point in points), default=0)
+    scale = max(peak, 1)
+    for point in points:
+        point['y'] = 180 - 150 * point['mean'] / scale
+    return {'points': points, 'scale': scale, 'start': start.isoformat(), 'end': end.isoformat()}

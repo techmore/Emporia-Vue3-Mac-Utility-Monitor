@@ -1,6 +1,6 @@
 # EcoQube Radon Integration
 
-Status: issue #83; validated storage and a read-only `/radon` history table. No live EcoQube credentials, device
+Status: issue #83; validated storage and a read-only `/radon` history table and seven-day chart. No live EcoQube credentials, device
 model, API payload, or measurement timestamp semantics have been verified.
 Do not configure DNS interception or change pairing as part of installation.
 
@@ -23,7 +23,7 @@ Next steps:
    against the vendor app before implementing its adapter.
 3. Add secure configuration, bounded requests, authentication refresh, and
    collector health reporting on SER8.
-4. Add radon charts and extend the Mac download protocol to include
+4. Extend the Mac download protocol to include
    radon. The 2.3.4 energy synchronization protocol does not replicate radon.
 5. Verify live readings and disconnect/reconnect behavior before closing #83.
 
@@ -53,3 +53,7 @@ timestamp before enabling recorded history collection.
 For a one-time interactive login, run `venv/bin/python3 ecosense.py --login`.
 The password prompt is hidden and neither credential is saved by the probe.
 Do not run this with shell tracing or paste passwords into chat.
+
+The chart uses arithmetic hourly sample means in Bq/m3, not duration-weighted
+exposure. Hours without samples have no dots; points are not connected. Samples
+remain available in the original-unit table. The chart does not infer safety.

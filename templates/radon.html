@@ -19,6 +19,19 @@
   <section class="card"><h2>Last 7 days · {{ selected.sensor_id }}</h2>
   {% if rows %}
   <p>Latest recorded: {{ rows[-1].measured_value }} {{ rows[-1].measured_unit }} at {{ rows[-1].timestamp }}. This is not a live-status indicator.</p>
+  <svg viewBox="0 0 1000 220" role="img" aria-labelledby="radon-chart-title radon-chart-desc" style="width:100%;display:block">
+    <title id="radon-chart-title">Recorded radon hourly sample means, Bq/m³</title>
+    <desc id="radon-chart-desc">Each dot is an arithmetic mean of available samples in one UTC hour. Missing hours are blank, with no connecting lines.</desc>
+    <path d="M50 30V180H950" fill="none" stroke="var(--border)"/>
+    <text x="50" y="20" fill="var(--text-light)">{{ chart.scale|round(1) }} Bq/m³</text>
+    <text x="25" y="185" fill="var(--text-light)">0</text>
+    {% for point in chart.points %}
+    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3" fill="var(--accent)"><title>{{ point.timestamp }}: {{ point.mean|round(2) }} Bq/m³, {{ point.samples }} samples</title></circle>
+    {% endfor %}
+    <text x="50" y="210" fill="var(--text-light)">{{ chart.start[:10] }} (UTC)</text>
+    <text x="950" y="210" text-anchor="end" fill="var(--text-light)">{{ chart.end[:10] }} (UTC)</text>
+  </svg>
+  <p class="house-caption">Dots show hourly averages of recorded samples, not continuous coverage or duration-weighted exposure. Missing hours stay blank. Axis scales to this sensor's observations.</p>
   <p>Showing the most recent {{ [rows|length, 100]|min }} samples. Original units are preserved; normalized values use Bq/m³.</p>
   <div style="overflow-x:auto"><table><thead><tr><th scope="col">Measured at (UTC)</th><th scope="col">Original reading</th><th scope="col">Bq/m³</th><th scope="col">Received at (UTC)</th></tr></thead><tbody>
   {% for row in rows[-100:]|reverse %}<tr><td>{{ row.timestamp }}</td><td>{{ row.measured_value }} {{ row.measured_unit }}</td><td>{{ row.radon_bq_m3 }}</td><td>{{ row.received_at }}</td></tr>{% endfor %}
