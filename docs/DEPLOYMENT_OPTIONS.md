@@ -42,6 +42,9 @@ The output directory must not already exist. This generates six system service
 units and a template-checksum manifest; it does not install or start anything.
 It rejects root service users, unsafe paths and unresolved placeholders.
 The existing optional user-manager templates remain available separately.
+To preserve the verified SER8 Kasa cadence, add `--kasa-interval 10`; otherwise
+the default is 60 seconds. The selected interval is recorded in deployment.json.
+This option is supported identically on native Linux and inside Incus/LXD.
 
 Create `/etc/energy-monitor/collector.env` as root, mode 0600, outside Git:
 
@@ -108,3 +111,6 @@ for the narrow, host-specific AppArmor signal exception verified on SER8.
 
 All deployment scripts, templates and documentation are included by release.sh.
 Runtime databases, credentials and settings intentionally are not Git-managed.
+Ignore rules also cover alternate SQLite filenames, collector.env and EcoSense
+credentials/status/snapshots. Git ignore rules do not remove already tracked
+files or sanitize diagnostics; review staged files before every commit.

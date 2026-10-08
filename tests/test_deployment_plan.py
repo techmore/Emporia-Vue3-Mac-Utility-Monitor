@@ -26,6 +26,7 @@ class DeploymentPlanTests(unittest.TestCase):
                 self.assertIn("UMask=0077", text)
             manifest = json.loads((output / "deployment.json").read_text())
             self.assertEqual(manifest["automatically_enabled_services"], [])
+            self.assertEqual(manifest["kasa_interval_seconds"], 60)
             self.assertEqual(output.stat().st_mode & 0o777, 0o700)
             with self.assertRaises(FileExistsError):
                 plan.prepare(output, "energy", "/opt/energy", "/var/lib/energy",
@@ -39,4 +40,23 @@ class DeploymentPlanTests(unittest.TestCase):
                                ("energy", "/opt/../etc"), ("energy", "/opt/%u")]:
                 with self.subTest(user=user, code=code), self.assertRaises(ValueError):
                     plan.prepare(output, user, code, "/var/lib/energy", "/etc/energy/env")
+                self.assertFalse(output.exists())
+
+    def test_deployed_kasa_interval_is_reproducible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "plan"
+            plan.prepare(output, "energy", "/opt/energy", "/var/lib/energy",
+                         "/etc/energy/collector.env", kasa_interval=10)
+            self.assertIn("kasa_collect.py --interval 10",
+                          (output / "kasa-collector.service").read_text())
+            manifest = json.loads((output / "deployment.json").read_text())
+            self.assertEqual(manifest["kasa_interval_seconds"], 10)
+
+    def test_invalid_intervals_never_create_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "plan"
+            for interval in (0, 9, 86401, True, "10", 10.5):
+                with self.subTest(interval=interval), self.assertRaises(ValueError):
+                    plan.prepare(output, "energy", "/opt/energy", "/var/lib/energy",
+                                 "/etc/energy/collector.env", kasa_interval=interval)
                 self.assertFalse(output.exists())

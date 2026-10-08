@@ -90,3 +90,22 @@ Before cutover, take a new final snapshot after pausing only the original writer
 preserve sync identity and journal state, remap the private environment's DB_PATH,
 and explicitly enable the selected guest collectors. The laptop still targets
 the original host dashboard; switching its tunnel must be deliberate and verified.
+
+## Source preservation and deployment profiles
+
+The live native dashboard's additional menu usage/cost fields and stored radon
+indicator are preserved in release 2.3.33, merged as Git commit 036a105 (PR #126).
+The staged 2.3.33 energy.py, web.py, radon.py and VERSION hashes were verified
+against the pushed source. Its 231 tests passed in Incus (six macOS-only skips).
+The active guest dashboard still runs 2.3.31; staged source is not a cutover.
+
+The native host currently uses user-manager units: dashboard and optional
+collectors use 2.3.30, while Emporia polling uses 2.3.26. Existing services remain
+untouched. A fresh dedicated-user system deployment can render the same Kasa
+10-second cadence using prepare_linux_deployment.py with --kasa-interval 10.
+Do not copy the native host's absolute paths into a new system or guest.
+
+Both deployment options share the committed code, locked dependencies and six
+service templates. Matter controller installation/version and commissioned
+fabric remain separate private prerequisites. No credentials, database backups
+or sensor room assignments belong in Git.

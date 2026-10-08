@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.34 - 2026-10-08
+
+- Make the verified Kasa collection cadence an explicit, validated deployment
+  option shared by native Linux and Incus/LXD, recorded in the service plan.
+- Exclude EcoSense credentials/snapshots, private collector environments and
+  alternate SQLite filenames from Git. Test private/public file boundaries and
+  document the actual deployed source versions without activating new collectors.
+
 ## 2.3.33 - 2026-10-08
 
 - Preserve live native API additions for per-circuit today/week/month recorded
