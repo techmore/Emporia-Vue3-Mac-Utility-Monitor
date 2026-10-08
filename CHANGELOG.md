@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.15 - 2026-10-07
+
+- Replace only energy cache tables during checkpoint recovery, preserving unrelated sensor history. Verify atomic rollback on replacement failure and radon preservation on successful reset. This does not enable radon replication or live collection.
+
 ## 2.3.14 - 2026-10-07
 
 - Keep Trends charts and operational sections inside the page wrapper by removing premature closing tags. Add a rendered-template containment regression test.
