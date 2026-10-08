@@ -2,6 +2,34 @@
 
 ## Verification Update — 2026-10-07
 
+### Current Installed Release: 2.3.26
+
+The installed Homebrew release is 2.3.26, not the earlier milestones listed
+below. PR #116 and all six checks passed before publication and deployment.
+The installed suite passed 170 tests; offline wheelhouse installation and
+dependency compatibility checks passed. A strict scan of the final locked
+dependencies reported zero known advisory matches at verification time. This
+is not a penetration test or a guarantee against future vulnerabilities.
+
+Actual Emporia readings advanced across two subsequent polling intervals after
+startup. Exactly one native app and app-owned poller were observed; settings
+checksum remained unchanged and the pre-upgrade database backup passed integrity
+checks. PR #114's duplicate-poller protection was verified in installed 2.3.25:
+a second poll command failed while the active poller held database ownership.
+Older poller versions and separate-host collectors do not share that safeguard.
+
+Radon storage, history display and replication code exist, but the production
+local/cached radon tables are empty. Kasa read-only registration/collection code
+exists, but no devices are registered. Aqara is not configured in runtime settings.
+No actual EcoQube, Kasa or Aqara connection is claimed by fixture tests.
+Linux collector unit templates passed real systemd syntax validation in CI;
+they have not been installed or reboot-tested on the SER8. The current keychain
+has an Apple Development identity, not Developer ID Application distribution
+signing. Signing/notarization and clean-machine distribution remain unverified.
+
+The earlier milestone notes below are historical verification records, not
+current pending-deployment claims.
+
 The findings below describe the historical 2.0.1 baseline, not the current release.
 Subsequent verified changes include:
 
