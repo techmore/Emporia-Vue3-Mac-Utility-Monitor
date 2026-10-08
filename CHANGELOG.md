@@ -2,6 +2,9 @@
 
 ## 2.3.5 - 2026-10-07
 
+- Restore the compact olive/stone menu: single-line service banner, two-line cost cards, horizontal circuit rows, smaller padding, and ascending slot order.
+- Fix decoding of the native 24-hour cost field.
+
 - Preserve Flask context for live event streams so cold-cache rendering and subsequent dashboard rebuilds do not fail.
 - Add a stream-first regression test.
 
