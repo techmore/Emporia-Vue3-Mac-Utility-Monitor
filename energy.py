@@ -1206,13 +1206,23 @@ def run_continuous():
                 logger.exception(err)
                 write_poller_status(False, error=err, consecutive_errors=consecutive_errors)
 
-        # ── Normal poll (skip if no client yet) ───────────────────────────
+        # Retry startup/discovery failures without discarding saved tokens.
         if vue is None or not device_gids:
-            write_poller_status(False,
-                                error="Waiting for credentials — use /log reconnect panel.",
-                                consecutive_errors=consecutive_errors)
-            time.sleep(POLL_INTERVAL)
-            continue
+            time.sleep(max(30, POLL_INTERVAL))
+            try:
+                candidate = login_vue()
+                discovered, _ = get_devices_with_channels(candidate)
+                if not discovered:
+                    raise RuntimeError("No Emporia devices discovered")
+                vue, device_gids = candidate, discovered
+                consecutive_errors = 0
+                logger.info("Startup recovery OK — %s device(s)", len(device_gids))
+            except Exception as e:
+                consecutive_errors += 1
+                logger.warning("Startup recovery failed: %s: %s", type(e).__name__, e)
+                write_poller_status(False, error=f"Connection retry failed: {type(e).__name__}: {e}",
+                                    consecutive_errors=consecutive_errors)
+                continue
 
         try:
             started = time.monotonic()

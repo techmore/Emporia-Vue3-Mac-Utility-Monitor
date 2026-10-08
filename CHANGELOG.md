@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.11 - Unreleased
+
+- Retry failed startup login and device discovery at a bounded interval without deleting saved tokens or falsely reporting missing credentials.
+
 ## 2.3.10 - 2026-10-07
 
 - Preserve the physical odd/even side-by-side web panel layout at narrow window widths.
