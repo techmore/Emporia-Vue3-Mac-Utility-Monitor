@@ -2651,8 +2651,6 @@ TRENDS_HTML = """
   </div>
   {% endif %}
 
-    </div>
-
   <div class="grid-2">
     <div class="chart-box">
       <h3>Daily Usage — 14 Days</h3>
@@ -2662,8 +2660,6 @@ TRENDS_HTML = """
       <h3>Hourly Pattern — 7 Days</h3>
       <canvas id="hourlyChart" height="200"></canvas>
     </div>
-  </div>
-
   </div>
 
   <div id="month-comparison" class="section">
