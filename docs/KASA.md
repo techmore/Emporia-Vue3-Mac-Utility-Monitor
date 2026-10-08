@@ -83,3 +83,29 @@ rather than silently accepted. Remove and re-register only after verifying the
 physical replacement; removal deletes that device's local observation history.
 Registered monitoring is local to this database and is not yet replicated to
 remote clients. It does not provide power measurements or switch controls.
+
+## Optional Linux Startup
+
+`setup/kasa-collector.service` is an opt-in systemd template, not an installed
+service. Use it only after confirming the collector actually runs Linux with
+systemd. Replace all placeholders with the verified non-root service user,
+absolute project directory, private data directory and environment-file path.
+Use paths without spaces for this template. The project must have an executable
+`venv/bin/python3` and installed locked requirements. The service user needs
+read access to the project and write access to the data directory.
+
+Keep the environment file outside the repository, owned by root with mode 0600.
+Set `DB_PATH` to the same absolute database path used by the dashboard; add
+`KASA_USERNAME` and `KASA_PASSWORD` only when required. Never put credentials
+in the unit or its command arguments. The system manager reads the private
+file before starting the unprivileged process.
+
+Before enabling startup, run the collector's `--once` command with the same
+database and verify a real device against its physical/vendor-app state.
+Install the rendered unit as `/etc/systemd/system/energy-monitor-kasa.service`,
+then run `sudo systemd-analyze verify` against that file. After successful
+verification, use `sudo systemctl daemon-reload` and
+`sudo systemctl enable --now energy-monitor-kasa.service`. Inspect its status
+and journal, and confirm new query timestamps after restarting the host.
+No service is enabled automatically by registration or the macOS app.
+Actual SER8 installation and reboot persistence remain unverified.

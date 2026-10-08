@@ -1,0 +1,25 @@
+[Unit]
+Description=Energy Monitor read-only Kasa collector
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__COLLECTOR_USER__
+WorkingDirectory=__DATA_ROOT__
+EnvironmentFile=__PRIVATE_ENV_FILE__
+ExecStart=__PROJECT_ROOT__/venv/bin/python3 -u __PROJECT_ROOT__/kasa_collect.py --interval 60
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__DATA_ROOT__
+
+[Install]
+WantedBy=multi-user.target
