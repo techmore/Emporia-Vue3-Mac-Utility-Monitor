@@ -30,9 +30,19 @@ The Mac was reopened in persisted remote-client mode, with a private separate
 history cache and automatic downloads using a Keychain token. Its downloader
 started and completed; no local Flask or poller process remained.
 
-This is deployment and first-download evidence, not reboot/sleep verification.
-Collector reboot, Mac sleep and reconnect/offline user-interface checks remain
-required. The copied snapshot retains its collector identity: never restart the
+Controlled disconnection was verified by unloading only the tunnel LaunchAgent.
+The native view labeled cached data not live, withheld circuit watts and showed
+cached Heat Pump history (1,164 readings, with missing periods kept as gaps).
+SER8 continued recording while the Mac connection was unavailable. Restoring
+the tunnel restored live readings; the automatic downloader subsequently caught
+up with matching cursor/high-water mark and cleared its temporary failure label.
+Reports, Trends, Settings and Radon rendered through the actual tunnel without
+horizontal overflow at the inspected browser viewport. Radon correctly showed
+no readings, not zero concentration.
+
+This is deployment and reconnect evidence, not reboot/sleep verification.
+Collector reboot and Mac sleep checks remain required.
+The copied snapshot retains its collector identity: never restart the
 old Mac poller while SER8 is collecting, and never merge divergent copies.
 For rollback, stop SER8 polling first, then explicitly restore local Mac mode.
 The older sections below describe mechanisms and original verification gates;

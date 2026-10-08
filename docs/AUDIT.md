@@ -17,7 +17,12 @@ synchronized, but contains no actual EcoQube observations. User-service units
 have owner-only configuration, restrictive umask and restart backoff, but not
 the system templates' stronger filesystem namespace isolation.
 
-Reboot persistence, Mac sleep, disconnect/reconnect and rendered offline views
+Controlled tunnel disconnect/reconnect passed: native cached summaries were
+explicitly not live, live watts were withheld, and cached Heat Pump history
+rendered with gap labeling. Server collection continued during disconnection;
+restored automatic downloads caught up and cleared the failure label. Reports,
+Trends, Settings and Radon rendered through the deployed connection without
+horizontal overflow at the inspected viewport. Reboot persistence and Mac sleep
 are not yet verified. Hardware integrations and distribution-signing gaps below
 remain open. See COLLECTOR_CLIENT.md for deployment and rollback constraints.
 The 2026-10-07 verification update below describes the pre-cutover topology.
