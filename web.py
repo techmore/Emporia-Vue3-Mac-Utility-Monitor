@@ -641,6 +641,8 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 
 /* ── Panel edit page ── */
+.panel-editor-scroll { max-width: 100%; overflow-x: auto; }
+.panel-editor-scroll > * { min-width: 620px; }
 .panel-edit-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
   margin-top: 0.5rem;
@@ -4398,6 +4400,7 @@ PANEL_EDIT_HTML = """
     <span id="saveMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
   </div>
 
+  <div class="panel-editor-scroll" role="region" aria-label="Breaker configuration fields" tabindex="0">
   <!-- column headers -->
   <div style="display:grid; grid-template-columns:28px 1fr 110px 1fr 52px 56px; gap:5px;
               font-size:0.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
@@ -4428,6 +4431,7 @@ PANEL_EDIT_HTML = """
     {% endfor %}
   </div>
 
+  </div>
   <!-- Safety zone legend -->
   <div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:1.5rem; padding:0.75rem 1rem;
               background:var(--surface2); border-radius:10px; font-size:0.75rem; color:var(--text-light);">
