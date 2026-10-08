@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.13 - Unreleased
+## 2.3.13 - 2026-10-07
 
 - Add a loopback-only validated radon observation API for future verified adapters, preserving original units and measurement timestamps with atomic batch rejection and idempotent retries. EcoSense authentication and timestamp semantics remain unverified; no automatic collection is claimed.
 
