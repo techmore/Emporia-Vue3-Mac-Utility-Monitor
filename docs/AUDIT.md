@@ -1,5 +1,34 @@
 # Code and UI audit — 2026-10-04
 
+## Verification Update — 2026-10-07
+
+The findings below describe the historical 2.0.1 baseline, not the current release.
+Subsequent verified changes include:
+
+- Installed 2.3.10: physical odd/even panel columns remain side by side at narrow
+  widths. The production right-column reversal setting was disabled at the user's
+  request. Dashboard and Circuits showed 1/2, 3/4, 5/6; the native API returned
+  ascending slot order. Unmonitored breakers are distinct from empty slots.
+- Installed 2.3.10: Logs renders 48-hour and seven-day capture-quality strips.
+  Collector health reports are persisted separately. Missing samples are not
+  represented as proven downtime; imported history does not fabricate health events.
+- Released 2.3.11: startup login/discovery retry regression tests cover timeouts,
+  empty discovery, repeated failures, and token preservation. Installation and
+  production recovery verification remain pending; release publication alone is
+  not evidence that the running collector uses this fix.
+- Proposed 2.3.12 (PR #95): shared Settings workspace navigation preserves direct
+  URLs. Browser checks covered Settings, Circuits, Panel Editor, Import, Aqara and
+  Logs at 390px. Panel Editor's wide fields scroll within a focusable region rather
+  than overflowing the document. The full suite passed 110 tests before final
+  release-note and assertion-only changes; deployment is pending.
+
+SER8 cutover, actual EcoQube/Aqara/Mitsubishi/Kasa telemetry and control, reboot
+recovery, comprehensive VoiceOver testing, signing/notarization, and a complete
+dependency/security assessment remain unverified. These improvements do not close
+the entire application audit.
+
+## Historical Baseline
+
 Scope: Python data/poller/server code, native menu app, build/install/release scripts,
 CI, and the running Dashboard and Settings flows. This is a local source and UI
 review, not a penetration test or electrical assessment. Baseline release: 2.0.1.
