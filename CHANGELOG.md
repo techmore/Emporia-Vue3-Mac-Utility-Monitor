@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.11 - Unreleased
+## 2.3.11 - 2026-10-07
 
 - Retry failed startup login and device discovery at a bounded interval without deleting saved tokens or falsely reporting missing credentials.
 
