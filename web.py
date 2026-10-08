@@ -20,12 +20,14 @@ from flask import (
     redirect,
     render_template_string,
     request,
+    send_file,
     stream_with_context,
 )
 from jinja2 import select_autoescape
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import energy
+import panel_photos
 from extensions import HOUSE_CSS, register_extensions
 from panel_model import breaker_load
 
@@ -45,13 +47,15 @@ _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_
 @app.before_request
 def validate_local_request():
     """Keep the local service local, and reject cross-origin mutation requests."""
+    if request.path == '/api/panel-photos' and request.method == 'POST':
+        request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
     if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
         return jsonify({"error": "Local host required"}), 403
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         origin = request.headers.get("Origin")
         if (origin and origin.rstrip("/") != request.host_url.rstrip("/")) or request.headers.get("Sec-Fetch-Site") == "cross-site":
             return jsonify({"error": "Same-origin request required"}), 403
-        if request.path != "/api/import-csv":
+        if request.path not in {"/api/import-csv", "/api/panel-photos"}:
             if not request.is_json:
                 return jsonify({"error": "application/json required"}), 415
             data = request.get_json(silent=True)
@@ -996,7 +1000,7 @@ def _fill_gaps(rows: list[dict], key: str, hourly: bool = False) -> list[dict]:
 
 WORKSPACE_PAGES = {
     '/circuits': 'Circuits', '/panel': 'Panel Editor', '/import': 'Import',
-    '/aqara': 'Aqara Sensors', '/log': 'Logs',
+    '/aqara': 'Aqara Sensors', '/log': 'Logs', '/panel/photos': 'Panel Photos',
 }
 
 WORKSPACE_NAV_HTML = """
@@ -4381,6 +4385,7 @@ PANEL_EDIT_HTML = """
     estimated rating comparisons on configured breaker cards.
   </p>
 
+  <p><a href="/panel/photos">Panel reference photos</a></p>
   <div style="display:flex; gap:12px; margin-bottom:1rem; flex-wrap:wrap; align-items:center;">
     <label style="font-size:0.82rem; color:var(--text-light);">
       Panel size:
@@ -5577,6 +5582,42 @@ def handle_large_upload(_exc):
 
 BASE_CSS += HOUSE_CSS
 register_extensions(app, _render, _common)
+
+
+@app.get('/panel/photos')
+def panel_photo_gallery():
+    return _render('{% include "panel_photos.html" %}', photos=panel_photos.list_photos(),
+                   active_page='settings', **_common())
+
+
+@app.post('/api/panel-photos')
+def upload_panel_photo():
+    if not request.mimetype == 'multipart/form-data':
+        return jsonify({'error': 'multipart/form-data required'}), 415
+    upload = request.files.get('photo')
+    if upload is None:
+        return jsonify({'error': 'Select a JPEG or PNG photo'}), 400
+    try:
+        return jsonify({'photo': panel_photos.save_photo(upload.stream)}), 201
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@app.route('/api/panel-photos/<name>', methods=['GET', 'DELETE'])
+def panel_photo_asset(name):
+    try:
+        path = panel_photos.photo_path(name)
+    except ValueError:
+        return jsonify({'error': 'Photo not found'}), 404
+    if not path.is_file():
+        return jsonify({'error': 'Photo not found'}), 404
+    if request.method == 'DELETE':
+        path.unlink(missing_ok=True)
+        return jsonify({'ok': True})
+    response = send_file(path, mimetype='image/jpeg', conditional=False, etag=False)
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 if __name__ == "__main__":

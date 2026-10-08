@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.3.16-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.3.17-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -353,3 +353,14 @@ Home Assistant collector and normalized JSON import are available. See
 ## Collector Client
 
 See [COLLECTOR_CLIENT.md](COLLECTOR_CLIENT.md) for secure tunnel connections, persistent Mac client configuration, and history migration gates. Offline synchronization and SER8 deployment are not yet implemented.
+
+### Panel reference photos
+
+Open Settings → Panel Photos (also linked from Panel Editor). Upload up to six
+JPEG/PNG images, 10 MiB and 24 megapixels each. Images are oriented, resized to
+2400 pixels and re-encoded without metadata; original files are not retained.
+Files are stored in `panel-photos/` beside this installation's database, not in
+Git or release archives. Remove Photo asks for confirmation. HEIC is not
+supported; export phone photos as JPEG first. Photos are local-only and are not
+replicated by collector history sync. Treat them as private electrical-layout
+reference material, not verified breaker assignments.
