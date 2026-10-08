@@ -17,8 +17,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.dolbec.energymonitor
         PRODUCT_NAME: Energy Monitor
-        MARKETING_VERSION: "2.3.24"
-        CURRENT_PROJECT_VERSION: "254"
+        MARKETING_VERSION: "2.3.25"
+        CURRENT_PROJECT_VERSION: "255"
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "13.0"
         INFOPLIST_FILE: Resources/Info.plist

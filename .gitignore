@@ -52,3 +52,6 @@ billing_history.json
 reports/
 panel-photos/
 .autostart_configured
+
+# Stable runtime process ownership lock (never remove while polling).
+*.poller.lock
