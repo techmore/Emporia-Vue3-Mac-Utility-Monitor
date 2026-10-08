@@ -10,19 +10,23 @@ class StopLoop(BaseException):
 
 class PollerRecoveryTests(unittest.TestCase):
     def test_startup_failures_recover_without_token_deletion(self):
-        for failure in ('login', 'discovery', 'empty'):
+        for failure in ('login', 'discovery', 'empty', 'repeated'):
             with self.subTest(failure=failure):
                 client = object()
                 logins = [TimeoutError('network'), client] if failure == 'login' else [client, client]
-                discoveries = [( ['device'], {})] if failure == 'login' else [
+                if failure == 'repeated':
+                    logins = [TimeoutError('network'), TimeoutError('network'), client]
+                discoveries = [(['device'], {})] if failure in ('login', 'repeated') else [
                     TimeoutError('discovery') if failure == 'discovery' else ([], {}),
                     (['device'], {}),
                 ]
                 with patch.object(energy, 'login_vue', side_effect=logins), \
                      patch.object(energy, 'get_devices_with_channels', side_effect=discoveries), \
-                     patch.object(energy.os.path, 'exists', return_value=False), \
+                     patch.object(energy.os.path, 'exists', side_effect=lambda p: p == 'keys.json'), \
                      patch.object(energy.os, 'remove') as remove, \
-                     patch.object(energy.time, 'sleep', side_effect=[None, StopLoop]) as sleep, \
+                     patch.object(energy.time, 'sleep',
+                                  side_effect=([None, None, StopLoop] if failure == 'repeated'
+                                               else [None, StopLoop])) as sleep, \
                      patch.object(energy, 'poll_and_store') as poll, \
                      patch.object(energy, 'compact_reading_journal', return_value=False), \
                      patch.object(energy, 'write_poller_status') as status:
