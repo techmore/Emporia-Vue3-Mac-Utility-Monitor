@@ -2,6 +2,8 @@
 
 ## 2.3.8 - 2026-10-07
 
+- Restore the compact native menu to side-by-side physical slot rows: 1/2, 3/4, and onward.
+
 - Show panel save errors instead of falsely reporting success on rejected requests.
 - Reject non-object panel layout requests with HTTP 400 instead of server errors. Add isolated pole/amp persistence, estimated-load, and invalid-batch regression tests.
 
