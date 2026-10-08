@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.22 - 2026-10-07
+
+- Replace the disabled Kasa placeholder with a bounded, single-device read-only state probe. Use transient optional credentials, clear them after each request, distinguish OFF from unavailable state, and preserve unknown power telemetry. Pin dependencies and include the adapter/template in release verification. Physical-switch and remote-access tests remain unverified.
+
 ## 2.3.21 - 2026-10-07
 
 - Add authenticated radon history replication with ordered updates/deletions, private separate cache tables, explicit cache status, resumable downloads, journal checkpoints and atomic staged recovery. Preserve local collected data and unrelated cache tables. Real EcoQube collection and SER8 deployment remain unverified.

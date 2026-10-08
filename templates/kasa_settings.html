@@ -1,0 +1,41 @@
+<div id="panel-kasa" class="sys-panel">
+  <div class="sys-panel-head"><h3>Kasa — Smart Light Switches</h3><span class="int-badge">Read-only probe</span></div>
+  <div class="card">
+    <p>Select one known switch IP from your router. This checks current state without toggling, pairing, resetting, or scanning the subnet.</p>
+    <p>Some newer devices require your TP-Link account. Credentials are used for this request only and are not saved. Model/revision compatibility still needs verification.</p>
+    <form id="kasaProbeForm" class="kasa-probe-form">
+      <label>Device IPv4 address<input id="kasaProbeHost" required value="{{ kasa_host }}" placeholder="192.168.222.10" maxlength="45"></label>
+      <label>Account (if required)<input id="kasaProbeUsername" autocomplete="off" maxlength="1000"></label>
+      <label>Password (if required)<input id="kasaProbePassword" type="password" autocomplete="off" maxlength="1000"></label>
+      <button type="submit">Check state — no control</button>
+    </form>
+    <p id="kasaProbeStatus" role="status" aria-live="polite">Not queried. No physical device connection has been verified.</p>
+    <pre id="kasaProbeResult" class="kasa-probe-result"></pre>
+  </div>
+</div>
+<script>
+document.getElementById('kasaProbeForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget, button = form.querySelector('button');
+  const status = document.getElementById('kasaProbeStatus');
+  const result = document.getElementById('kasaProbeResult');
+  const username = document.getElementById('kasaProbeUsername');
+  const password = document.getElementById('kasaProbePassword');
+  button.disabled = true; status.textContent = 'Querying selected device…'; result.textContent = '';
+  try {
+    const response = await fetch('/api/kasa/probe', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({host: document.getElementById('kasaProbeHost').value.trim(),
+                            username: username.value || null, password: password.value || null})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error + (data.error_type ? ' (' + data.error_type + ')' : ''));
+    status.textContent = 'Read-only query completed. This is not a control or remote-access test.';
+    result.textContent = `${data.alias} · ${data.model}\nState: ${data.is_on === true ? 'ON' : data.is_on === false ? 'OFF' : 'Unknown'}\nQueried at: ${data.queried_at}`;
+  } catch (error) {
+    status.textContent = 'State unknown: ' + error.message;
+  } finally {
+    username.value = ''; password.value = ''; button.disabled = false;
+  }
+});
+</script>

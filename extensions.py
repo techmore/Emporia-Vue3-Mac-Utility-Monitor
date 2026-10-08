@@ -1,10 +1,12 @@
 """Explicit built-in extension registry. No arbitrary plugin loading or background jobs."""
+import asyncio
 import hmac
 import os
 
 from flask import Blueprint, jsonify, request
 
 import climate
+import kasa_monitor
 import radon
 
 CATALOG = ({'id': 'climate', 'name': 'House climate', 'status': 'experimental',
@@ -16,9 +18,38 @@ CATALOG = ({'id': 'climate', 'name': 'House climate', 'status': 'experimental',
 def register_extensions(app, render, common) -> None:
     blueprint = Blueprint('extensions', __name__)
 
+    @blueprint.after_request
+    def protect_probe_response(response):
+        if request.path == '/api/kasa/probe':
+            response.headers['Cache-Control'] = 'no-store'
+        return response
+
     @blueprint.get('/api/extensions')
     def catalog():
         return jsonify({'extensions': CATALOG})
+
+    @blueprint.post('/api/kasa/probe')
+    def kasa_probe():
+        data = request.get_json()
+        host = data.get('host')
+        if not isinstance(host, str) or len(host) > 45:
+            return jsonify({'error': 'Select one private IPv4 device address'}), 400
+        try:
+            result = asyncio.run(kasa_monitor.probe(
+                host, data.get('username'), data.get('password'),
+            ))
+            response = jsonify(result)
+        except ValueError:
+            return jsonify({'error': 'Invalid address or credentials'}), 400
+        except TimeoutError:
+            return jsonify({'error': 'Device query timed out; state is unknown'}), 504
+        except ImportError:
+            return jsonify({'error': 'Kasa dependency is unavailable; rebuild this installation'}), 503
+        except Exception as exc:
+            return jsonify({'error': 'Device query failed; state is unknown',
+                            'error_type': type(exc).__name__}), 502
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     @blueprint.get('/house')
     def house():

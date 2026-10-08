@@ -50,6 +50,8 @@ def validate_local_request():
     """Keep the local service local, and reject cross-origin mutation requests."""
     if request.path == '/api/panel-photos' and request.method == 'POST':
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
+    if request.path == '/api/kasa/probe':
+        request.max_content_length = 8192
     if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
         return jsonify({"error": "Local host required"}), 403
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
@@ -808,6 +810,10 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .ch-footer a { color:var(--accent); }
 @media(max-width:600px) { .ch-totals { grid-template-columns:1fr; } #circuit-history { padding:16px; } }
 
+.kasa-probe-form { display:grid; gap:10px; max-width:460px; margin:16px 0; }
+.kasa-probe-form label { display:grid; gap:4px; }
+.kasa-probe-form input { min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; }
+.kasa-probe-result { white-space:pre-wrap; overflow-wrap:anywhere; }
 .reports-columns { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:14px; align-items:start; }
 .reports-extremes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .reports-page .card, .reports-page .section-block { min-width:0; }
@@ -4826,45 +4832,7 @@ SETTINGS_HTML = """
 
 
       <!-- ════════════════════════════════ KASA ════════════════════════════════ -->
-      <div id="panel-kasa" class="sys-panel">
-        <div class="sys-panel-head">
-          <h3>Kasa — Smart Light Switches</h3>
-          <span class="int-badge coming">Coming Soon</span>
-        </div>
-
-        <div class="card" style="margin-bottom:1rem;">
-          <p style="font-size:0.85rem; color:var(--text-light); margin-bottom:1rem;">
-            Control and monitor <strong>TP-Link Kasa</strong> smart light switches on your local network.
-            Supports local UDP discovery — no cloud account required for basic on/off control and state monitoring.
-          </p>
-          <div class="setup-steps">
-            <p>Planned capabilities:</p>
-            <ul>
-              <li>Auto-discover Kasa switches on the local network (port 9999 UDP broadcast)</li>
-              <li>Display on/off state, power draw (where supported), and uptime</li>
-              <li>Toggle switches from the dashboard</li>
-              <li>Supported devices: <code>KS200M</code>, <code>HS200</code>, <code>HS210</code>, <code>KS205</code> and compatible</li>
-              <li>Optional: TP-Link cloud account for remote access outside the LAN</li>
-            </ul>
-          </div>
-          <form style="display:flex; flex-direction:column; gap:10px; max-width:400px; opacity:0.45; pointer-events:none;">
-            <label style="font-size:0.82rem; font-weight:600;">Local subnet (optional, for scan)
-              <input type="text" id="kasaSubnet" value="{{ kasa_host }}" placeholder="e.g. 192.168.1.0/24"
-                     style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
-                            border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
-            </label>
-            <div style="display:flex; gap:10px;">
-              <button type="button" style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50);
-                      border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
-                Discover Devices
-              </button>
-            </div>
-          </form>
-          <p style="font-size:0.73rem; color:var(--stone-400); margin-top:0.75rem;">
-            Uses <code>python-kasa</code> library for local LAN control. No cloud credentials needed for local access.
-          </p>
-        </div>
-      </div><!-- /panel-kasa -->
+      {% include "kasa_settings.html" %}
 
 
       <!-- ════════════════════════════════ BROAN ERV ════════════════════════════════ -->
