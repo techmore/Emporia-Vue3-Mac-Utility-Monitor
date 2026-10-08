@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.12 - Unreleased
+
+- Keep Circuits, Panel Editor, Import, Aqara Sensors and Logs inside a responsive Settings workspace shell with selected-page navigation and preserved direct URLs. Separate configuration from analysis links.
+
 ## 2.3.11 - 2026-10-07
 
 - Retry failed startup login and device discovery at a bounded interval without deleting saved tokens or falsely reporting missing credentials.

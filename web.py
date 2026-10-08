@@ -661,9 +661,15 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 /* ── Settings sidebar ── */
 .settings-wrap {
   display: grid;
-  grid-template-columns: 196px 1fr;
+  grid-template-columns: 196px minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
+}
+.workspace-content { min-width: 0; }
+.workspace-content > .page { padding: 0; max-width: none; }
+@media (max-width: 720px) {
+  .settings-wrap { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .settings-wrap > .sys-nav { position: static; }
 }
 .sys-nav {
   position: sticky; top: 72px;
@@ -985,7 +991,33 @@ def _fill_gaps(rows: list[dict], key: str, hourly: bool = False) -> list[dict]:
     return filled
 
 
+WORKSPACE_PAGES = {
+    '/circuits': 'Circuits', '/panel': 'Panel Editor', '/import': 'Import',
+    '/aqara': 'Aqara Sensors', '/log': 'Logs',
+}
+
+WORKSPACE_NAV_HTML = """
+<nav class="sys-nav" aria-label="Settings workspace">
+  <div class="sys-nav-group">Configuration</div>
+  <a class="sys-link" href="/settings">Accounts &amp; Integrations</a>
+  <div class="sys-nav-group">Workspace</div>
+  {% for path, label in workspace_pages.items() %}
+  <a class="sys-link{{ ' active' if path == workspace_path else '' }}" href="{{ path }}"
+     {% if path == workspace_path %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+  <div class="sys-nav-group">Analysis</div>
+  <a class="sys-link" href="/reports">Reports &amp; Recommendations</a>
+  <a class="sys-link" href="/trends">Trends</a>
+</nav>
+"""
+
+
 def _render(template: str, **ctx):
+    if request.path in WORKSPACE_PAGES:
+        ctx.update(workspace_pages=WORKSPACE_PAGES, workspace_path=request.path)
+        template = ('<div class="page"><div class="section-head"><h2>Settings Workspace</h2>'
+                    '</div><div class="settings-wrap">' + WORKSPACE_NAV_HTML
+                    + '<main class="workspace-content">' + template + '</main></div></div>')
     return render_template_string(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
