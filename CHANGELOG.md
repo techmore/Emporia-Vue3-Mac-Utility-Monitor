@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.25 - 2026-10-07
+
+- Prevent competing continuous and one-shot Emporia pollers on the same canonical database path with nonblocking OS ownership before authentication. Preserve stable owner-only lock files and release ownership on exit. Test cross-process exclusion, aliases, independent databases and failure/crash cleanup. Older poller processes must be stopped explicitly during upgrade.
+- Include opt-in core poller and loopback dashboard Linux service templates validated by Linux CI. Actual SER8 deployment remains unverified.
+
 ## 2.3.24 - 2026-10-07
 
 - Remove the unverified Bq/m3 unit claim from EcoSense diagnostic candidates; report raw candidate values with explicit unit-verification status. No measurements are automatically ingested.

@@ -71,6 +71,15 @@ require a separate private transfer. The snapshot does not include later polls.
 Do not switch collectors until the final catch-up and duplicate-handling strategy
 has been verified.
 
+Continuous and one-shot Emporia polling acquire a nonblocking process lock next
+to the canonical database path before authentication. A second cooperating
+poller fails without changing health status. The owner-only `.poller.lock` file
+is intentionally retained: never delete it while a poller is running. Process
+exit releases the kernel lock, including abnormal termination. Different
+databases remain independent. This guards one host/database, not duplicate
+collectors on different hosts or hard-linked database copies. Older versions
+do not honor the lock; identify and stop them explicitly during upgrade/cutover.
+
 1. Inspect the SER8 OS, storage, Python environment, SSH access, and service manager.
 2. Back up the source database with SQLite's backup API, not a live raw WAL-file copy.
 3. Transfer the consistent backup and private settings securely. Preserve timestamps

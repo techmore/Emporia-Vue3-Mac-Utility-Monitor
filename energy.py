@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
+import fcntl
 import json
 import logging
 import math
 import os
 import sqlite3
+import stat
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -1237,7 +1240,39 @@ def write_monthly_reports(directory: str | None = None) -> list[str]:
     return written
 
 
-def run_continuous():
+@contextmanager
+def _poller_lock():
+    """Keep a stable lock inode; unlinking it would permit a second owner."""
+    path = str(Path(DB_PATH).resolve()) + '.poller.lock'
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        metadata = os.fstat(fd)
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or metadata.st_nlink != 1):
+            raise RuntimeError('Unsafe poller lock file')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('Another Emporia poller owns this database') from None
+        os.fchmod(fd, 0o600)
+        yield
+    finally:
+        os.close(fd)
+
+
+def poll_once() -> None:
+    with _poller_lock():
+        vue = login_vue()
+        device_gids, _ = get_devices_with_channels(vue)
+        poll_and_store(vue, device_gids)
+
+
+def run_continuous() -> None:
+    with _poller_lock():
+        _run_continuous()
+
+
+def _run_continuous():
     import sys
 
     # Force line-buffered output so logs appear immediately even via nohup/launchd
@@ -2462,9 +2497,7 @@ if __name__ == "__main__":
                 raise SystemExit("Usage: python energy.py backup DESTINATION.db")
             print(json.dumps(backup_database(sys.argv[2]), indent=2))
         elif sys.argv[1] == "poll":
-            vue = login_vue()
-            device_gids, _ = get_devices_with_channels(vue)
-            poll_and_store(vue, device_gids)
+            poll_once()
         elif sys.argv[1] == "summary":
             hours = int(sys.argv[2]) if len(sys.argv) > 2 else 24
             for row in get_summary(hours):
