@@ -6,7 +6,7 @@ See [Deployment options](docs/DEPLOYMENT_OPTIONS.md) for native macOS, native Li
 and Incus/LXD installation, plus [SER8 deployment](docs/INCUS_DEPLOYMENT.md) for
 the verified container state and remaining production cutover gates.
 
-![Dashboard](https://img.shields.io/badge/version-2.3.31-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.3.32-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 

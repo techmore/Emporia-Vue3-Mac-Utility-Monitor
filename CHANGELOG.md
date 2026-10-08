@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.3.32 - 2026-10-08
+
+- Add opt-in macOS tunnel recovery based on actual HTTP health, independent
+  SSH verification, three-failure confirmation and bounded restart backoff.
+  Restart only the verified loaded app tunnel; preserve intentionally unloaded
+  tunnels, native layout, cached history and server collectors. Include a private
+  standalone installer and transport status diagnostics.
+
+## 2.3.31 - 2026-10-08
+
+- Add mobile device-section tabs and guarded swipe navigation for Circuits,
+  Aqara, EcoQube, Mitsubishi and Kasa, with per-section scroll restoration.
+- Document native and Incus/LXD deployment options and add tested system-service
+  plan generation. Incus dashboard staging and restart are verified; production
+  data/collector migration and authenticated public routing remain incomplete.
+
 ## 2.3.30 - 2026-10-08
 
 - Preserve and integrate live EcoQube per-measurement pCi/L charts, Kasa rocker/dimmer controls and diagnostics, and local Aqara Matter history. Validate sensor values, stream spreadsheet-safe CSV exports, clear unknown Kasa states and remove orphaned query metrics. Generalize optional service templates.
