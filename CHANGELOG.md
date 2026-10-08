@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.5 - 2026-10-07
+
+- Preserve Flask context for live event streams so cold-cache rendering and subsequent dashboard rebuilds do not fail.
+- Add a stream-first regression test.
+
 ## 2.3.4 - 2026-10-07
 
 - Add token-protected transactional history synchronization with collector identity, paginated changes, and generation checkpoints.
