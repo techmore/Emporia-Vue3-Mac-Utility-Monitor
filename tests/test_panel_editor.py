@@ -60,3 +60,21 @@ class PanelEditorTests(unittest.TestCase):
             self.assertEqual(normalized[2]['channel_name'], 'New sensor')
             self.assertEqual(size, 40)
             self.assertEqual(layout[1], reserved)
+
+    def test_full_panel_distinguishes_unmonitored_empty_and_no_measurement(self):
+        energy.save_panel_layout([{'slot': 1, 'channel_name': None,
+                                  'label': 'Unmonitored oven', 'amps': 30, 'poles': 2}])
+        with patch.object(web, '_load_panel_slots', return_value=40):
+            response = self.client.get('/api/menu-summary')
+            self.assertEqual(response.status_code, 200)
+            slots = response.get_json()['breaker_slots']
+            self.assertEqual(len(slots), 40)
+            self.assertEqual({row['slot'] for row in slots}, set(range(1, 41)))
+            self.assertEqual(slots[0]['slot_state'], 'unmonitored')
+            self.assertIsNone(slots[0]['watts'])
+            self.assertIsNone(slots[0]['load_percent'])
+            self.assertEqual(slots[1]['slot_state'], 'empty')
+            page = self.client.get('/circuits').get_data(as_text=True)
+            self.assertIn('Unmonitored oven', page)
+            self.assertIn('Unmonitored', page)
+            self.assertIn('2P/30A', page)

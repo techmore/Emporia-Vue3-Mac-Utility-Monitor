@@ -1073,7 +1073,13 @@ PANEL_FRAGMENT_HTML = """
     {% else %}
     <div class="breaker empty">
       <div class="breaker-num">{{ b.slot }}</div>
-      <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
+      <div class="breaker-body">
+        <div class="breaker-name" style="color:var(--olive-700)">{{ b.label }}</div>
+        <div class="breaker-watts">{{ 'Unmonitored' if b.label != '—' or b.note or b.amps or b.poles == 2 else 'Empty' }}
+          {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
+        </div>
+        {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
+      </div>
     </div>
     {% endif %}
   {%- endmacro %}
@@ -4240,6 +4246,7 @@ def api_menu_summary():
         )
         breaker_slots.append({
             "slot": slot,
+            "slot_state": "monitored" if name else "unmonitored" if _panel_slot_reserved(row) else "empty",
             "channel_name": name,
             "display_name": row.get("label") or name or "—",
             "amps": row.get("amps"),

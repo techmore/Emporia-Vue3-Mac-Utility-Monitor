@@ -2,7 +2,7 @@
 
 ## 2.3.9 - Unreleased
 
-- Preserve labeled, noted, rated, or double-pole unmonitored breaker slots during automatic channel placement.
+- Preserve labeled, noted, rated, or double-pole unmonitored breaker slots during automatic channel placement. Distinguish unmonitored from empty breakers in web and native panels without fabricated power/load readings.
 
 ## 2.3.8 - 2026-10-07
 
