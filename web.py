@@ -5135,6 +5135,8 @@ def panel_edit_page():
 @app.route("/api/panel-layout", methods=["POST"])
 def api_panel_layout():
     data = request.get_json(force=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Request body must be an object"}), 400
     slots = data.get("slots", [])
     try:
         if not isinstance(slots, list):
