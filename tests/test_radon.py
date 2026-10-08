@@ -24,6 +24,35 @@ class RadonTests(unittest.TestCase):
         self.db_patch.stop()
         self.directory.cleanup()
 
+    def test_api_ingestion_preserves_units_and_displays_verified_observation(self):
+        client = web.app.test_client()
+        observation = {**self.row, 'sensor_id': 'a', 'value': 0.7}
+        response = client.post('/api/radon/readings', json={'observations': [observation]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['inserted'], 1)
+        rows = radon.get_history('ecosense', 'a')
+        self.assertEqual(rows[0]['measured_unit'], 'pCi/L')
+        self.assertAlmostEqual(rows[0]['radon_bq_m3'], 25.9)
+        html = client.get('/radon?source=ecosense&sensor_id=a&days=1').get_data(as_text=True)
+        self.assertIn('0.7 pCi/L', html)
+        self.assertIn(observation['timestamp'], html)
+        duplicate = client.post('/api/radon/readings', json={'observations': [observation]})
+        self.assertEqual(duplicate.get_json()['duplicates'], 1)
+
+    def test_api_rejects_invalid_batches_without_partial_history(self):
+        client = web.app.test_client()
+        for invalid in ({**self.row, 'timestamp': 'unknown'},
+                        {**self.row, 'timestamp': self.now.replace(tzinfo=None).isoformat()},
+                        {**self.row, 'unit': 'pCL/L'}, {**self.row, 'value': None}):
+            response = client.post('/api/radon/readings',
+                                   json={'observations': [self.row, invalid]})
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(radon.get_sensors(), [])
+        self.assertEqual(client.post('/api/radon/readings', json=[]).status_code, 400)
+        self.assertEqual(client.post('/api/radon/readings', json={'observations': [self.row]},
+                                    headers={'Origin': 'https://untrusted.example'}).status_code, 403)
+        self.assertEqual(radon.get_sensors(), [])
+
     def test_conversion_original_units_deduplication_and_scope(self):
         radon.ingest_observations([self.row], self.now)
         equivalent = {**self.row, 'timestamp': self.now.astimezone(
