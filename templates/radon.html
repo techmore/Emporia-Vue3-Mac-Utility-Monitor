@@ -1,6 +1,11 @@
 <section class="house-lab">
   <header class="house-head"><div><span class="house-eyebrow">RECORDED AIR QUALITY</span><h1>EcoQube · Radon</h1><p>Read-only observations. EcoQube collection is not yet connected.</p></div></header>
   <p><a href="/house">Back to House</a></p>
+  {% if radon_cache.source_id %}
+  <p class="house-notice">Collector cache · last completed download: {{ radon_cache.synchronized_at or 'not yet complete' }}.
+  {% if radon_cache.cursor < radon_cache.high_watermark %}Download incomplete; displayed history may be partial.{% endif %}
+  Download time is not a measurement time or a device online indicator.</p>
+  {% endif %}
   <p class="house-notice">Measurement times below come from the source, not the time this page opened. No readings means no data, not zero radon. This view does not classify safety or recommend mitigation.</p>
   {% if not sensors %}
   <section class="card"><h2>No recorded radon readings</h2><p>Verify your EcoQube model and data access before connecting collection. Temperature sensors are not used as radon measurements.</p></section>

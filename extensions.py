@@ -1,4 +1,7 @@
 """Explicit built-in extension registry. No arbitrary plugin loading or background jobs."""
+import hmac
+import os
+
 from flask import Blueprint, jsonify, request
 
 import climate
@@ -40,6 +43,7 @@ def register_extensions(app, render, common) -> None:
         rows = radon.get_history(source, sensor_id, days=days) if selected else []
         return render('{% include "radon.html" %}', active_page='radon',
                       sensors=sensors, selected=selected, rows=rows, days=days,
+                      radon_cache=radon.get_cache_status(),
                       chart=radon.hourly_chart(rows, days=days), **common())
 
     @blueprint.post('/api/radon/readings')
@@ -48,6 +52,37 @@ def register_extensions(app, render, common) -> None:
             return jsonify(radon.ingest_observations(request.get_json().get('observations')))
         except (ValueError, TypeError) as exc:
             return jsonify({'error': str(exc)}), 400
+
+    @blueprint.get('/api/sync/radon')
+    def radon_changes():
+        token = os.environ.get('ENERGY_SYNC_TOKEN', '')
+        if len(token) < 32:
+            return jsonify({'error': 'History sync is not configured'}), 503
+        authorization = request.headers.get('Authorization', '')
+        if not hmac.compare_digest(authorization.encode('utf-8'),
+                                   ('Bearer ' + token).encode('utf-8')):
+            return jsonify({'error': 'History sync authorization required'}), 401
+        try:
+            expected_generation = request.args.get('generation_id')
+            if expected_generation:
+                identity = radon.get_changes(0, 1)
+                if request.args.get('source_id') != identity['source_id']:
+                    return jsonify({'error': 'Collector identity changed; fresh sync required'}), 409
+                if expected_generation != identity['generation_id']:
+                    return jsonify({'error': 'Radon checkpoint changed', 'reset_required': True,
+                                    'source_id': identity['source_id']}), 409
+            page = radon.get_changes(int(request.args.get('after', '0')),
+                                     int(request.args.get('limit', '500')))
+            if expected_generation and expected_generation != page['generation_id']:
+                return jsonify({'error': 'Radon checkpoint changed; retry'}), 409
+            expected_source = request.args.get('source_id')
+            if expected_source and expected_source != page['source_id']:
+                return jsonify({'error': 'Collector identity changed; fresh sync required'}), 409
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        response = jsonify(page)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
 
     @blueprint.get('/api/climate/replay')
     def replay():

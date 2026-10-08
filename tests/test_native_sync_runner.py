@@ -23,7 +23,9 @@ class NativeSyncRunnerTests(unittest.TestCase):
                 fake.write_text(
                     "import os,signal,sys,time\nfrom pathlib import Path\n"
                     "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-                    "Path(sys.argv[4]).write_text(str(os.getpid()))\n"
+                    "temporary = Path(sys.argv[4] + '.tmp')\n"
+                    "temporary.write_text(str(os.getpid()))\n"
+                    "temporary.replace(sys.argv[4])\n"
                     "while True: time.sleep(0.1)\n"
                 )
                 harness = "import Foundation\nimport Darwin\n" + runner + '''
