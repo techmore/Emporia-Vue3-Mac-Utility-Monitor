@@ -2,6 +2,7 @@ import io
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -163,6 +164,27 @@ class RadonJournalTests(unittest.TestCase):
             radon.apply_changes(page)
         self.assertEqual(radon.get_cache_status()['cursor'], 0)
         self.assertEqual(len(radon.get_history('ecosense', 'a')), 1)
+
+    def test_cache_write_failure_rolls_back_rows_and_cursor(self):
+        radon.ingest_observations([self.row])
+        page = radon.get_changes()
+        with patch.object(energy, 'DB_PATH', str(Path(self.directory.name) / 'failed-write.db')):
+            energy.ensure_table()
+            conn = energy._connect()
+            try:
+                conn.execute('''CREATE TRIGGER reject_radon_state BEFORE INSERT ON radon_sync_cache_state
+                    BEGIN SELECT RAISE(ABORT, 'simulated disk write failure'); END''')
+                conn.commit()
+            finally:
+                conn.close()
+            with self.assertRaisesRegex(sqlite3.IntegrityError, 'simulated disk write failure'):
+                radon.apply_changes(page)
+            self.assertEqual(radon.get_cache_status()['cursor'], 0)
+            conn = energy._connect()
+            try:
+                self.assertEqual(conn.execute('SELECT COUNT(*) FROM radon_cached_readings').fetchone()[0], 0)
+            finally:
+                conn.close()
 
     def test_checkpoint_recovery_preserves_old_cache_on_failure_and_other_tables(self):
         radon.ingest_observations([self.row])
