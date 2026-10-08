@@ -107,7 +107,8 @@ def describe_devices(devices: list[dict]) -> list[dict]:
             'device_fields': sorted(device),
             'has_serial_number': isinstance(device.get('serial_number'), str)
                                  and bool(device['serial_number']),
-            'candidate_radon_bq_m3': value,
+            'candidate_radon_value': value,
+            'measurement_unit_verified': False,
             'candidate_timestamps_utc': timestamps,
             'measurement_time_verified': False,
             'history_ingested': False,

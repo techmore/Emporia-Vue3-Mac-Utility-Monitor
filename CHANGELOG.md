@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.24 - 2026-10-07
+
+- Remove the unverified Bq/m3 unit claim from EcoSense diagnostic candidates; report raw candidate values with explicit unit-verification status. No measurements are automatically ingested.
+- Include the opt-in hardened Linux Kasa service template and setup instructions, validated by real systemd-analyze checks in Linux CI. Actual SER8 deployment and hardware remain unverified.
+
 ## 2.3.23 - 2026-10-07
 
 - Add private Kasa device registration and a separate bounded read-only collector with recorded query history. Preserve unknown states on failure, pin hardware identity, and remove local device history on explicit removal. Include collector modules in release verification. Automatic service startup, remote replication, physical-device verification and controls remain incomplete.

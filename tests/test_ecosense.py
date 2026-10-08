@@ -8,6 +8,13 @@ import ecosense
 
 
 class EcoSenseTests(unittest.TestCase):
+    def test_candidate_point_seven_does_not_imply_a_unit_or_ingestion(self):
+        result = ecosense.describe_devices([{'radon_level': 0.7}])[0]
+        self.assertEqual(result['candidate_radon_value'], 0.7)
+        self.assertFalse(result['measurement_unit_verified'])
+        self.assertFalse(result['history_ingested'])
+        self.assertNotIn('candidate_radon_bq_m3', result)
+
     def setUp(self):
         self.auth_patch = patch('ecosense.Cognito')
         self.auth = self.auth_patch.start()
@@ -47,9 +54,11 @@ class EcoSenseTests(unittest.TestCase):
     def test_diagnostic_does_not_fabricate_measurement_time_or_hide_zero(self):
         result = ecosense.describe_devices([{'serial_number': 'private-serial', 'radon_level': 0},
                                             {'radon_level': 'nan'}, {'radon_level': True}])
-        self.assertEqual(result[0]['candidate_radon_bq_m3'], 0)
-        self.assertIsNone(result[1]['candidate_radon_bq_m3'])
-        self.assertIsNone(result[2]['candidate_radon_bq_m3'])
+        self.assertEqual(result[0]['candidate_radon_value'], 0)
+        self.assertIsNone(result[1]['candidate_radon_value'])
+        self.assertIsNone(result[2]['candidate_radon_value'])
+        self.assertFalse(result[0]['measurement_unit_verified'])
+        self.assertNotIn('candidate_radon_bq_m3', result[0])
         self.assertFalse(result[0]['measurement_time_verified'])
         self.assertFalse(result[0]['history_ingested'])
         self.assertNotIn('private-serial', json.dumps(result))
@@ -101,5 +110,5 @@ class EcoSenseTests(unittest.TestCase):
             with self.subTest(timestamp=timestamp):
                 result = ecosense.describe_devices([{'timestamp': timestamp, 'radon_level': 25.9}])[0]
                 self.assertEqual(result['candidate_timestamps_utc'], {})
-                self.assertEqual(result['candidate_radon_bq_m3'], 25.9)
+                self.assertEqual(result['candidate_radon_value'], 25.9)
                 self.assertFalse(result['measurement_time_verified'])
