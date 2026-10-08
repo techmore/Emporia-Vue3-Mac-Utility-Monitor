@@ -1,16 +1,19 @@
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 import urllib.error
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import energy
+import radon
 import sync_history
 import web
 
@@ -307,3 +310,47 @@ class ReadingJournalTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM sync_cached_readings").fetchone()[0], 1)
             finally:
                 conn.close()
+
+    def test_successful_cache_reset_preserves_unrelated_radon_history(self):
+        page = energy.get_reading_changes()
+        energy.apply_reading_changes(page)
+        observation = {'source': 'manual', 'sensor_id': 'fixture', 'name': 'Test',
+                       'timestamp': datetime.now(timezone.utc).isoformat(),
+                       'value': 0.7, 'unit': 'pCi/L'}
+        radon.ingest_observations([observation])
+        before = radon.get_history('manual', 'fixture')
+        error = urllib.error.HTTPError('http://localhost', 409, 'reset', {}, io.BytesIO(
+            json.dumps({'reset_required': True, 'source_id': page['source_id']}).encode()))
+        replacement = deepcopy(page)
+        replacement['generation_id'] = 'c' * 32
+        with patch.object(sync_history, 'fetch_page', side_effect=[error, replacement]):
+            result = sync_history.sync_once('http://localhost', 'a' * 32)
+        self.assertEqual(result['generation_id'], replacement['generation_id'])
+        self.assertEqual(radon.get_history('manual', 'fixture'), before)
+
+    def test_cache_reset_write_failure_rolls_back_rows_and_cursor(self):
+        page = energy.get_reading_changes()
+        energy.apply_reading_changes(page)
+        before = energy.get_sync_cache_status()
+        conn = energy._connect()
+        try:
+            conn.execute("INSERT INTO sync_cached_readings VALUES (42, 'old', 'A', 1, 'Main', 1, 23)")
+            conn.execute("CREATE TRIGGER fail_reset BEFORE INSERT ON sync_cache_generation "
+                         "BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END")
+            conn.commit()
+        finally:
+            conn.close()
+        error = urllib.error.HTTPError('http://localhost', 409, 'reset', {}, io.BytesIO(
+            json.dumps({'reset_required': True, 'source_id': page['source_id']}).encode()))
+        replacement = deepcopy(page)
+        replacement['generation_id'] = 'd' * 32
+        with patch.object(sync_history, 'fetch_page', side_effect=[error, replacement]):
+            with self.assertRaises(sqlite3.IntegrityError) as failure:
+                sync_history.sync_once('http://localhost', 'a' * 32)
+        self.assertIn('simulated write failure', str(failure.exception))
+        self.assertEqual(energy.get_sync_cache_status(), before)
+        conn = energy._connect()
+        try:
+            self.assertEqual(conn.execute("SELECT reading_id FROM sync_cached_readings").fetchone()[0], 42)
+        finally:
+            conn.close()

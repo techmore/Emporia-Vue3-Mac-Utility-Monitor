@@ -83,15 +83,16 @@ def sync_once(origin: str, token: str, *, max_pages: int = 1000) -> dict:
             energy.DB_PATH = str(staging)
             energy.ensure_table()
             result = _download_pages(origin, token, max_pages, state["source_id"])
-            source = energy._connect()
-            destination = None
+            destination = energy._connect(original)
             try:
-                destination = energy._connect(original)
-                source.backup(destination)
+                destination.execute("ATTACH DATABASE ? AS snapshot", (str(staging),))
+                # A reset owns only energy cache tables, not other sensor history.
+                with destination:
+                    for table in ("sync_cached_readings", "sync_cache_state", "sync_cache_generation"):
+                        destination.execute(f"DELETE FROM main.{table}")
+                        destination.execute(f"INSERT INTO main.{table} SELECT * FROM snapshot.{table}")
             finally:
-                if destination is not None:
-                    destination.close()
-                source.close()
+                destination.close()
             return result
         finally:
             energy.DB_PATH = original
