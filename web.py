@@ -1931,7 +1931,20 @@ GUIDE_HTML = """
     </div>
   </div>
 
-  <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:14px; align-items:start;">
+  <section class="card" aria-labelledby="guide-start" style="margin-bottom:14px;">
+    <h2 id="guide-start">Start Here</h2>
+    <ol style="padding-left:1.2rem; line-height:1.7;">
+      <li><strong>Connect Emporia.</strong> Open <a href="/settings">Settings</a>, enter your account credentials, and save. Use Reconnect if authentication is needed.</li>
+      <li><strong>Verify collection.</strong> Open <a href="/log">Logs</a> and confirm a successful poll and a recent measurement. Old readings or a heartbeat alone do not prove current usage.</li>
+      <li><strong>Set billing.</strong> In Settings, enter the delivered electricity usage rate in cents/kWh and the monthly fixed charge separately. Circuit costs exclude fixed charges and assistance credits.</li>
+      <li><strong>Map the panel.</strong> Review <a href="/circuits">Circuits</a> and the Panel Editor for labels, slots, breaker amps, and pole counts. Estimates are not electrical safety certification.</li>
+      <li><strong>Review usage.</strong> Use <a href="/">Dashboard</a> for current readings, <a href="/trends">Trends</a> for patterns, and <a href="/reports">Reports</a> for costs. Longer history fills as collection runs.</li>
+    </ol>
+    <p>Missing samples are not zero usage. Import historical CSV files only when you need older history; importing does not prove that live polling works.</p>
+    <p>EcoQube: <a href="/radon">Radon</a> provides Day/Week/Month/Year recorded history, but collection is not yet connected. Kasa and Mitsubishi are planned integrations, not active connections.</p>
+  </section>
+  <h2>Reference</h2>
+  <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr)); gap:14px; align-items:start;">
     <div style="display:flex; flex-direction:column; gap:14px;">
       <div class="card">
         <div class="card-label" style="margin-bottom:8px;">Dashboard</div>
@@ -1964,17 +1977,6 @@ GUIDE_HTML = """
 
     <div style="display:flex; flex-direction:column; gap:14px;">
       <div class="card">
-        <div class="card-label" style="margin-bottom:8px;">First-Time Setup</div>
-        <ol style="margin:0; padding-left:1.1rem; color:var(--text); font-size:0.9rem; line-height:1.65;">
-          <li>Open <strong>Settings</strong> and enter your Emporia email and password.</li>
-          <li>Save settings, then use the reconnect flow if the poller is waiting for credentials.</li>
-          <li>Name your Emporia devices so the panel header is readable.</li>
-          <li>Open the panel editor and map breaker slots, amps, and poles.</li>
-          <li>Optionally import historical CSV files from Emporia to backfill trends.</li>
-        </ol>
-      </div>
-
-      <div class="card">
         <div class="card-label" style="margin-bottom:8px;">Log And Poller Status</div>
         <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
           <div><strong>Live</strong> means the poller wrote a recent heartbeat.</div>
@@ -1987,10 +1989,10 @@ GUIDE_HTML = """
       <div class="card">
         <div class="card-label" style="margin-bottom:8px;">Metric Meanings</div>
         <div style="display:flex; flex-direction:column; gap:8px; color:var(--text); font-size:0.9rem; line-height:1.55;">
-          <div><strong>W</strong>: instantaneous-ish power estimate from the latest minute reading.</div>
+          <div><strong>W</strong>: minute-average power estimate from the latest minute reading.</div>
           <div><strong>kWh</strong>: energy used over a time period.</div>
           <div><strong>$/hr</strong>: current burn rate using your configured utility price.</div>
-          <div><strong>80% line</strong>: common continuous-load rule-of-thumb for breaker safety visibility.</div>
+          <div><strong>80% line</strong>: estimated continuous-load reference, not a measured safety guarantee.</div>
         </div>
       </div>
     </div>
