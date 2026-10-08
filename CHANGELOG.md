@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.17 - 2026-10-07
+
+- Add private local panel-reference photos in Settings with a Panel Editor link, JPEG/PNG upload and deletion. Bound uploads to six images, 10 MiB and 24 megapixels; apply phone orientation, resize and strip metadata. Keep photo files outside Git/releases and protect concurrent upload limits.
+
 ## 2.3.16 - 2026-10-07
 
 - Expose normalized, explicitly unverified timestamp candidates in the read-only EcoSense probe. Omit naive and numeric dates instead of guessing; retain secret redaction and no-write behavior. Live collection remains unverified.

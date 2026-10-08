@@ -27,7 +27,7 @@ jobs:
         run: venv/bin/python3 scripts/check_release.py
 
       - name: Syntax check
-        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py radon.py ecosense.py
+        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py radon.py ecosense.py panel_photos.py
 
       - name: Run unit tests
         run: venv/bin/python3 -m unittest discover -s tests -v
@@ -37,7 +37,7 @@ jobs:
           venv/bin/python3 - <<'PY'
           import web
           client = web.app.test_client()
-          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/radon']:
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/radon', '/panel/photos']:
               response = client.get(path, follow_redirects=True)
               assert response.status_code == 200, f"{path}: {response.status_code}"
           assert client.get('/api/menu-summary').status_code == 200
