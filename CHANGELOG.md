@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.10 - Unreleased
+## 2.3.10 - 2026-10-07
 
 - Preserve the physical odd/even side-by-side web panel layout at narrow window widths.
 - Persist bounded collector health report history without storing error text; never backfill health events from imported readings.
