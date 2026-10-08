@@ -426,10 +426,13 @@ class EnergyTests(unittest.TestCase):
         self.assertIn("top_circuits", payload)
 
         stream = client.get("/api/events", buffered=False)
-        first_chunk = next(stream.response).decode("utf-8")
-        self.assertIn("event: update", first_chunk)
-        self.assertIn("\"dashboard\":", first_chunk)
-        self.assertIn("\"status\":", first_chunk)
+        try:
+            first_chunk = next(stream.response).decode("utf-8")
+            self.assertIn("event: update", first_chunk)
+            self.assertIn("\"dashboard\":", first_chunk)
+            self.assertIn("\"status\":", first_chunk)
+        finally:
+            stream.close()
 
     def test_panel_slots_setting_supports_sixteen_slot_panels(self):
         settings = Path("settings.json")
