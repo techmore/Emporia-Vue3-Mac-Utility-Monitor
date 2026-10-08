@@ -251,7 +251,8 @@ class RadonJournalTests(unittest.TestCase):
         log = log_path.open('w')
         process = subprocess.Popen(
             [sys.executable, '-u', '-c',
-             f'import sys;sys.path.insert(0,{str(root)!r});import web;'
+             f'import sys,faulthandler;faulthandler.dump_traceback_later(10,repeat=True);'
+             f'sys.path.insert(0,{str(root)!r});import web;'
              f'web.app.run(host="127.0.0.1",port={port})'],
             cwd=self.directory.name, env=environment,
             stdout=log, stderr=subprocess.STDOUT,
