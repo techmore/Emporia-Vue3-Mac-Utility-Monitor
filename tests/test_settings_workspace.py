@@ -22,5 +22,8 @@ class SettingsWorkspaceTests(unittest.TestCase):
                     self.assertIn(f'href="{path}"\n     aria-current="page"', html)
                     self.assertIn('class="workspace-content"', html)
                     self.assertNotIn('<iframe', html)
+                    if path == '/panel':
+                        self.assertIn('class="panel-editor-scroll" role="region"', html)
+                        self.assertIn('aria-label="Breaker configuration fields" tabindex="0"', html)
             self.assertNotIn('aria-label="Settings workspace"',
                              client.get('/').get_data(as_text=True))

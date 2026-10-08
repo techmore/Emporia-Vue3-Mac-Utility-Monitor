@@ -1,8 +1,9 @@
 # Changelog
 
-## 2.3.12 - Unreleased
+## 2.3.12 - 2026-10-07
 
 - Keep Circuits, Panel Editor, Import, Aqara Sensors and Logs inside a responsive Settings workspace shell with selected-page navigation and preserved direct URLs. Separate configuration from analysis links.
+- Contain wide breaker configuration fields in a keyboard-focusable scroll region rather than overflowing narrow pages.
 
 ## 2.3.11 - 2026-10-07
 
