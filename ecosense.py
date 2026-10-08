@@ -90,10 +90,10 @@ def describe_devices(devices: list[dict]) -> list[dict]:
                 continue
             try:
                 stamp = datetime.fromisoformat(raw.replace('Z', '+00:00'))
-            except ValueError:
+                if stamp.tzinfo is not None:
+                    timestamps[field] = stamp.astimezone(timezone.utc).isoformat()
+            except (ValueError, OverflowError):
                 continue
-            if stamp.tzinfo is not None:
-                timestamps[field] = stamp.astimezone(timezone.utc).isoformat()
         value = device.get('radon_level')
         if isinstance(value, bool):
             value = None

@@ -95,3 +95,11 @@ class EcoSenseTests(unittest.TestCase):
         output = json.dumps(result)
         for private in ('private-serial', 'private-token', 'private@example.com', 'private-password'):
             self.assertNotIn(private, output)
+
+    def test_timestamp_normalization_overflow_is_omitted(self):
+        for timestamp in ('0001-01-01T00:00:00+14:00', '9999-12-31T23:59:59-14:00'):
+            with self.subTest(timestamp=timestamp):
+                result = ecosense.describe_devices([{'timestamp': timestamp, 'radon_level': 25.9}])[0]
+                self.assertEqual(result['candidate_timestamps_utc'], {})
+                self.assertEqual(result['candidate_radon_bq_m3'], 25.9)
+                self.assertFalse(result['measurement_time_verified'])
