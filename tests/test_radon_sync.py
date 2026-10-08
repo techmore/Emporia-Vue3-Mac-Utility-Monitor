@@ -252,8 +252,10 @@ class RadonJournalTests(unittest.TestCase):
         process = subprocess.Popen(
             [sys.executable, '-u', '-c',
              f'import sys,faulthandler;faulthandler.dump_traceback_later(10,repeat=True);'
-             f'sys.path.insert(0,{str(root)!r});import web;'
-             f'web.app.run(host="127.0.0.1",port={port})'],
+             f'sys.path.insert(0,{str(root)!r});import web;from unittest.mock import patch\n'
+             # CI reverse DNS can block binding; DNS is not part of this loopback test.
+             f'with patch("socket.getfqdn",return_value="localhost"):\n'
+             f'    web.app.run(host="127.0.0.1",port={port})'],
             cwd=self.directory.name, env=environment,
             stdout=log, stderr=subprocess.STDOUT,
         )
