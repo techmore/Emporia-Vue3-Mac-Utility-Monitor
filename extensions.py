@@ -23,15 +23,24 @@ def register_extensions(app, render, common) -> None:
 
     @blueprint.get('/radon')
     def radon_history():
+        try:
+            days = int(request.args.get('days', '7'))
+        except ValueError:
+            return jsonify({'error': 'Invalid history window'}), 400
+        if days not in (1, 7, 30, 365):
+            return jsonify({'error': 'Invalid history window'}), 400
         sensors = radon.get_sensors()
         source = request.args.get('source', '')
         sensor_id = request.args.get('sensor_id', '')
         selected = next((sensor for sensor in sensors
                          if sensor['source'] == source and sensor['sensor_id'] == sensor_id), None)
-        rows = radon.get_history(source, sensor_id) if selected else []
+        if not source and not sensor_id and sensors:
+            selected = sensors[0]
+            source, sensor_id = selected['source'], selected['sensor_id']
+        rows = radon.get_history(source, sensor_id, days=days) if selected else []
         return render('{% include "radon.html" %}', active_page='radon',
-                      sensors=sensors, selected=selected, rows=rows,
-                      chart=radon.hourly_chart(rows), **common())
+                      sensors=sensors, selected=selected, rows=rows, days=days,
+                      chart=radon.hourly_chart(rows, days=days), **common())
 
     @blueprint.get('/api/climate/replay')
     def replay():

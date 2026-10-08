@@ -57,3 +57,7 @@ Do not run this with shell tracing or paste passwords into chat.
 The chart uses arithmetic hourly sample means in Bq/m3, not duration-weighted
 exposure. Hours without samples have no dots; points are not connected. Samples
 remain available in the original-unit table. The chart does not infer safety.
+
+## Recorded dashboard
+
+Open `/radon` using the Radon navigation tab. Day and Week use hourly sample means; Month and Year use daily sample means. Sensor and window selection are carried in the URL. The first recorded sensor is selected automatically only when no identity was requested. Missing buckets stay blank, old samples are not presented as live, and no safety classification is inferred. Refresh the page after importing new observations. Collection is not enabled by this page.

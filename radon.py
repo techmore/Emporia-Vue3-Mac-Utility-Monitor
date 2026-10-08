@@ -97,30 +97,34 @@ def get_sensors() -> list[dict]:
         conn.close()
 
 
-def hourly_chart(rows: list[dict], now: datetime | None = None) -> dict:
-    """Plot seven days of sample means; no interpolation or duration weighting.
+def hourly_chart(rows: list[dict], now: datetime | None = None, days: int = 7) -> dict:
+    """Plot bounded sample means; no interpolation or duration weighting.
 
     Input is already validated, sensor-scoped storage output. Blank hours produce
     no point. An hour containing one sample is not a full hour of coverage.
     """
+    if isinstance(days, bool) or days not in (1, 7, 30, 365):
+        raise ValueError('Invalid history window')
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         raise ValueError('now requires a timezone')
     end = now.astimezone(timezone.utc)
-    start = end - timedelta(days=7)
+    start = end - timedelta(days=days)
     buckets = {}
     for row in rows:
         stamp = datetime.fromisoformat(row['timestamp'])
         if not start <= stamp <= end:
             continue
         hour = stamp.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        if days > 7:
+            hour = hour.replace(hour=0)
         buckets.setdefault(hour, []).append(row['radon_bq_m3'])
     points = []
     for hour, values in sorted(buckets.items()):
         mean = math.fsum(value / len(values) for value in values)
-        center = min(end, max(start, hour + timedelta(minutes=30)))
+        center = min(end, max(start, hour + timedelta(hours=12 if days > 7 else 0.5)))
         points.append({'timestamp': hour.isoformat(), 'mean': mean, 'samples': len(values),
-                       'x': 50 + 900 * (center-start).total_seconds() / (7*86400)})
+                       'x': 50 + 900 * (center-start).total_seconds() / (days*86400)})
     peak = max((point['mean'] for point in points), default=0)
     scale = max(peak, 1)
     for point in points:

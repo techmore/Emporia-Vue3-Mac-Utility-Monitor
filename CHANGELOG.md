@@ -1,10 +1,17 @@
 # Changelog
 
-## 2.3.5 - Unreleased
+## 2.3.6 - 2026-10-07
 
-- Add an experimental bounded EcoSense cloud probe with private environment credentials; no history is ingested until actual measurement timestamp semantics are verified.
+- Add a recorded EcoQube/radon dashboard with sensor selection and day, week, month, and year history. Missing data stays blank; collection remains unconnected pending verified source timestamps.
+- Add validated, sensor-scoped radon storage and a private read-only EcoSense diagnostic probe.
 
-- Add validated radon observation storage with original units, UTC measurement timestamps, sensor isolation, and atomic duplicate/conflict handling. Add a read-only recorded-history page with empty/stale states. EcoQube collection and Mac radon synchronization are not yet connected.
+## 2.3.5 - 2026-10-07
+
+- Restore the compact olive/stone menu: single-line service banner, two-line cost cards, horizontal circuit rows, smaller padding, and ascending slot order.
+- Fix decoding of the native 24-hour cost field.
+
+- Preserve Flask context for live event streams so cold-cache rendering and subsequent dashboard rebuilds do not fail.
+- Add a stream-first regression test.
 
 ## 2.3.4 - 2026-10-07
 

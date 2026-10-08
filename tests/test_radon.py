@@ -101,3 +101,21 @@ class RadonTests(unittest.TestCase):
         self.assertEqual(chart['scale'], 74)
         self.assertLess(chart['points'][0]['x'], chart['points'][1]['x'])
         self.assertEqual(radon.hourly_chart([], self.now)['points'], [])
+
+    def test_dashboard_windows_auto_select_sensor_and_preserve_old_history(self):
+        old = {**self.row, 'timestamp': (self.now - timedelta(days=90)).isoformat()}
+        radon.ingest_observations([old], self.now)
+        client = web.app.test_client()
+        week = client.get('/radon')
+        self.assertEqual(week.status_code, 200)
+        self.assertIn(b'No measurements recorded', week.data)
+        year = client.get('/radon?days=365')
+        self.assertEqual(year.status_code, 200)
+        self.assertIn(b'Latest recorded: 2.5', year.data)
+        self.assertIn(b'daily averages', year.data)
+        for window in (1, 7, 30, 365):
+            self.assertEqual(client.get(f'/radon?days={window}').status_code, 200)
+        for window in ('0', '366', 'bad'):
+            self.assertEqual(client.get(f'/radon?days={window}').status_code, 400)
+        missing = client.get('/radon?source=ecosense&sensor_id=missing&days=365')
+        self.assertNotIn(b'Latest recorded: 2.5', missing.data)

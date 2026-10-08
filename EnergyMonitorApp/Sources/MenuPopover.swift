@@ -28,6 +28,13 @@ struct MenuBreakerSlot: Decodable, Identifiable {
 }
 
 struct MenuSummary: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case version, online, currentWatts, costPerHour, recordedKwh
+        // convertFromSnakeCase capitalizes the word after the numeric prefix.
+        case cost24h = "cost24H"
+        case monthCost, monthDaysRecorded, lastReading, topCircuits
+        case panelLabel, panelSlots, breakerSlots, activeDeviceGid, collectorSourceId
+    }
     let version: String
     let online: Bool
     let currentWatts: Double?
@@ -355,17 +362,7 @@ struct MonitorPopover: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Image(systemName: "bolt.fill").font(.caption).foregroundStyle(Theme.heroText)
-                    .frame(width: 24, height: 24).background(Theme.accent, in: RoundedRectangle(cornerRadius: 6))
-                Text("Energy").font(Theme.serif(19, weight: .bold)).foregroundStyle(Theme.text)
-                Spacer()
-                Circle().fill(monitor.online ? Theme.green : Theme.red).frame(width: 8, height: 8)
-                    .shadow(color: (monitor.online ? Theme.green : Theme.red).opacity(0.35), radius: 3)
-                Text(monitor.online ? "Live" : (monitor.cachedSummaryAt != nil ? "Cached" : "Offline"))
-                    .font(.caption.weight(.medium)).foregroundStyle(Theme.textLight)
-            }
+        VStack(alignment: .leading, spacing: 8) {
             if let date = monitor.cachedSummaryAt {
                 Text("Cached " + date.formatted(date: .abbreviated, time: .shortened) + " - not live")
                     .font(.caption2).foregroundStyle(Theme.textLight)
@@ -373,7 +370,6 @@ struct MonitorPopover: View {
             if let error = monitor.syncError {
                 Text(error).font(.caption2).foregroundStyle(Theme.red)
             }
-            Divider()
             ScrollView {
                 if let circuit = monitor.selectedCircuit {
                     circuitView(circuit)
@@ -400,34 +396,31 @@ struct MonitorPopover: View {
             }
             .buttonStyle(.borderless)
         }
-        .padding(18)
+        .padding(10)
         .frame(width: 440, height: 560)
         .background(Theme.background)
         .foregroundStyle(Theme.text)
     }
 
     private var overview: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("SERVICE FEED").font(.caption2.weight(.semibold)).tracking(1.1)
-                    Spacer()
-                    Text(monitor.summary?.panelLabel ?? "Service Panel").font(.caption2).lineLimit(1)
-                }.foregroundStyle(Theme.heroText.opacity(0.7))
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(monitor.online ? monitor.summary?.currentWatts.map { String(format: "%.0f", $0) } ?? "—" : "—")
-                        .font(Theme.serif(40)).monospacedDigit()
-                    Text("W").font(Theme.serif(15)).foregroundStyle(Theme.heroText.opacity(0.7))
-                    Spacer()
-                    if monitor.online, let cost = monitor.summary?.costPerHour {
-                        Text(String(format: "$%.2f/hr", cost)).font(.caption).foregroundStyle(Theme.heroText.opacity(0.7))
-                    }
-                    Image(systemName: "bolt.fill").font(.caption)
-                }.foregroundStyle(Theme.heroText)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Circle().fill(monitor.online ? Theme.green : Theme.red)
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel(monitor.online ? "Live readings" : "Not live")
+                Text(monitor.summary?.panelLabel ?? "Service Panel")
+                    .font(.caption.weight(.medium)).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(monitor.online ? monitor.summary?.currentWatts.map { String(format: "%.0f W", $0) } ?? "—" : "—")
+                    .font(Theme.serif(22)).monospacedDigit().fixedSize()
+                if monitor.online, let cost = monitor.summary?.costPerHour {
+                    Text(String(format: "$%.2f/hr", cost)).font(.system(size: 10)).fixedSize()
+                }
             }
-            .padding(14)
+            .foregroundStyle(Theme.heroText)
+            .padding(.horizontal, 10).padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.hero, in: RoundedRectangle(cornerRadius: 14))
+            .background(Theme.hero, in: RoundedRectangle(cornerRadius: 10))
             if !monitor.online {
                 Label(monitor.summaryError ?? "Poller offline or stale — showing last recorded values",
                       systemImage: "exclamationmark.triangle.fill")
@@ -439,14 +432,9 @@ struct MonitorPopover: View {
                 statCard("MONTH TO DATE", monitor.summary?.monthCost.map { String(format: "$%.2f", $0) } ?? "—",
                          (monitor.summary?.monthDaysRecorded).map { "\($0) day\($0 == 1 ? "" : "s") recorded" } ?? "No data")
             }
-            HStack {
-                Text("CIRCUIT BREAKERS").font(.caption2.weight(.semibold)).tracking(1.1)
-                Spacer()
-                Text("\(monitor.summary?.panelSlots ?? 0) slots").font(.caption2).foregroundStyle(Theme.textLight)
-            }
             if let slots = monitor.summary?.breakerSlots, !slots.isEmpty {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
-                    ForEach(slots) { slot in breakerCard(slot) }
+                LazyVStack(spacing: 3) {
+                    ForEach(slots.sorted { $0.slot < $1.slot }) { slot in breakerCard(slot) }
                 }
             } else {
                 Text("Waiting for panel readings…").font(.subheadline).foregroundStyle(Theme.textLight)
@@ -457,12 +445,15 @@ struct MonitorPopover: View {
 
     private func statCard(_ title: String, _ value: String, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption2.weight(.semibold)).tracking(1.0).foregroundStyle(Theme.textLight)
-            Text(value).font(Theme.serif(24)).monospacedDigit()
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(title).font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textLight)
+                Spacer(minLength: 0)
+                Text(value).font(Theme.serif(17)).monospacedDigit().fixedSize()
+            }
             Text(detail).font(.caption2).foregroundStyle(Theme.textLight).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .themeCard(padding: 11)
+        .themeCard(padding: 7)
         .accessibilityElement(children: .combine)
     }
 
@@ -479,34 +470,34 @@ struct MonitorPopover: View {
                 Text(String(format: "%02d", slot.slot))
                     .font(.caption2.monospacedDigit().weight(.medium))
                     .foregroundStyle(Theme.textLight).frame(width: 20, alignment: .leading)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 3) {
-                        Text(slot.displayName).font(.caption.weight(.medium)).lineLimit(1)
-                            .foregroundStyle(active ? Theme.text : Theme.textLight)
-                        if peak {
-                            Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(Theme.amber)
-                                .accessibilityLabel("Top usage")
-                        }
-                    }
-                    HStack(spacing: 3) {
-                        Text(watts.map { String(format: "%.0f W", $0) } ?? (active ? "—" : "Empty"))
-                            .monospacedDigit()
-                        if active, let amps = slot.amps { Text("· \(slot.poles)P/\(amps)A") }
-                    }.font(.system(size: 10)).foregroundStyle(Theme.textLight).lineLimit(1)
-                    if let percent = slot.loadPercent, active && monitor.online {
-                        GeometryReader { geometry in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(Theme.border.opacity(0.35))
-                                Capsule().fill(fill).frame(width: geometry.size.width * CGFloat(min(100, percent) / 100))
-                            }
-                        }.frame(height: 3).accessibilityLabel("Estimated breaker load")
-                    }
+                Text(slot.displayName).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                    .foregroundStyle(active ? Theme.text : Theme.textLight)
+                if peak {
+                    Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(Theme.amber)
+                        .accessibilityLabel("Top usage")
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 2)
+                Text(watts.map { String(format: "%.0f W", $0) } ?? (active ? "—" : "Empty"))
+                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.textLight)
+                    .frame(width: 55, alignment: .trailing)
+                if active, let amps = slot.amps {
+                    Text("\(slot.poles)P/\(amps)A").font(.system(size: 9))
+                        .foregroundStyle(slot.loadState == "danger" || slot.loadState == "warn" ? fill : Theme.textLight)
+                        .frame(width: 42, alignment: .trailing)
+                }
                 if active { Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.textLight.opacity(0.6)) }
             }
-            .padding(.horizontal, 7).padding(.vertical, 6)
-            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .padding(.horizontal, 7).padding(.vertical, 4)
+            .frame(maxWidth: .infinity, minHeight: 25, alignment: .leading)
+            .overlay(alignment: .bottomLeading) {
+                if let percent = slot.loadPercent, active && monitor.online {
+                    GeometryReader { geometry in
+                        Capsule().fill(fill)
+                            .frame(width: geometry.size.width * CGFloat(max(0, min(100, percent)) / 100))
+                    }.frame(height: 2).padding(.horizontal, 7)
+                        .accessibilityLabel("Estimated breaker load")
+                }
+            }
             .background(Theme.surface.opacity(active ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 8))
             .background((usage ?? .clear).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(usage ?? Theme.border.opacity(active ? 0.6 : 0.3), lineWidth: usage == nil ? 1 : 1.5))
