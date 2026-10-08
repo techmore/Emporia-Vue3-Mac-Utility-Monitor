@@ -1,6 +1,6 @@
 # EcoQube Radon Integration
 
-Status: issue #83; storage groundwork only. No live EcoQube credentials, device
+Status: issue #83; validated storage and a read-only `/radon` history table. No live EcoQube credentials, device
 model, API payload, or measurement timestamp semantics have been verified.
 Do not configure DNS interception or change pairing as part of installation.
 
@@ -23,7 +23,7 @@ Next steps:
    against the vendor app before implementing its adapter.
 3. Add secure configuration, bounded requests, authentication refresh, and
    collector health reporting on SER8.
-4. Add radon display/history and extend the Mac download protocol to include
+4. Add radon charts and extend the Mac download protocol to include
    radon. The 2.3.4 energy synchronization protocol does not replicate radon.
 5. Verify live readings and disconnect/reconnect behavior before closing #83.
 

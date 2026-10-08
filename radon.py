@@ -84,3 +84,14 @@ def get_history(source: str, sensor_id: str, days: int = 7,
                                    now.isoformat()))]
     finally:
         conn.close()
+
+
+def get_sensors() -> list[dict]:
+    """List sensor identities that have recorded observations, never discovered guesses."""
+    conn = energy._connect()
+    try:
+        return [dict(row) for row in conn.execute('''SELECT source,sensor_id,
+            MAX(timestamp) AS last_measurement,COUNT(*) AS sample_count
+            FROM radon_readings GROUP BY source,sensor_id ORDER BY source,sensor_id''')]
+    finally:
+        conn.close()

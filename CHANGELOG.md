@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2.3.5 - Unreleased
 
-- Add validated radon observation storage with original units, UTC measurement timestamps, sensor isolation, and atomic duplicate/conflict handling. EcoQube collection and UI integration are not yet connected.
+- Add validated radon observation storage with original units, UTC measurement timestamps, sensor isolation, and atomic duplicate/conflict handling. Add a read-only recorded-history page with empty/stale states. EcoQube collection and Mac radon synchronization are not yet connected.
 
 ## 2.3.4 - 2026-10-07
 

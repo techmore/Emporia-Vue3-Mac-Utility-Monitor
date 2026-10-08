@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import energy
 import radon
+import web
 
 
 class RadonTests(unittest.TestCase):
@@ -60,3 +61,27 @@ class RadonTests(unittest.TestCase):
         for days in (True, 0, 366):
             with self.assertRaises(ValueError):
                 radon.get_history('ecosense', 'one', days, self.now)
+
+    def test_read_only_page_empty_state_and_sensor_isolation(self):
+        client = web.app.test_client()
+        empty = client.get('/radon')
+        self.assertEqual(empty.status_code, 200)
+        self.assertIn(b'No recorded radon readings', empty.data)
+        radon.ingest_observations([self.row, {**self.row, 'sensor_id': 'two', 'value': 999}], self.now)
+        page = client.get('/radon?source=ecosense&sensor_id=one')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'2.5 pCi/L', page.data)
+        self.assertNotIn(b'999.0', page.data)
+        self.assertIn(b'not a live-status indicator', page.data)
+        self.assertEqual(client.post('/radon', json={}).status_code, 405)
+
+    def test_page_escapes_sensor_content_and_labels_old_data(self):
+        old = {**self.row, 'sensor_id': '<script>bad()</script>',
+               'timestamp': (self.now - timedelta(days=8)).isoformat()}
+        radon.ingest_observations([old], self.now)
+        response = web.app.test_client().get('/radon', query_string={
+            'source': 'ecosense', 'sensor_id': old['sensor_id']})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'<script>bad()</script>', response.data)
+        self.assertIn(b'&lt;script&gt;', response.data)
+        self.assertIn(b'Older history is not a current reading', response.data)

@@ -2,9 +2,12 @@
 from flask import Blueprint, jsonify, request
 
 import climate
+import radon
 
 CATALOG = ({'id': 'climate', 'name': 'House climate', 'status': 'experimental',
-            'url': '/house', 'sources': ['aqara', 'home_assistant', 'manual']},)
+            'url': '/house', 'sources': ['aqara', 'home_assistant', 'manual']},
+           {'id': 'radon', 'name': 'Radon history', 'status': 'not_connected',
+            'url': '/radon', 'sources': ['ecosense', 'home_assistant', 'manual']})
 
 
 def register_extensions(app, render, common) -> None:
@@ -17,6 +20,17 @@ def register_extensions(app, render, common) -> None:
     @blueprint.get('/house')
     def house():
         return render('{% include "house.html" %}', active_page='house', **common())
+
+    @blueprint.get('/radon')
+    def radon_history():
+        sensors = radon.get_sensors()
+        source = request.args.get('source', '')
+        sensor_id = request.args.get('sensor_id', '')
+        selected = next((sensor for sensor in sensors
+                         if sensor['source'] == source and sensor['sensor_id'] == sensor_id), None)
+        rows = radon.get_history(source, sensor_id) if selected else []
+        return render('{% include "radon.html" %}', active_page='radon',
+                      sensors=sensors, selected=selected, rows=rows, **common())
 
     @blueprint.get('/api/climate/replay')
     def replay():
