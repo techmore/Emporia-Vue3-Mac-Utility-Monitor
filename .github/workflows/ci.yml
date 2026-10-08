@@ -39,6 +39,12 @@ jobs:
               (stage / f'{name}.service').write_text(unit)
           PY
           systemd-analyze verify "$RUNNER_TEMP/kasa-service-verification/"*.service
+          python3 scripts/prepare_linux_deployment.py \
+            --output "$RUNNER_TEMP/energy-system-plan" \
+            --user "$(id -un)" --code "$PWD" \
+            --data "$RUNNER_TEMP/kasa-service-verification/data" \
+            --environment "$RUNNER_TEMP/kasa-service-verification/kasa.env"
+          systemd-analyze verify "$RUNNER_TEMP/energy-system-plan/"*.service
 
   test:
     runs-on: macos-latest

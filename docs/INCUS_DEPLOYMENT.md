@@ -1,5 +1,8 @@
 # SER8 Incus deployment
 
+For reusable native macOS, native Linux and container instructions, see
+[Deployment options](DEPLOYMENT_OPTIONS.md).
+
 ## Instance and isolation
 
 The `energy-monitor` Ubuntu 24.04 container was created on SER8 on 2026-10-08
@@ -18,6 +21,8 @@ Validation: all 213 tests passed in the container (six macOS-only skips).
 The rendered, hardened dashboard unit passed systemd verification and serves
 v2.3.31. Circuits, Aqara, EcoQube, Mitsubishi and Kasa returned HTTP 200 with
 the mobile navigation included. No collector credentials were installed.
+An actual container restart restored the dashboard automatically; its listener
+remained restricted to 127.0.0.1:5051. Original host collectors remained active.
 
 The host's existing collectors remain authoritative until a deliberate cutover.
 Do not start another Emporia poller against a copied collector identity. Do not
