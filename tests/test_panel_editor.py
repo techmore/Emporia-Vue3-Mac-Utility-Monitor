@@ -78,3 +78,10 @@ class PanelEditorTests(unittest.TestCase):
             self.assertIn('Unmonitored oven', page)
             self.assertIn('Unmonitored', page)
             self.assertIn('2P/30A', page)
+
+    def test_editor_can_expand_small_panel_to_forty_slots(self):
+        with patch.object(web, '_load_panel_slots', return_value=16):
+            html = self.client.get('/panel').get_data(as_text=True)
+        self.assertEqual(html.count('class="slot-row" data-slot='), 40)
+        self.assertIn('data-slot="40" style="display:none"', html)
+        self.assertIn('parseInt(row.dataset.slot) <= panelSize', html)

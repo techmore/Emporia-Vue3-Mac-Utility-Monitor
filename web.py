@@ -4354,7 +4354,7 @@ PANEL_EDIT_HTML = """
 
   <div class="panel-edit-grid" id="editGrid">
     {% for b in breakers %}
-    <div class="slot-row" data-slot="{{ b.slot }}">
+    <div class="slot-row" data-slot="{{ b.slot }}"{% if b.slot > panel_slots %} style="display:none"{% endif %}>
       <div class="slot-num">{{ b.slot }}</div>
       <select class="sel-circuit" title="Circuit channel">
         <option value="">— empty —</option>
@@ -4388,7 +4388,9 @@ PANEL_EDIT_HTML = """
 </div>
 <script>
 function saveLayout() {
-  const rows = document.querySelectorAll('.slot-row');
+  const panelSize = parseInt(document.getElementById('panelSize').value);
+  const rows = Array.from(document.querySelectorAll('.slot-row'))
+    .filter(row => parseInt(row.dataset.slot) <= panelSize);
   const slots = Array.from(rows).map(row => ({
     slot:         parseInt(row.dataset.slot),
     channel_name: row.querySelector('.sel-circuit').value || null,
@@ -5139,7 +5141,7 @@ def panel_edit_page():
         if r["channel_name"] not in _MAINS_NAMES and r["channel_name"] not in _SKIP_NAMES
     ])
     breakers = []
-    for slot in range(1, panel_slots + 1):
+    for slot in range(1, max(panel_slots, 40) + 1):
         row = layout.get(slot, {})
         name = row.get("channel_name")
         breakers.append({
