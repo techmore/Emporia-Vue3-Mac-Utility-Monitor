@@ -30,6 +30,7 @@ import energy
 import panel_photos
 from extensions import HOUSE_CSS, register_extensions
 from panel_model import breaker_load
+from solar_model import solar_offset
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
@@ -1722,6 +1723,7 @@ REPORTS_HTML = """
     <a href="#reports-overview">Overview</a>
     <a href="#monthly-costs">Monthly Costs</a>
     <a href="#recommendations">Recommendations</a>
+    <a href="#solar-offset">Solar Scenario</a>
     <a href="#billing-review">Billing Review</a>
     <a href="#pattern-highlights">Pattern Highlights</a>
   </div>
@@ -1749,12 +1751,13 @@ REPORTS_HTML = """
     {% endfor %}
   </div>
 
+  {% include 'solar_scenario.html' %}
   <div id="reports-overview" class="section">
     <div class="section-head">
       <h2>Overview</h2>
       <span class="section-sub">Fast budget, cost, and peak checks</span>
     </div>
-    <div style="display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:14px;">
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr)); gap:12px; margin-bottom:14px;">
     <div class="card">
       <div class="card-label">24h Cost</div>
       <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
@@ -3675,7 +3678,7 @@ def reports_page():
         h["hour_label"] = _format_hour(h["hour"])
     peak_24h = energy.get_peak_24h()
     summary_24 = energy.get_summary(24)
-    main_24h = energy.get_main_total(24)
+    main_24h = energy.get_main_total(24, com['active_device_gid'])
     total_24h = main_24h or {
         "total_kwh": sum(r["total_kwh"] for r in summary_24),
         "total_cents": sum(r["total_cents"] for r in summary_24),
@@ -3743,10 +3746,31 @@ def reports_page():
     mc = energy.get_month_comparison()
     monthly_projected = (total_24h["total_kwh"] or 0) * 30 * RATE
     budget_pct = (monthly_projected / MONTHLY_BUDGET * 100) if MONTHLY_BUDGET else 0
+    solar_result = None
+    solar_error = None
+    if 'solar_generation' in request.args:
+        try:
+            if main_24h is None:
+                raise ValueError('No recorded Main consumption: a solar offset cannot be calculated')
+            export = request.args.get('solar_export_rate', '').strip()
+            solar_result = solar_offset(
+                main_24h['total_kwh'], float(request.args['solar_generation']),
+                float(request.args.get('solar_self_pct', '')),
+                energy.RATE_CENTS, float(export) if export else None,
+            )
+        except (ValueError, OverflowError):
+            solar_error = ('Enter finite nonnegative generation and rates, and a self-consumption '
+                           'percentage from 0 to 100. Recorded Main consumption is required.')
+    capture = energy.get_capture_history(48, com['active_device_gid'])[-24:]
     return _render(
         REPORTS_HTML,
         monthly_costs=energy.get_monthly_costs(12),
         active_page="reports",
+        solar_result=solar_result, solar_error=solar_error, solar_main=main_24h,
+        solar_dense_hours=sum(hour['state'] == 'dense' for hour in capture),
+        solar_inputs={key: request.args.get(key, '') for key in
+                      ('solar_generation', 'solar_self_pct', 'solar_export_rate')},
+        solar_rate_cents=energy.RATE_CENTS,
         total_24h=total_24h,
         monthly_projected=monthly_projected,
         projected_bill=monthly_projected + MONTHLY_FIXED_CHARGE,

@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.3.17-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.3.18-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -364,3 +364,13 @@ Git or release archives. Remove Photo asks for confirmation. HEIC is not
 supported; export phone photos as JPEG first. Photos are local-only and are not
 replicated by collector history sync. Treat them as private electrical-layout
 reference material, not verified breaker assignments.
+
+### Solar offset scenarios
+
+Reports → Solar Scenario compares user-entered generation for the last 24 hours
+with recorded Main demand. Enter an assumed self-consumption percentage and an
+optional export-credit rate; blank means unknown, not zero or retail-rate credit.
+Self-consumption is capped at recorded demand. Sparse capture can understate
+demand, so review Logs before interpreting results. Fixed charges are unchanged;
+this is not solar sizing, hourly matching, tariff eligibility or payback advice.
+Inputs are carried in the URL and are not saved as device configuration.
