@@ -2,11 +2,11 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.3.4-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.3.6-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## Compact menu bar monitor (2.1)
+## Compact Menu Bar Monitor
 
 Click the lightning icon in the macOS menu bar for a native compact dropdown with
 minute-average power, hourly cost, recorded 24-hour usage, and the five most active
@@ -15,9 +15,10 @@ and a trend when history is sufficiently sampled. Refresh, Dashboard and Setting
 are available from the dropdown. Launching the app stays in the menu bar; opening
 the app again reveals the dropdown. Right-click the icon for the utility menu.
 
-The native dropdown follows the saved panel slot numbers in two physical columns.
-Empty slots, circuit labels, live watts and configured breaker ratings follow the
-Panel Layout editor. Select an occupied breaker to open its history.
+The native dropdown shows compact horizontal circuit rows in ascending saved slot
+order. Circuit labels, live watts and configured breaker ratings follow the Panel
+Layout editor. Select a monitored breaker to open its recorded history. The web
+dashboard retains its service-panel layout.
 
 ## Install with Homebrew
 
@@ -55,7 +56,33 @@ brew untap techmore/tap             # optional
 
 The same option is in the menu: ⋯ → **Uninstall…**
 
-## Circuit quick view (2.1)
+## Getting Started
+
+1. Install and launch using the Homebrew commands above. Click the lightning icon
+   and choose **Dashboard**; Homebrew uses `http://127.0.0.1:5019`.
+2. Open **Settings** and configure the Emporia account using the available setup
+   flow. Check **Logs** for a successful poll and a recent measurement before
+   treating any displayed usage as current.
+3. Configure your electricity usage rate and monthly fixed charge separately.
+   Circuit costs represent usage, not a complete utility bill or assistance credits.
+4. Review **Settings → Circuits / Panel Editor** for names, slots, pole counts,
+   and breaker ratings. Estimated load comparisons are not electrical safety certification.
+5. Use **Trends** for usage patterns and **Reports** for costs and recommendations.
+   Historical views fill as readings accumulate; missing samples are not zero usage.
+
+For always-on SER8 collection and native offline Mac history, see
+[Collector and Client Setup](COLLECTOR_CLIENT.md). Actual SER8 deployment and
+cutover must be verified before stopping local collection.
+
+## Radon Dashboard
+
+Open **Radon** (`/radon`) for sensor-scoped Day, Week, Month, and Year history.
+Day/Week plot hourly sample means; Month/Year plot daily sample means. Missing
+buckets stay blank, and source measurement timestamps distinguish old history
+from recent readings. EcoQube collection is not yet connected; an empty dashboard
+is not a zero-radon reading. See [EcoQube Integration](docs/ECOQUBE.md).
+
+## Circuit Quick View
 
 Click a circuit on Dashboard, Circuits, Trends or Reports to open an optional overlay.
 Choose **1 day**, **7 days** or **30 days** for recorded kWh, recorded cost and an
@@ -69,7 +96,7 @@ The existing SQLite database records each cloud poll (default 60 seconds), retai
 365 days by default, and persists across app restarts. Poller health is visible in
 Log. Longer history fills as the app runs; CSV imports can provide older data, but
 unknown import intervals can affect recorded totals and are not a coverage guarantee.
-The stable `v2.0.1` tag remains intact; 2.1 changes live on a separate feature branch.
+These features are included in the released application; historical tags remain available.
 
 ## 2.0 Highlights
 
