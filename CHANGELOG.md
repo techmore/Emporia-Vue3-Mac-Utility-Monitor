@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add validated radon observation storage with original units, UTC measurement timestamps, sensor isolation, and atomic duplicate/conflict handling. EcoQube collection and UI integration are not yet connected.
+
 ## 2.3.4 - 2026-10-07
 
 - Add token-protected transactional history synchronization with collector identity, paginated changes, and generation checkpoints.

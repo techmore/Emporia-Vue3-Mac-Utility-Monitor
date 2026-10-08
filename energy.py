@@ -269,6 +269,19 @@ def ensure_table():
         );
         CREATE INDEX IF NOT EXISTS idx_climate_timestamp ON climate_readings(timestamp);
 
+        CREATE TABLE IF NOT EXISTS radon_readings (
+            source TEXT NOT NULL,
+            sensor_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            name TEXT NOT NULL,
+            measured_value REAL NOT NULL CHECK (measured_value >= 0),
+            measured_unit TEXT NOT NULL CHECK (measured_unit IN ('pCi/L', 'Bq/m3')),
+            radon_bq_m3 REAL NOT NULL CHECK (radon_bq_m3 >= 0),
+            received_at TEXT NOT NULL,
+            PRIMARY KEY (source, sensor_id, timestamp)
+        );
+        CREATE INDEX IF NOT EXISTS idx_radon_timestamp ON radon_readings(timestamp);
+
         CREATE TABLE IF NOT EXISTS collector_identity (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             source_id TEXT NOT NULL
