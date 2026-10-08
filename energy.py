@@ -159,6 +159,36 @@ def backup_database(destination: str | Path) -> dict:
         Path(str(temporary) + "-wal").unlink(missing_ok=True)
         Path(str(temporary) + "-shm").unlink(missing_ok=True)
 
+
+def get_today_circuit_totals(device_gid: str | None = None, period: str = "day") -> list[dict]:
+    """Recorded totals for local calendar day, Monday-based week, or month to date."""
+    if period not in {"day", "week", "month"}:
+        raise ValueError("Invalid cost period")
+    now = datetime.now()
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "week":
+        start -= timedelta(days=start.weekday())
+    elif period == "month":
+        start = start.replace(day=1)
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return []
+        placeholders = ",".join("?" for _ in META_CHANNELS)
+        rows = conn.execute(
+            f"""SELECT channel_name, SUM(usage_kwh) AS total_kwh,
+                       SUM(cost_cents) AS total_cents
+                FROM readings WHERE device_gid = ? AND timestamp >= ? AND timestamp <= ?
+                  AND channel_name NOT IN ({placeholders})
+                GROUP BY channel_name ORDER BY total_kwh DESC""",
+            (gid, start.isoformat(), now.isoformat(), *META_CHANNELS),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def get_circuit_week_comparison(
     device_gid: str | None = None, *, end: datetime | None = None,
 ) -> list[dict]:

@@ -22,18 +22,18 @@ For optional automatic repair of a stalled private SSH forward, see
 
 ## Native Linux or a Linux container
 
-Inside the chosen Linux system, use a versioned, reviewed source checkout at
-`/opt/energy-monitor/releases/2.3.31`. Create a dedicated non-root `energy` user,
+Inside the chosen Linux system, use a versioned, reviewed source checkout under
+`/opt/energy-monitor/releases/`. Create a dedicated non-root `energy` user,
 an owner-only `/var/lib/energy-monitor`, and the source virtualenv:
 
 ```bash
-cd /opt/energy-monitor/releases/2.3.31
+# Run from the reviewed release directory.
 python3 -m venv venv
 venv/bin/pip install -r requirements.lock
 python3 scripts/prepare_linux_deployment.py \
   --output /tmp/energy-service-plan \
   --user energy \
-  --code /opt/energy-monitor/releases/2.3.31 \
+  --code "$PWD" \
   --data /var/lib/energy-monitor \
   --environment /etc/energy-monitor/collector.env
 ```
@@ -52,6 +52,9 @@ FLASK_PORT=5051
 
 Use the same DB_PATH for every enabled service. Transfer provider credentials
 privately; never paste tokens into this document or commit runtime settings.
+Match the original collector's timezone before migrating existing naive/local
+timestamps. A new guest's UTC default is not safe for this database. Longer-term
+UTC storage and explicit reporting-timezone migration need a separate plan.
 Validate the generated units, then install only the intended services:
 
 ```bash

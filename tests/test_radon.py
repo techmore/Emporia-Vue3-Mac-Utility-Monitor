@@ -24,6 +24,21 @@ class RadonTests(unittest.TestCase):
         self.db_patch.stop()
         self.directory.cleanup()
 
+    def test_menu_indicator_is_recorded_unit_converted_and_age_labeled(self):
+        self.assertIsNone(radon.get_latest_indicator())
+        radon.ingest_observations([{**self.row, "value": 0.7}], self.now)
+        indicator = radon.get_latest_indicator()
+        self.assertAlmostEqual(indicator["pci_l"], 0.7)
+        self.assertFalse(indicator["stale"])
+        connection = energy._connect()
+        try:
+            connection.execute("UPDATE radon_readings SET timestamp=?",
+                               ((self.now - timedelta(hours=4)).isoformat(),))
+            connection.commit()
+        finally:
+            connection.close()
+        self.assertTrue(radon.get_latest_indicator()["stale"])
+
     def test_api_ingestion_preserves_units_and_displays_verified_observation(self):
         client = web.app.test_client()
         observation = {**self.row, 'sensor_id': 'a', 'value': 0.7}
