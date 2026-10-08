@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.28 - 2026-10-08
+
+- Add repeated weekday/hour baselines, sparse-history forecast gates, observed variability envelopes and explicit hourly solar self-use/export scenarios. Require two well-sampled repetitions for each predicted hour and a complete Main profile before modeling whole-panel generation offsets. Unknown export tariffs remain unknown.
+
 ## 2.3.27 - 2026-10-08
 
 - Add circuit-by-hour energy heatmap to Trends for the last seven complete days.

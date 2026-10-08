@@ -41,3 +41,27 @@ def solar_offset(consumption_kwh: float, generation_kwh: float,
         'total_value': None if credit is None else avoided + credit,
         'offset_pct': None if consumption == 0 else self_consumed / consumption * 100,
     }
+
+
+def hourly_generation_offset(loads: list[float], daily_generation_kwh: float,
+                             usage_rate_cents: float, export_rate_cents: float | None = None) -> dict:
+    """Match a complete weekly load profile to an explicit 06:00-18:00 solar scenario.
+
+    No battery, tariff netting, seasonal/site weather prediction or financing.
+    A fixed triangular production shape is illustrative, not measured generation.
+    """
+    if len(loads) != 168:
+        raise ValueError('A complete 168-hour load profile is required')
+    loads = [_number(value, 'Hourly consumption') for value in loads]
+    daily = _number(daily_generation_kwh, 'Daily generation', 1000)
+    rate = _number(usage_rate_cents, 'Usage rate') / 100
+    export_rate = None if export_rate_cents is None else _number(export_rate_cents, 'Export rate') / 100
+    shape = [max(0, 6 - abs(hour + 0.5 - 12)) for hour in range(24)]
+    generation = [daily * shape[i % 24] / sum(shape) for i in range(168)]
+    direct = sum(min(load, produced) for load, produced in zip(loads, generation, strict=True))
+    exported = sum(generation) - direct
+    credit = None if export_rate is None and exported > 1e-9 else exported * (export_rate or 0)
+    return {'generation_kwh': sum(generation), 'direct_kwh': direct,
+            'exported_kwh': exported, 'grid_kwh': sum(loads) - direct,
+            'avoided_cost': direct * rate, 'export_credit': credit,
+            'total_value': None if credit is None else direct * rate + credit}
