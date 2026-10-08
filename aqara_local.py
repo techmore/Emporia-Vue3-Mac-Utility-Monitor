@@ -88,6 +88,29 @@ def get_history() -> list[dict]:
         conn.close()
 
 
+def save_label(device_id: str, name: str) -> None:
+    """Save or clear a user-verified room name without rewriting observations."""
+    if not isinstance(device_id, str) or not 1 <= len(device_id) <= 200:
+        raise ValueError('Invalid sensor identity')
+    if (not isinstance(name, str) or len(name.strip()) > 120
+            or any(ord(c) < 32 or ord(c) == 127 for c in name)):
+        raise ValueError('Use a room name of at most 120 characters without control characters')
+    conn = energy._connect()
+    try:
+        with conn:
+            if not conn.execute('SELECT 1 FROM aqara_local_observations WHERE device_id=? LIMIT 1',
+                                (device_id,)).fetchone():
+                raise ValueError('Sensor has no recorded local observations')
+            if name.strip():
+                conn.execute('INSERT INTO aqara_local_labels(device_id,name) VALUES (?,?) '
+                             'ON CONFLICT(device_id) DO UPDATE SET name=excluded.name',
+                             (device_id, name.strip()))
+            else:
+                conn.execute('DELETE FROM aqara_local_labels WHERE device_id=?', (device_id,))
+    finally:
+        conn.close()
+
+
 def iter_history():
     """Stream the export without loading retained sensor history into memory."""
     conn = energy._connect()

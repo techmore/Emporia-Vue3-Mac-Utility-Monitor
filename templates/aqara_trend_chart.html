@@ -1,0 +1,21 @@
+{% macro draw_chart(chart, chart_id, title) %}
+{% if chart.has_data %}
+<svg class="aqara-chart" viewBox="0 0 400 185" role="img" aria-labelledby="{{ chart_id }}-title {{ chart_id }}-description">
+  <title id="{{ chart_id }}-title">{{ title }}</title>
+  <desc id="{{ chart_id }}-description">Bucket means of online collector observations. Cached snapshots can repeat earlier measurements. Missing or offline buckets break the line. Hover a dot for the range and observation count.</desc>
+  <path d="M30 30V140H380" fill="none" stroke="var(--border)"/>
+  <text x="30" y="20" fill="var(--text-light)">{{ '%.1f'|format(chart.upper) }} {{ chart.unit }}</text>
+  <text x="30" y="160" fill="var(--text-light)">{{ '%.1f'|format(chart.lower) }} {{ chart.unit }}</text>
+  {% for series in chart.series %}
+  {% for segment in series.segments %}
+  <polyline points="{{ segment|join(' ') }}" fill="none" stroke="{{ series.color }}" stroke-width="2"/>
+  {% endfor %}
+  {% for point in series.points %}
+  <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3" fill="{{ series.color }}"><title>{{ series.name }} · bucket starting {{ point.timestamp }} · mean {{ '%.1f'|format(point.value) }} {{ chart.unit }} · range {{ '%.1f'|format(point.minimum) }}–{{ '%.1f'|format(point.maximum) }} · {{ point.samples }} collector observations</title></circle>
+  {% endfor %}
+  {% endfor %}
+  <text x="30" y="180" fill="var(--text-light)" font-size="10">{{ chart.start[:16]|replace('T', ' ') }} UTC</text>
+  <text x="380" y="180" text-anchor="end" fill="var(--text-light)" font-size="10">{{ chart.end[:16]|replace('T', ' ') }} UTC</text>
+</svg>
+{% else %}<p class="card-meta">No online {{ title|lower }} observations in this window. Missing data is not zero.</p>{% endif %}
+{% endmacro %}

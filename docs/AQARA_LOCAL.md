@@ -37,6 +37,29 @@ Stop/disable the Python collector to stop recording. Stop/disable the Matter
 service only if no other integration uses that local server. Retain the SQLite
 history and commissioned fabric unless the owner explicitly requests deletion.
 
+## Sensor Display and Recorded Trends
+
+Aqara has its own desktop navigation tab and retains the mobile device tab.
+Temperature defaults to Fahrenheit; the display selector can show Celsius while
+stored observations and CSV temperature values remain Celsius. Each card shows
+a four-hour trend by default. Explore history focuses one sensor; Plot all uses
+a shared comparison axis. Windows are 4 hours, 24 hours, 7 days, 30 days and all
+retained observations. Select temperature or humidity independently.
+
+Charts use UTC buckets (5 minutes for the default view), with mean, min/max and
+online collector-observation count in the tooltip. All-history output is bounded
+to at most 121 buckets per sensor. Empty or entirely offline buckets break lines;
+zeros remain real values. Future observations are excluded from charts. These
+are collector-observation trends, not proof of fresh physical measurements;
+periodic Matter snapshots can repeat cached values. No cloud request is made
+when recorded local sensor data exists.
+
+Expand Room label to assign a verified name or leave it blank to restore the
+sensor's default name. Labels live only in aqara_local_labels in the runtime
+SQLite database and survive later collector writes; observation names and
+measurements are not rewritten. Identity, length, request size and explicit
+same-origin checks protect this endpoint. No room names are seeded in source.
+
 ## History Export
 
 The Aqara page links to `/api/aqara/local/history.csv`. The export streams batches
