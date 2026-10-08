@@ -1,0 +1,79 @@
+<div class="page">
+  <div class="page-hdr"><h2>Mitsubishi Comfort <span class="chip">Optional module</span></h2></div>
+  <section class="card">
+    <h3>Read-only HVAC monitoring</h3>
+    <p>Connect your Comfort account to add temperature, mode and heating/cooling setpoints.
+    No temperatures, schedules or operating modes are changed. No adapter reboots are sent.</p>
+    <p>Cloud retrieval time is not a sensor measurement time. Adapter “connected” is a vendor-reported
+    state, not proof of a fresh physical reading. Missing data stays unknown. This module does not measure HVAC watts.</p>
+    <p>Module status: <strong id="comfortState">{{ comfort.state }}</strong></p>
+    <p id="comfortTime">{% if comfort.queried_at %}Cloud retrieved: {{ comfort.queried_at }}{% endif %}</p>
+    <div id="comfortUnits" class="kasa-controls-grid"></div>
+  </section>
+  <section class="card" style="margin-top:16px">
+    <h3>Add / reconnect module</h3>
+    <form id="comfortConnect" class="kasa-controls-grid">
+      <label>Comfort email<input name="email" type="email" required maxlength="320" autocomplete="username"></label>
+      <label>Comfort password<input name="password" type="password" required maxlength="1024" autocomplete="current-password"></label>
+      <button type="submit">Connect read-only</button>
+    </form>
+    <p>Your password is used for sign-in only and is not saved. Access and refresh tokens are
+    stored in an owner-only file on the collector. Reconnecting replaces the connection only after successful discovery.</p>
+    <button id="comfortRemove" type="button">Remove module connection</button>
+    <p>Removal deletes saved tokens, clears current cards and stops further requests from this module.
+    Recorded history is retained. It does not delete or reset devices in Comfort.</p>
+    <p id="comfortMessage" role="status" aria-live="polite"></p>
+    <p>Continuous collection requires the separate optional <code>mitsubishi_collect.py</code> service.
+    If it is not running, snapshots become stale after three minutes.</p>
+  </section>
+  <section class="card" style="margin-top:16px">
+    <h3>Recorded cloud snapshots</h3>
+    <p>Last 100 observations. These timestamps record retrieval, not physical measurement. Missing values are unknown.</p>
+    <div style="overflow-x:auto"><table><thead><tr><th>Retrieved (UTC)</th><th>Unit</th><th>Room °C</th><th>Mode</th></tr></thead><tbody>
+    {% for row in comfort_history %}<tr><td>{{ row.queried_at }}</td><td>{{ row.name }}</td><td>{{ row.temperature_c if row.temperature_c is not none else 'Unknown' }}</td><td>{{ row.mode or 'Unknown' }}</td></tr>
+    {% else %}<tr><td colspan="4">No recorded Comfort snapshots yet.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
+<script>
+(() => {
+  const state = document.getElementById('comfortState'), units = document.getElementById('comfortUnits');
+  const message = document.getElementById('comfortMessage'), form = document.getElementById('comfortConnect');
+  function display(data) {
+    state.textContent = data.state; units.replaceChildren();
+    document.getElementById('comfortTime').textContent = data.queried_at ? 'Cloud retrieved: ' + data.queried_at : '';
+    for (const unit of data.units || []) {
+      const card = document.createElement('section'); card.className = 'card';
+      const title = document.createElement('h4'); title.textContent = unit.name; card.append(title);
+      const temp = value => value == null ? 'Unknown' : `${value.toFixed(1)} °C / ${(value*1.8+32).toFixed(1)} °F`;
+      for (const text of ['Cloud device: ' + unit.serial,
+        'Vendor connection: ' + (unit.connected ? 'Connected' : 'Unknown / disconnected'),
+        'HVAC enabled: ' + (unit.is_on === true ? 'ON' : unit.is_on === false ? 'OFF' : 'Unknown'),
+        'Room: ' + temp(unit.temperature_c), 'Heat setpoint: ' + temp(unit.heat_setpoint_c),
+        'Cool setpoint: ' + temp(unit.cool_setpoint_c), 'Mode: ' + (unit.mode || 'Unknown')]) {
+        const p = document.createElement('p'); p.textContent = text; card.append(p);
+      }
+      units.append(card);
+    }
+  }
+  async function refresh() {
+    try { const r = await fetch('/api/mitsubishi', {cache:'no-store'}); if (!r.ok) throw Error(); display(await r.json()); }
+    catch { state.textContent = 'Unavailable'; units.replaceChildren(); }
+  }
+  async function mutate(method, body) {
+    const buttons = document.querySelectorAll('#comfortConnect button, #comfortRemove');
+    buttons.forEach(button => button.disabled = true); message.textContent = 'Working…';
+    try {
+      const r = await fetch('/api/mitsubishi', {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      const data = await r.json(); if (!r.ok) throw Error(data.error || 'Request failed');
+      display(data); message.textContent = method === 'DELETE' ? 'Module removed; history retained.' : 'Connected. No HVAC commands sent.';
+    } catch(error) { message.textContent = error.message; }
+    finally { form.password.value = ''; buttons.forEach(button => button.disabled = false); }
+  }
+  form.addEventListener('submit', event => { event.preventDefault(); mutate('POST', {email:form.email.value, password:form.password.value}); });
+  document.getElementById('comfortRemove').addEventListener('click', () => {
+    if (confirm('Remove saved Comfort tokens and stop collection? Recorded history will remain.')) mutate('DELETE', {confirmed:true});
+  });
+  refresh(); setInterval(refresh, 30000);
+})();
+</script>

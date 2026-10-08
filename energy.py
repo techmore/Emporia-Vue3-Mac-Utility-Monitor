@@ -408,6 +408,12 @@ def ensure_table():
             CHECK ((status='ok' AND is_on IS NOT NULL) OR
                    (status='unavailable' AND is_on IS NULL))
         );
+        CREATE TABLE IF NOT EXISTS mitsubishi_observations (
+            serial TEXT NOT NULL,
+            queried_at TEXT NOT NULL,
+            snapshot TEXT NOT NULL,
+            PRIMARY KEY (serial, queried_at)
+        );
         CREATE TABLE IF NOT EXISTS kasa_circuit_links (
             device_id TEXT PRIMARY KEY,
             energy_device_gid TEXT NOT NULL,

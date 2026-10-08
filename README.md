@@ -2,9 +2,16 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.3.29-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.3.30-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
+
+## Optional HVAC Module
+
+**HVAC** provides read-only Mitsubishi Comfort cloud snapshots, private token-only
+sign-in and removal without deleting recorded history. It is disabled until connected;
+continuous collection uses a separate opt-in process. No HVAC commands or adapter
+reboots are sent. See [module setup and verification](docs/MITSUBISHI.md).
 
 ## Compact Menu Bar Monitor
 

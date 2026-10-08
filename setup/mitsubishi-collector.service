@@ -1,0 +1,17 @@
+[Unit]
+Description=Optional Mitsubishi Comfort read-only collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__DATA_ROOT__
+Environment=DB_PATH=__DATA_ROOT__/energy.db
+ExecStart=__PROJECT_ROOT__/venv/bin/python3 -u __PROJECT_ROOT__/mitsubishi_collect.py
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.30 - 2026-10-08
+
+- Add optional read-only Mitsubishi Comfort module: private token-only connection, cloud snapshots, separate opt-in collector, stale/offline handling and removal without deleting recorded history. No HVAC writes, adapter reboots or new dependencies. Physical telemetry validation remains required.
+
 ## 2.3.29 - 2026-10-08
 
 - Add dedicated Kasa device controls and explicit circuit associations. Require same-origin confirmation, pinned hardware identity and fresh post-command verification. Failures remain unknown; commands are never retried automatically. Whole-circuit costs are not attributed to individual switches.

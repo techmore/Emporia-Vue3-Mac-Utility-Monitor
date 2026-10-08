@@ -50,7 +50,7 @@ def validate_local_request():
     """Keep the local service local, and reject cross-origin mutation requests."""
     if request.path == '/api/panel-photos' and request.method == 'POST':
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
-    if request.path.startswith('/api/kasa/'):
+    if request.path.startswith(('/api/kasa/', '/api/mitsubishi')):
         request.max_content_length = 8192
     if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
         return jsonify({"error": "Local host required"}), 403
@@ -860,6 +860,7 @@ NAV_HTML = """
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
       <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
+      <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}">HVAC</a>
       <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}">Kasa</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
@@ -4924,6 +4925,7 @@ SETTINGS_HTML = """
 
 
       <!-- ════════════════════════════════ KASA ════════════════════════════════ -->
+      <section class="card"><h3>Optional Mitsubishi Comfort module</h3><p>Add or remove read-only HVAC monitoring independently.</p><a href="/mitsubishi">Configure Comfort connection</a></section>
       {% include "kasa_settings.html" %}
 
 
