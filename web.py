@@ -50,7 +50,7 @@ def validate_local_request():
     """Keep the local service local, and reject cross-origin mutation requests."""
     if request.path == '/api/panel-photos' and request.method == 'POST':
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
-    if request.path == '/api/kasa/probe':
+    if request.path.startswith('/api/kasa/'):
         request.max_content_length = 8192
     if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
         return jsonify({"error": "Local host required"}), 403

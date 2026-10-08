@@ -6,6 +6,7 @@ import os
 from flask import Blueprint, jsonify, request
 
 import climate
+import kasa_history
 import kasa_monitor
 import radon
 
@@ -20,13 +21,34 @@ def register_extensions(app, render, common) -> None:
 
     @blueprint.after_request
     def protect_probe_response(response):
-        if request.path == '/api/kasa/probe':
+        if request.path.startswith('/api/kasa/'):
             response.headers['Cache-Control'] = 'no-store'
         return response
 
     @blueprint.get('/api/extensions')
     def catalog():
         return jsonify({'extensions': CATALOG})
+
+    @blueprint.route('/api/kasa/devices', methods=['GET', 'POST'])
+    def kasa_devices():
+        if request.method == 'GET':
+            return jsonify({'devices': kasa_history.get_devices()})
+        data = request.get_json()
+        if set(data) - {'host', 'label'} or not isinstance(data.get('host'), str):
+            return jsonify({'error': 'Supply only a device host and label; credentials are not stored'}), 400
+        try:
+            identifier = kasa_history.register_device(data['host'], data.get('label'))
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        return jsonify({'id': identifier}), 201
+
+    @blueprint.delete('/api/kasa/devices/<identifier>')
+    def remove_kasa_device(identifier):
+        if len(identifier) != 32 or any(c not in '0123456789abcdef' for c in identifier):
+            return jsonify({'error': 'Device not found'}), 404
+        if not kasa_history.remove_device(identifier):
+            return jsonify({'error': 'Device not found'}), 404
+        return jsonify({'removed': True})
 
     @blueprint.post('/api/kasa/probe')
     def kasa_probe():

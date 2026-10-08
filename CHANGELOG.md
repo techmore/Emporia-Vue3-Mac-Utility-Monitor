@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.23 - 2026-10-07
+
+- Add private Kasa device registration and a separate bounded read-only collector with recorded query history. Preserve unknown states on failure, pin hardware identity, and remove local device history on explicit removal. Include collector modules in release verification. Automatic service startup, remote replication, physical-device verification and controls remain incomplete.
+
 ## 2.3.22 - 2026-10-07
 
 - Replace the disabled Kasa placeholder with a bounded, single-device read-only state probe. Use transient optional credentials, clear them after each request, distinguish OFF from unavailable state, and preserve unknown power telemetry. Pin dependencies and include the adapter/template in release verification. Physical-switch and remote-access tests remain unverified.

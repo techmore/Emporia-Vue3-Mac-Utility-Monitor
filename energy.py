@@ -302,6 +302,25 @@ def ensure_table():
             PRIMARY KEY (source, sensor_id, timestamp)
         );
         CREATE INDEX IF NOT EXISTS idx_radon_timestamp ON radon_readings(timestamp);
+        CREATE TABLE IF NOT EXISTS kasa_devices (
+            id TEXT PRIMARY KEY,
+            host TEXT NOT NULL UNIQUE,
+            label TEXT NOT NULL,
+            reported_device_id TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS kasa_observations (
+            device_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('ok', 'unavailable')),
+            is_on INTEGER CHECK (is_on IN (0, 1)),
+            model TEXT,
+            alias TEXT,
+            error_type TEXT,
+            PRIMARY KEY (device_id, timestamp),
+            CHECK ((status='ok' AND is_on IS NOT NULL) OR
+                   (status='unavailable' AND is_on IS NULL))
+        );
         CREATE TABLE IF NOT EXISTS radon_sync_cache_state (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             source_id TEXT NOT NULL,

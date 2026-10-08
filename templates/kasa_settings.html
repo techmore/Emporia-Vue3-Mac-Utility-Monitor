@@ -12,6 +12,18 @@
     <p id="kasaProbeStatus" role="status" aria-live="polite">Not queried. No physical device connection has been verified.</p>
     <pre id="kasaProbeResult" class="kasa-probe-result"></pre>
   </div>
+  <section class="card" style="margin-top:16px">
+    <h4>Registered devices · recorded query status</h4>
+    <p>Registration does not query a device or start collection. Run the separate collector explicitly on the always-on host. Saved query results are not a live connection indicator.</p>
+    <form id="kasaRegisterForm" class="kasa-probe-form">
+      <label>Device label<input id="kasaRegisterLabel" required maxlength="100"></label>
+      <label>Device IPv4 address<input id="kasaRegisterHost" required maxlength="45" placeholder="192.168.222.10"></label>
+      <button type="submit">Register for read-only monitoring</button>
+    </form>
+    <p id="kasaRegistryStatus" role="status" aria-live="polite"></p>
+    <div style="overflow-x:auto"><table><thead><tr><th>Device</th><th>Last recorded state</th><th>Query time (UTC)</th><th>Manage</th></tr></thead><tbody id="kasaDeviceRows"></tbody></table></div>
+    <p>Collector: <code>venv/bin/python3 -u kasa_collect.py</code>. Credentials, if needed, come from the collector's private process environment, not this registry. No switches are controlled.</p>
+  </section>
 </div>
 <script>
 document.getElementById('kasaProbeForm').addEventListener('submit', async event => {
@@ -38,4 +50,51 @@ document.getElementById('kasaProbeForm').addEventListener('submit', async event 
     username.value = ''; password.value = ''; button.disabled = false;
   }
 });
+</script>
+<script>
+(function() {
+  const status = document.getElementById('kasaRegistryStatus');
+  async function request(url, options = {}) {
+    const response = await fetch(url, options), data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+  async function refresh() {
+    const data = await request('/api/kasa/devices');
+    const rows = document.getElementById('kasaDeviceRows'); rows.replaceChildren();
+    for (const device of data.devices) {
+      const row = document.createElement('tr');
+      const state = device.status === 'ok' ? 'Last observed ' + (device.is_on === 1 ? 'ON' : 'OFF') :
+                    device.status === 'unavailable' ? 'Unknown · ' + (device.error_type || 'Unavailable') : 'Not queried';
+      for (const text of [device.label + ' · ' + device.host, state, device.queried_at || 'No query recorded']) {
+        const cell = document.createElement('td'); cell.textContent = text; row.append(cell);
+      }
+      const cell = document.createElement('td'), remove = document.createElement('button');
+      remove.type = 'button'; remove.textContent = 'Remove';
+      remove.addEventListener('click', async () => {
+        if (!confirm('Remove this device and its local query history? No physical device settings will change.')) return;
+        remove.disabled = true;
+        try {
+          await request('/api/kasa/devices/' + encodeURIComponent(device.id), {
+            method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: '{}'});
+          status.textContent = 'Device removed.'; await refresh();
+        } catch (error) { status.textContent = error.message; remove.disabled = false; }
+      });
+      cell.append(remove); row.append(cell); rows.append(row);
+    }
+    if (!data.devices.length) status.textContent = 'No registered devices. Collection is not configured here.';
+  }
+  document.getElementById('kasaRegisterForm').addEventListener('submit', async event => {
+    event.preventDefault(); const form = event.currentTarget, button = form.querySelector('button');
+    button.disabled = true;
+    try {
+      await request('/api/kasa/devices', {method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({host:document.getElementById('kasaRegisterHost').value.trim(),
+                             label:document.getElementById('kasaRegisterLabel').value.trim()})});
+      form.reset(); status.textContent = 'Registered. Start the separate collector to record queries.'; await refresh();
+    } catch (error) { status.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  refresh().catch(error => { status.textContent = 'Device list unavailable: ' + error.message; });
+})();
 </script>
