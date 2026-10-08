@@ -30,7 +30,7 @@ import energy
 import panel_photos
 from extensions import HOUSE_CSS, register_extensions
 from panel_model import breaker_load
-from solar_model import solar_offset
+from solar_model import hourly_generation_offset, solar_offset
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
@@ -119,6 +119,16 @@ _refresh_runtime_config()
 # ── Shared design tokens (mirrors techmore.github.io) ─────────────────────────
 BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+.power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px; }
+.power-heatmap th { font-size: 0.7rem; padding: 3px; }
+.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); min-width: 140px; text-align: left; }
+.power-heatmap .heat-cell { padding: 0; height: 20px; min-width: 8px; border-radius: 2px; }
+.heat-missing { background: var(--stone-200); opacity: 0.15; }
+.heat-1 { background: var(--olive-900); }
+.heat-2 { background: var(--olive-700); }
+.heat-3 { background: var(--olive-500); }
+.heat-4 { background: var(--olive-300); }
+.heat-5 { background: var(--olive-100); }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -2636,6 +2646,63 @@ TRENDS_HTML = """
     <span class="section-sub">14-day usage analysis</span>
   </div>
 
+  <section class="card" style="margin-bottom:1.5rem;">
+    <h2>Weekly Power Heatmap</h2>
+    <p class="card-meta">Last seven complete days · hourly recorded kWh · brighter means more energy.
+      Blank cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
+      Sample counts do not prove coverage; imports may represent longer intervals.</p>
+    {% if heatmap.circuits %}
+    <div style="overflow-x:auto;">
+      <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
+        <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
+        <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ hour[-2:] if hour[-2:] in ['00','06','12','18'] else '' }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
+        {% for cell in circuit.cells %}<td class="heat-cell {{ 'heat-' ~ cell.level if cell else 'heat-missing' }}"
+          tabindex="0" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
+          title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }}{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% else %}<p>No circuit history recorded in this window.</p>{% endif %}
+  </section>
+
+  <section class="card" style="margin-bottom:1.5rem;">
+    <h2>Typical Week &amp; Cost Forecast</h2>
+    <p class="card-meta">Last 28 complete days · Monday–Sunday. Each predicted hour needs at least
+      two matching weekdays with 57 or more distinct recorded minutes. Hourly imports alone cannot qualify.
+      This is a repeat-pattern baseline, not a weather-adjusted forecast. Missing hours remain unknown.</p>
+    {% if pattern.circuits %}
+    <div style="overflow-x:auto;">
+      <table class="power-heatmap" aria-label="Typical weekly circuit energy">
+        <thead><tr><th>Circuit</th>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th colspan="24">{{ day }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for circuit in pattern.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
+        {% for cell in circuit.cells %}<td tabindex="0" class="heat-cell {{ 'heat-' ~ ([5, (cell.kwh / pattern_max * 5)|int + 1]|min) if cell else 'heat-missing' }}"
+          title="{{ circuit.name }} · {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][loop.index0 // 24] }} {{ '%02d'|format(loop.index0 % 24) }}:00{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.weeks }} qualifying weeks · observed range {{ '%.3f'|format(cell.low) }}–{{ '%.3f'|format(cell.high) }} kWh{% else %} · Insufficient repeated history{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    <table><thead><tr><th>Circuit</th><th>Supported hours</th><th>Typical week</th><th>Usage cost</th></tr></thead><tbody>
+      {% for circuit in pattern.circuits %}<tr><td>{{ circuit.name }}</td><td>{{ circuit.supported }}/168</td>
+      {% if circuit.weekly_kwh is not none %}<td>{{ '%.2f'|format(circuit.weekly_kwh) }} kWh</td><td>${{ '%.2f'|format(circuit.weekly_kwh * rate) }}</td>
+      {% else %}<td colspan="2">Collecting repeated history — no complete-week estimate</td>{% endif %}</tr>{% endfor %}
+    </tbody></table>
+    {% else %}<p>No qualifying circuit history yet.</p>{% endif %}
+    {% if pattern.main and pattern.main.weekly_kwh is not none %}
+    <p>Whole-panel typical week: <strong>{{ '%.2f'|format(pattern.main.weekly_kwh) }} kWh · ${{ '%.2f'|format(pattern.main.weekly_kwh * rate) }}</strong>.
+      Observed hourly-envelope cost: ${{ '%.2f'|format(pattern.main.low_kwh * rate) }}–${{ '%.2f'|format(pattern.main.high_kwh * rate) }}.
+      This envelope is not a statistical confidence interval. Fixed charges excluded.</p>
+    {% else %}<p>Whole-panel forecast unavailable: {{ pattern.main.supported if pattern.main else 0 }}/168 hours supported. Circuit totals are not substituted for mains.</p>{% endif %}
+    <h3>Hourly Solar Offset Scenario</h3>
+    <form method="get" action="/trends">
+      <label>Assumed generation (kWh/day) <input name="heatmap_generation" type="number" min="0" max="1000" step="0.1" value="{{ heatmap_generation }}"></label>
+      <label>Export credit (¢/kWh, blank = unknown) <input name="heatmap_export" type="number" min="0" max="1000" step="0.01" value="{{ heatmap_export if heatmap_export is not none else '' }}"></label>
+      <button type="submit">Compare Hourly Offset</button>
+    </form>
+    <p class="card-meta">Illustrative triangular generation from 06:00–18:00, peaking at noon; not a site/weather prediction.
+      Direct use is matched hour by hour. No battery, financing, tax incentives or tariff net-metering assumptions.</p>
+    {% if hourly_solar %}<p>Weekly generation {{ '%.2f'|format(hourly_solar.generation_kwh) }} kWh · direct use {{ '%.2f'|format(hourly_solar.direct_kwh) }} kWh · exported {{ '%.2f'|format(hourly_solar.exported_kwh) }} kWh · remaining grid {{ '%.2f'|format(hourly_solar.grid_kwh) }} kWh.</p>
+    <p>Avoided usage cost <strong>${{ '%.2f'|format(hourly_solar.avoided_cost) }}</strong> · export credit {{ ('$%.2f'|format(hourly_solar.export_credit)) if hourly_solar.export_credit is not none else 'unknown — tariff required' }}.</p>
+    {% else %}<p>Collect more repeated whole-panel history before calculating an hourly generation offset. The existing Reports scenario remains available for manually entered totals.</p>{% endif %}
+  </section>
+
   {% if trend.slope is not none %}
   <div class="trend-banner" style="margin-bottom:1.5rem;">
     <span class="trend-icon">{{ '📈' if trend.slope > 0.1 else ('📉' if trend.slope < -0.1 else '➡️') }}</span>
@@ -4029,6 +4096,19 @@ def circuit_detail(circuit_name, period="day"):
 @app.route("/trends")
 def trends_page():
     com = _common()
+    try:
+        generation = _parse_nonnegative_float(request.args.get('heatmap_generation', '10'), 'generation')
+        raw_export = request.args.get('heatmap_export', '').strip()
+        export_rate = _parse_nonnegative_float(raw_export, 'export rate') if raw_export else None
+        if generation > 1000 or (export_rate is not None and export_rate > 1000):
+            raise ValueError('Scenario values must not exceed 1000')
+    except ValueError as exc:
+        return str(exc), 400
+    pattern = energy.get_weekly_power_pattern(com['active_device_gid'])
+    main = pattern['main']
+    hourly_solar = (hourly_generation_offset(
+        [cell['kwh'] for cell in main['cells']], generation, energy.RATE_CENTS, export_rate,
+    ) if main and main['weekly_kwh'] is not None else None)
     trend = energy.get_trend(14)
     mc = energy.get_month_comparison(com["active_device_gid"])
     summary_24 = energy.get_summary(24, com["active_device_gid"])
@@ -4088,6 +4168,13 @@ def trends_page():
         TRENDS_HTML,
         active_page="trends",
         trend=trend,
+        heatmap=energy.get_power_heatmap(com["active_device_gid"]),
+        pattern=pattern,
+        pattern_max=max((cell['kwh'] for row in pattern['circuits'] for cell in row['cells']
+                         if cell), default=0) or 1,
+        heatmap_generation=generation,
+        heatmap_export=export_rate,
+        hourly_solar=hourly_solar,
         trend_json=_fill_gaps(trend["daily"], "day"),
         hourly_json=_fill_gaps(energy.get_hourly_data(7, com["active_device_gid"]), "hour", hourly=True),
         mc={"this_month": mc["this_month"], "last_month": mc["last_month"]},

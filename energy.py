@@ -217,6 +217,90 @@ def get_circuit_week_comparison(
     return sorted(result, key=lambda row: row["current_kwh"], reverse=True)
 
 
+def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
+    """Recorded circuit energy in hourly buckets; absent hours are never zero-filled."""
+    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = boundary - timedelta(days=7)
+    hours = [(start + timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        rows = conn.execute(
+            """SELECT channel_name, strftime('%Y-%m-%dT%H', timestamp) hour,
+                      SUM(usage_kwh) kwh, COUNT(*) samples
+               FROM readings WHERE device_gid = ? AND timestamp >= ? AND timestamp < ?
+                 AND usage_kwh >= 0
+               GROUP BY channel_name, hour""",
+            (gid, start.isoformat(), boundary.isoformat()),
+        ).fetchall() if gid else []
+    finally:
+        conn.close()
+    channels = {}
+    for row in rows:
+        name = row['channel_name']
+        if name and name not in META_CHANNELS:
+            channels.setdefault(name, {})[row['hour']] = dict(row)
+    maximum = max((row['kwh'] for cells in channels.values() for row in cells.values()),
+                  default=0) or 1
+    return {
+        'hours': hours,
+        'days': [(start + timedelta(days=i)).strftime('%a %m/%d') for i in range(7)],
+        'start': start.isoformat(), 'end': boundary.isoformat(),
+        'circuits': [{'name': name, 'cells': [
+            ({**cells[hour], 'level': min(5, int(cells[hour]['kwh'] / maximum * 5) + 1)}
+             if hour in cells else None) for hour in hours
+        ]} for name, cells in sorted(channels.items())],
+    }
+
+
+def _weekly_pattern(rows: list[dict]) -> dict:
+    """Compare repeated well-sampled hours, without filling gaps or summing circuits as mains."""
+    patterns = {}
+    for row in rows:
+        name = row['channel_name']
+        if not name or name in META_CHANNELS - {'Main'}:
+            continue
+        cells = patterns.setdefault(name, [[] for _ in range(168)])
+        if 57 <= row['minutes'] <= 60 and row.get('samples', row['minutes']) == row['minutes']:
+            moment = datetime.fromisoformat(row['hour'])
+            cells[moment.weekday() * 24 + moment.hour].append(row['kwh'])
+    results = []
+    for name, values in sorted(patterns.items()):
+        cells = []
+        for samples in values:
+            cells.append({'kwh': sum(samples) / len(samples), 'low': min(samples),
+                          'high': max(samples), 'weeks': len(samples)}
+                         if len(samples) >= 2 else None)
+        supported = sum(cell is not None for cell in cells)
+        results.append({'name': name, 'cells': cells, 'supported': supported,
+                        'weekly_kwh': sum(cell['kwh'] for cell in cells) if supported == 168 else None,
+                        'low_kwh': sum(cell['low'] for cell in cells) if supported == 168 else None,
+                        'high_kwh': sum(cell['high'] for cell in cells) if supported == 168 else None})
+    return {'circuits': [row for row in results if row['name'] != 'Main'],
+            'main': next((row for row in results if row['name'] == 'Main'), None)}
+
+
+def get_weekly_power_pattern(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
+    """Four-week same-weekday/hour baseline, requiring two >=95%-sampled repetitions."""
+    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        rows = conn.execute(
+            """SELECT channel_name, strftime('%Y-%m-%dT%H:00:00',timestamp) hour,
+                      SUM(usage_kwh) kwh,
+                      COUNT(*) samples,
+                      COUNT(DISTINCT strftime('%Y-%m-%dT%H:%M',timestamp)) minutes
+               FROM readings WHERE device_gid=? AND timestamp>=? AND timestamp<?
+                 AND usage_kwh>=0 GROUP BY channel_name,hour""",
+            (gid, (boundary-timedelta(days=28)).isoformat(), boundary.isoformat()),
+        ).fetchall() if gid else []
+    finally:
+        conn.close()
+    return {**_weekly_pattern([dict(row) for row in rows]),
+            'start': (boundary-timedelta(days=28)).isoformat(), 'end': boundary.isoformat()}
+
+
 def ensure_table():
     """Create the readings table and indexes if they don't exist yet."""
     conn = _connect()
