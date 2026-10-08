@@ -4385,10 +4385,17 @@ function saveLayout() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({slots, panel_slots: parseInt(document.getElementById('panelSize').value) || null})
-  }).then(r => r.json()).then(() => {
+  }).then(async r => {
+    const result = await r.json();
+    if (!r.ok || result.ok !== true) throw new Error(result.error || 'Save failed');
     const m = document.getElementById('saveMsg');
+    m.textContent = 'Saved';
     m.style.display = 'inline';
     setTimeout(() => m.style.display = 'none', 2500);
+  }).catch(error => {
+    const m = document.getElementById('saveMsg');
+    m.textContent = 'Not saved: ' + error.message;
+    m.style.display = 'inline';
   });
 }
 document.getElementById('panelSize').addEventListener('change', function() {
@@ -5135,6 +5142,8 @@ def panel_edit_page():
 @app.route("/api/panel-layout", methods=["POST"])
 def api_panel_layout():
     data = request.get_json(force=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "Request body must be an object"}), 400
     slots = data.get("slots", [])
     try:
         if not isinstance(slots, list):

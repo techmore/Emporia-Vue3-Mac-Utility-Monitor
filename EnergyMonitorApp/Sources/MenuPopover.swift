@@ -433,7 +433,8 @@ struct MonitorPopover: View {
                          (monitor.summary?.monthDaysRecorded).map { "\($0) day\($0 == 1 ? "" : "s") recorded" } ?? "No data")
             }
             if let slots = monitor.summary?.breakerSlots, !slots.isEmpty {
-                LazyVStack(spacing: 3) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 5),
+                                    GridItem(.flexible(), spacing: 5)], spacing: 3) {
                     ForEach(slots.sorted { $0.slot < $1.slot }) { slot in breakerCard(slot) }
                 }
             } else {
@@ -466,10 +467,10 @@ struct MonitorPopover: View {
         return Button {
             if let circuit = slot.circuit { monitor.select(circuit) }
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 3) {
                 Text(String(format: "%02d", slot.slot))
                     .font(.caption2.monospacedDigit().weight(.medium))
-                    .foregroundStyle(Theme.textLight).frame(width: 20, alignment: .leading)
+                    .foregroundStyle(Theme.textLight).frame(width: 16, alignment: .leading)
                 Text(slot.displayName).font(.system(size: 11, weight: .medium)).lineLimit(1)
                     .foregroundStyle(active ? Theme.text : Theme.textLight)
                 if peak {
@@ -479,7 +480,7 @@ struct MonitorPopover: View {
                 Spacer(minLength: 2)
                 Text(watts.map { String(format: "%.0f W", $0) } ?? (active ? "—" : "Empty"))
                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.textLight)
-                    .frame(width: 55, alignment: .trailing)
+                    .frame(width: 40, alignment: .trailing)
                 if active, let amps = slot.amps {
                     Text("\(slot.poles)P/\(amps)A").font(.system(size: 9))
                         .foregroundStyle(slot.loadState == "danger" || slot.loadState == "warn" ? fill : Theme.textLight)
