@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.13 - Unreleased
+
+- Add a loopback-only validated radon observation API for future verified adapters, preserving original units and measurement timestamps with atomic batch rejection and idempotent retries. EcoSense authentication and timestamp semantics remain unverified; no automatic collection is claimed.
+
 ## 2.3.12 - 2026-10-07
 
 - Keep Circuits, Panel Editor, Import, Aqara Sensors and Logs inside a responsive Settings workspace shell with selected-page navigation and preserved direct URLs. Separate configuration from analysis links.

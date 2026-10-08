@@ -16,6 +16,25 @@ and does not enter the energy readings table. Batch validation precedes writes;
 conflicting retries roll back the entire transaction. History queries require a
 source and sensor identity and return only recorded samples, without gap filling.
 
+## Local Ingestion API
+
+Verified adapters may POST a JSON object containing an `observations` array to
+`/api/radon/readings` on the collector's loopback server. Each observation uses
+the fields documented above. This endpoint uses the same local-host,
+same-origin mutation protections as the rest of the app; do not expose it publicly.
+Remote access requires a private tunnel, not a public listener.
+
+The response reports `inserted` and `duplicates`. Invalid units, missing or
+timezone-free measurement timestamps, unavailable values and conflicting retries
+return HTTP 400 without partial inserts. An exact retry does not duplicate data.
+The endpoint does not authenticate to EcoSense or infer timestamps. Its tests use
+synthetic fixtures, including 0.7 pCi/L = 25.9 Bq/m3; those fixtures are not the
+user's confirmed device observation and are never inserted into production.
+
+After ingestion, refresh `/radon` and select the source/sensor and history window.
+Readings are stored in `energy.db`'s `radon_readings` table, separate from energy
+consumption. Collector-to-Mac radon synchronization remains to be implemented.
+
 Next steps:
 1. Verify the user's actual EcoQube model and access route (vendor API, existing
    Home Assistant entity, or explicitly approved community cloud adapter).

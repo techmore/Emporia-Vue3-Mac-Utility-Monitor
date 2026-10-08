@@ -42,6 +42,13 @@ def register_extensions(app, render, common) -> None:
                       sensors=sensors, selected=selected, rows=rows, days=days,
                       chart=radon.hourly_chart(rows, days=days), **common())
 
+    @blueprint.post('/api/radon/readings')
+    def radon_readings():
+        try:
+            return jsonify(radon.ingest_observations(request.get_json().get('observations')))
+        except (ValueError, TypeError) as exc:
+            return jsonify({'error': str(exc)}), 400
+
     @blueprint.get('/api/climate/replay')
     def replay():
         try:
