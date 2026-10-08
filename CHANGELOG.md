@@ -2,6 +2,7 @@
 
 ## 2.3.10 - Unreleased
 
+- Persist bounded collector health report history without storing error text; never backfill health events from imported readings.
 - Add selected-device recorded capture-quality strips for 48 hours and 7 days to Logs, with accessible hourly details and explicit coverage-versus-uptime limitations.
 
 ## 2.3.9 - 2026-10-07

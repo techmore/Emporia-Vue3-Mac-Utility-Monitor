@@ -51,3 +51,19 @@ class CaptureHistoryTests(unittest.TestCase):
         self.assertIn('Recorded Capture Quality', html)
         self.assertIn('not process uptime', html)
         self.assertIn('7 days', html)
+
+    def test_health_reports_are_recorded_without_error_text_and_not_backfilled(self):
+        status_path = str(Path(self.directory.name) / 'status.json')
+        with patch.object(energy, 'POLLER_STATUS_FILE', status_path):
+            energy.write_poller_status(True)
+            energy.write_poller_status(False, error='private test error', consecutive_errors=1)
+        conn = energy._connect()
+        rows = conn.execute('SELECT timestamp,ok FROM poller_health_events ORDER BY id').fetchall()
+        conn.close()
+        self.assertEqual([row['ok'] for row in rows], [1, 0])
+        end = datetime.fromisoformat(rows[-1]['timestamp']).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        history = energy.get_capture_history(48, 'missing', end)
+        self.assertEqual(history[-1]['health_reports'], 2)
+        self.assertEqual(history[-1]['reported_errors'], 1)
+        self.assertEqual(history[-1]['state'], 'missing')
+        self.assertTrue(all(bucket['health_reports'] == 0 for bucket in history[:-1]))

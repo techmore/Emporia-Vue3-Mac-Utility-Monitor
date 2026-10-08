@@ -2847,12 +2847,12 @@ LOG_HTML = """
       {% endfor %}
     </div>
     <details><summary>Hourly capture details · {{ hours }} hours</summary>
-      <div style="max-height:240px;overflow:auto;"><table><thead><tr><th>Hour (collector local time)</th><th>Recorded minutes</th><th>Coverage</th></tr></thead><tbody>
-      {% for bucket in buckets %}<tr><td>{{ bucket.hour }}</td><td>{{ bucket.minutes }}/60 · {{ bucket.state }}</td><td>{{ bucket.coverage_pct }}%</td></tr>{% endfor %}
+      <div style="max-height:240px;overflow:auto;"><table><thead><tr><th>Hour (collector local time)</th><th>Recorded minutes</th><th>Coverage</th><th>Collector health reports / errors</th></tr></thead><tbody>
+      {% for bucket in buckets %}<tr><td>{{ bucket.hour }}</td><td>{{ bucket.minutes }}/60 · {{ bucket.state }}</td><td>{{ bucket.coverage_pct }}%</td><td>{{ bucket.health_reports }} / {{ bucket.reported_errors }}</td></tr>{% endfor %}
       </tbody></table></div>
     </details>
     {% endfor %}
-    <p>Green: at least 95% of minute positions recorded. Amber: partial. Gray: no recorded Main samples—not proof that the collector was offline. Refresh to update these historical strips.</p>
+    <p>Green: at least 95% of minute positions recorded. Amber: partial. Gray: no recorded Main samples—not proof that the collector was offline. Health reports describe this collector, not individual channels; history starts when this version is installed. Missing reports are unknown, not proven outages. Refresh to update these historical strips.</p>
   </section>
   <div class="section-head" style="margin-top:1.5rem;">
     <h2>Poller Log</h2>

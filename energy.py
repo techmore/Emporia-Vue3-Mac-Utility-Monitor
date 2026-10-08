@@ -42,6 +42,20 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
         _write_json_file(POLLER_STATUS_FILE, data)
     except Exception:
         logger.exception("Could not write poller heartbeat")
+        return
+    conn = None
+    try:
+        conn = _connect()
+        with conn:
+            conn.execute('INSERT INTO poller_health_events(timestamp,ok) VALUES (?,?)',
+                         (data['timestamp'], int(ok)))
+            conn.execute('DELETE FROM poller_health_events WHERE timestamp<?',
+                         ((datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
+    except Exception:
+        logger.exception("Could not record poller health history")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def read_poller_status() -> dict:
@@ -229,6 +243,13 @@ def ensure_table():
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS poller_health_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            ok INTEGER NOT NULL CHECK (ok IN (0,1))
+        );
+        CREATE INDEX IF NOT EXISTS idx_poller_health_timestamp
+            ON poller_health_events(timestamp);
         CREATE TABLE IF NOT EXISTS device_capabilities (
             device_gid TEXT PRIMARY KEY,
             service_mode TEXT NOT NULL,
@@ -2290,16 +2311,24 @@ def get_capture_history(hours: int, device_gid: str | None = None,
             WHERE device_gid=? AND channel_name='Main' AND usage_kwh>=0
               AND timestamp>=? AND timestamp<? GROUP BY hour''',
                             (gid, start.isoformat(), end.isoformat())).fetchall() if gid else []
+        health = conn.execute('''SELECT substr(timestamp,1,13) AS hour,
+            COUNT(*) AS reports,SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS errors
+            FROM poller_health_events WHERE timestamp>=? AND timestamp<? GROUP BY hour''',
+                              (start.isoformat(), end.isoformat())).fetchall()
     finally:
         conn.close()
     counts = {row['hour']: row['minutes'] for row in rows}
+    health_counts = {row['hour']: dict(row) for row in health}
     result = []
     for index in range(hours):
         stamp = start + timedelta(hours=index)
         minutes = min(60, counts.get(stamp.isoformat()[:13], 0))
         state = 'dense' if minutes >= 57 else 'partial' if minutes else 'missing'
+        reports = health_counts.get(stamp.isoformat()[:13], {})
         result.append({'hour': stamp.isoformat(), 'minutes': minutes,
-                       'coverage_pct': round(minutes / 60 * 100), 'state': state})
+                       'coverage_pct': round(minutes / 60 * 100), 'state': state,
+                       'health_reports': reports.get('reports', 0),
+                       'reported_errors': reports.get('errors', 0)})
     return result
 
 
