@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.20 - 2026-10-07
+
+- Reject oversized radon numbers and timezone conversions outside the supported UTC date range as validation errors, preserving atomic ingestion and avoiding HTTP 500 responses.
+
 ## 2.3.19 - 2026-10-07
 
 - Scope responsive recommendation/billing grids and wrapping review rows to Reports, preventing mobile overflow exposed by real circuit history. Preserve table-local scrolling.
