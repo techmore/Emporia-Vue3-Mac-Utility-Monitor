@@ -1,4 +1,5 @@
 import json
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import energy
 import mitsubishi
+import mitsubishi_collect
 import web
 from runtime_store import write_private_json
 
@@ -142,3 +144,33 @@ class ComfortTests(unittest.TestCase):
             with self.assertRaises(mitsubishi.ComfortError):
                 mitsubishi.connect('user@example.com', 'password')
         self.assertFalse(mitsubishi._path('private.json').exists())
+
+    def test_collector_backs_off_rejected_authentication(self):
+        self.connect()
+        with patch.object(sys, 'argv', ['mitsubishi_collect.py']), \
+                patch.object(mitsubishi, 'poll', return_value={'state':'authentication_rejected'}) as poll, \
+                patch.object(mitsubishi_collect, 'monotonic', return_value=0), \
+                patch.object(mitsubishi_collect, 'sleep', side_effect=[None, KeyboardInterrupt]):
+            with self.assertRaises(KeyboardInterrupt):
+                mitsubishi_collect.main()
+        self.assertEqual(poll.call_count, 1)
+
+    def test_reconnect_bypasses_collector_auth_backoff(self):
+        self.connect()
+        sleeps = []
+        def sleep(_):
+            sleeps.append(True)
+            if len(sleeps) == 1:
+                import os
+                path = mitsubishi._path('private.json')
+                stamp = path.stat().st_mtime_ns + 1_000_000
+                os.utime(path, ns=(stamp, stamp))
+            else:
+                raise KeyboardInterrupt
+        with patch.object(sys, 'argv', ['mitsubishi_collect.py']), \
+                patch.object(mitsubishi, 'poll', return_value={'state':'authentication_rejected'}) as poll, \
+                patch.object(mitsubishi_collect, 'monotonic', return_value=0), \
+                patch.object(mitsubishi_collect, 'sleep', side_effect=sleep):
+            with self.assertRaises(KeyboardInterrupt):
+                mitsubishi_collect.main()
+        self.assertEqual(poll.call_count, 2)
