@@ -46,3 +46,42 @@ class PanelEditorTests(unittest.TestCase):
                                         content_type='application/json')
             self.assertEqual(response.status_code, 400, body)
             self.assertEqual(energy.get_panel_layout(), before)
+
+    def test_channel_autoplacement_preserves_reserved_unmonitored_breakers(self):
+        for attributes in ({'label': 'Unmonitored oven'}, {'note': 'Physical breaker'},
+                           {'amps': 30}, {'poles': 2}):
+            reserved = {'slot': 1, 'channel_name': None, **attributes}
+            layout = {1: reserved, 2: {'slot': 2, 'channel_name': None}}
+            seeded = web._seed_layout_from_latest(layout, [
+                {'channel_name': 'New sensor', 'channel_num': 1}], ['New sensor'])
+            self.assertEqual(seeded[1], reserved)
+            normalized, size = web._normalize_panel_layout(seeded, ['New sensor'], 40)
+            self.assertEqual(normalized[1], reserved)
+            self.assertEqual(normalized[2]['channel_name'], 'New sensor')
+            self.assertEqual(size, 40)
+            self.assertEqual(layout[1], reserved)
+
+    def test_full_panel_distinguishes_unmonitored_empty_and_no_measurement(self):
+        energy.save_panel_layout([{'slot': 1, 'channel_name': None,
+                                  'label': 'Unmonitored oven', 'amps': 30, 'poles': 2}])
+        with patch.object(web, '_load_panel_slots', return_value=40):
+            response = self.client.get('/api/menu-summary')
+            self.assertEqual(response.status_code, 200)
+            slots = response.get_json()['breaker_slots']
+            self.assertEqual(len(slots), 40)
+            self.assertEqual({row['slot'] for row in slots}, set(range(1, 41)))
+            self.assertEqual(slots[0]['slot_state'], 'unmonitored')
+            self.assertIsNone(slots[0]['watts'])
+            self.assertIsNone(slots[0]['load_percent'])
+            self.assertEqual(slots[1]['slot_state'], 'empty')
+            page = self.client.get('/circuits').get_data(as_text=True)
+            self.assertIn('Unmonitored oven', page)
+            self.assertIn('Unmonitored', page)
+            self.assertIn('2P/30A', page)
+
+    def test_editor_can_expand_small_panel_to_forty_slots(self):
+        with patch.object(web, '_load_panel_slots', return_value=16):
+            html = self.client.get('/panel').get_data(as_text=True)
+        self.assertEqual(html.count('class="slot-row" data-slot='), 40)
+        self.assertIn('data-slot="40" style="display:none"', html)
+        self.assertIn('parseInt(row.dataset.slot) <= panelSize', html)

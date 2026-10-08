@@ -1073,7 +1073,13 @@ PANEL_FRAGMENT_HTML = """
     {% else %}
     <div class="breaker empty">
       <div class="breaker-num">{{ b.slot }}</div>
-      <div class="breaker-body"><div class="breaker-name" style="color:var(--olive-700)">—</div></div>
+      <div class="breaker-body">
+        <div class="breaker-name" style="color:var(--olive-700)">{{ b.label }}</div>
+        <div class="breaker-watts">{{ 'Unmonitored' if b.label != '—' or b.note or b.amps or b.poles == 2 else 'Empty' }}
+          {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
+        </div>
+        {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
+      </div>
     </div>
     {% endif %}
   {%- endmacro %}
@@ -3177,11 +3183,18 @@ def _load_panel_slots(default: int = 16) -> int:
     return max(1, value)
 
 
+def _panel_slot_reserved(row: dict) -> bool:
+    return (any(row.get(field) for field in ("channel_name", "label", "note", "amps"))
+            or row.get("poles", 1) not in (None, 1))
+
+
 def _normalize_panel_layout(layout: dict[int, dict], channel_names: list[str], minimum_slots: int = 20) -> tuple[dict[int, dict], int]:
     normalized = {slot: dict(row) for slot, row in layout.items()}
     assigned = {row.get("channel_name") for row in normalized.values() if row.get("channel_name")}
     missing = [name for name in channel_names if name not in assigned]
-    empty_slots = sorted(slot for slot, row in normalized.items() if not row.get("channel_name"))
+    # Labeled or rated unmonitored breakers are reserved physical positions.
+    empty_slots = sorted(slot for slot, row in normalized.items()
+                         if not _panel_slot_reserved(row))
 
     for name in missing:
         if empty_slots:
@@ -3222,6 +3235,8 @@ def _seed_layout_from_latest(
         if slot < 1:
             continue
         current = seeded.get(slot)
+        if current and not current.get("channel_name") and _panel_slot_reserved(current):
+            continue
         if current and current.get("channel_name") and current.get("channel_name") != name:
             continue
         seeded[slot] = {
@@ -4231,6 +4246,7 @@ def api_menu_summary():
         )
         breaker_slots.append({
             "slot": slot,
+            "slot_state": "monitored" if name else "unmonitored" if _panel_slot_reserved(row) else "empty",
             "channel_name": name,
             "display_name": row.get("label") or name or "—",
             "amps": row.get("amps"),
@@ -4338,7 +4354,7 @@ PANEL_EDIT_HTML = """
 
   <div class="panel-edit-grid" id="editGrid">
     {% for b in breakers %}
-    <div class="slot-row" data-slot="{{ b.slot }}">
+    <div class="slot-row" data-slot="{{ b.slot }}"{% if b.slot > panel_slots %} style="display:none"{% endif %}>
       <div class="slot-num">{{ b.slot }}</div>
       <select class="sel-circuit" title="Circuit channel">
         <option value="">— empty —</option>
@@ -4372,7 +4388,9 @@ PANEL_EDIT_HTML = """
 </div>
 <script>
 function saveLayout() {
-  const rows = document.querySelectorAll('.slot-row');
+  const panelSize = parseInt(document.getElementById('panelSize').value);
+  const rows = Array.from(document.querySelectorAll('.slot-row'))
+    .filter(row => parseInt(row.dataset.slot) <= panelSize);
   const slots = Array.from(rows).map(row => ({
     slot:         parseInt(row.dataset.slot),
     channel_name: row.querySelector('.sel-circuit').value || null,
@@ -5123,7 +5141,7 @@ def panel_edit_page():
         if r["channel_name"] not in _MAINS_NAMES and r["channel_name"] not in _SKIP_NAMES
     ])
     breakers = []
-    for slot in range(1, panel_slots + 1):
+    for slot in range(1, max(panel_slots, 40) + 1):
         row = layout.get(slot, {})
         name = row.get("channel_name")
         breakers.append({

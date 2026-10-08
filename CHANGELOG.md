@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.9 - 2026-10-07
+
+- Allow the panel editor to expand from 16 to 40 slots without a prior reload; save only selected-size rows.
+- Preserve labeled, noted, rated, or double-pole unmonitored breaker slots during automatic channel placement. Distinguish unmonitored from empty breakers in web and native panels without fabricated power/load readings.
+
 ## 2.3.8 - 2026-10-07
 
 - Restore the compact native menu to side-by-side physical slot rows: 1/2, 3/4, and onward.

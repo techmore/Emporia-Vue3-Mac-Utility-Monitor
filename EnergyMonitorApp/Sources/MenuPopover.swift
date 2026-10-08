@@ -20,6 +20,7 @@ struct MenuBreakerSlot: Decodable, Identifiable {
     let loadState: String?
     let usageState: String?
     let isPeak: Bool?
+    let slotState: String?
     var id: Int { slot }
     var circuit: MenuCircuit? {
         guard let channelName = channelName else { return nil }
@@ -478,10 +479,10 @@ struct MonitorPopover: View {
                         .accessibilityLabel("Top usage")
                 }
                 Spacer(minLength: 2)
-                Text(watts.map { String(format: "%.0f W", $0) } ?? (active ? "—" : "Empty"))
+                Text(watts.map { String(format: "%.0f W", $0) } ?? (active ? "—" : slot.slotState == "unmonitored" ? "Unmon." : "Empty"))
                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.textLight)
                     .frame(width: 40, alignment: .trailing)
-                if active, let amps = slot.amps {
+                if let amps = slot.amps {
                     Text("\(slot.poles)P/\(amps)A").font(.system(size: 9))
                         .foregroundStyle(slot.loadState == "danger" || slot.loadState == "warn" ? fill : Theme.textLight)
                         .frame(width: 42, alignment: .trailing)
