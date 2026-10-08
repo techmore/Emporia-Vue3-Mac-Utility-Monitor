@@ -29,10 +29,13 @@ def register_device(host: str, label: str) -> str:
 def get_devices() -> list[dict]:
     conn = energy._connect()
     try:
-        return [dict(row) for row in conn.execute('''SELECT d.*, o.timestamp AS queried_at,
-            o.status,o.is_on,o.model,o.alias,o.error_type FROM kasa_devices d
+        return [dict(row) for row in conn.execute('''SELECT d.*, COALESCE(t.tag, 'Untagged') AS tag, o.timestamp AS queried_at,
+            o.status,o.is_on,o.model,o.alias,o.error_type,
+            m.brightness,m.duration_ms,m.source AS observation_source FROM kasa_devices d
+            LEFT JOIN kasa_device_tags t ON t.device_id=d.id
             LEFT JOIN kasa_observations o ON o.device_id=d.id AND o.timestamp=(
                 SELECT MAX(timestamp) FROM kasa_observations WHERE device_id=d.id)
+            LEFT JOIN kasa_query_metrics m ON m.device_id=d.id AND m.timestamp=o.timestamp
             ORDER BY d.created_at,d.id''')]
     finally:
         conn.close()
@@ -43,6 +46,8 @@ def remove_device(identifier: str) -> bool:
     try:
         with conn:
             conn.execute('DELETE FROM kasa_circuit_links WHERE device_id=?', (identifier,))
+            conn.execute('DELETE FROM kasa_device_tags WHERE device_id=?', (identifier,))
+            conn.execute('DELETE FROM kasa_query_metrics WHERE device_id=?', (identifier,))
             conn.execute('DELETE FROM kasa_observations WHERE device_id=?', (identifier,))
             return conn.execute('DELETE FROM kasa_devices WHERE id=?', (identifier,)).rowcount == 1
     finally:
@@ -113,6 +118,12 @@ def record_query(identifier: str, snapshot: dict | None, error_type: str | None 
             conn.execute('INSERT INTO kasa_observations VALUES (?,?,?,?,?,?,?)',
                          (identifier, now.isoformat(), 'ok' if state is not None else 'unavailable',
                           state, model, alias, error_type))
+            if snapshot is not None and state is not None:
+                conn.execute('INSERT OR REPLACE INTO kasa_query_metrics VALUES (?,?,?,?,?)',
+                             (identifier, now.isoformat(), snapshot.get('duration_ms'),
+                              snapshot.get('brightness'), snapshot.get('source', 'poll')))
+            conn.execute('DELETE FROM kasa_query_metrics WHERE timestamp<?',
+                         ((now - timedelta(days=energy.DB_RETENTION_DAYS)).isoformat(),))
             conn.execute('DELETE FROM kasa_observations WHERE timestamp<?',
                          ((now - timedelta(days=energy.DB_RETENTION_DAYS)).isoformat(),))
         return state is not None

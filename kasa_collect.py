@@ -14,11 +14,15 @@ async def poll_once(username: str | None = None, password: str | None = None) ->
     semaphore = asyncio.Semaphore(4)
 
     async def query(device: dict) -> str:
+        started = time.monotonic()
         async with semaphore:
             try:
                 snapshot = await kasa_monitor.probe(device['host'], username, password)
-                return 'ok' if kasa_history.record_query(device['id'], snapshot) else 'unavailable'
+                result = 'ok' if kasa_history.record_query(device['id'], snapshot) else 'unavailable'
+                print(json.dumps({'event':'kasa_query', 'device_id':device['id'], 'status':result, 'duration_ms':snapshot.get('duration_ms'), 'is_on':snapshot['is_on'], 'brightness':snapshot.get('brightness'), 'state_changed':device.get('is_on') != int(snapshot['is_on']), 'timestamp':snapshot.get('queried_at')}), flush=True)
+                return result
             except Exception as exc:
+                print(json.dumps({"event":"kasa_query", "device_id":device["id"], "status":"unavailable", "error_type":type(exc).__name__, "duration_ms":round((time.monotonic()-started)*1000,1)}), flush=True)
                 try:
                     kasa_history.record_query(device['id'], None, type(exc).__name__)
                 except ValueError:

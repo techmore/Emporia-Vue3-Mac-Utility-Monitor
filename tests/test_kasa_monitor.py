@@ -13,10 +13,10 @@ import web
 class KasaProbeTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_reads_selected_device_and_disconnects(self):
         device = SimpleNamespace(update=AsyncMock(), disconnect=AsyncMock(),
-                                 is_on=True, model='fixture-switch', alias='Fixture', device_id='fixture-id')
+                                 modules={}, is_on=True, model='fixture-switch', alias='Fixture', device_id='fixture-id')
         discovery = AsyncMock(return_value=device)
         with patch.dict(sys.modules, {'kasa': SimpleNamespace(
-                Discover=SimpleNamespace(discover_single=discovery))}):
+                Discover=SimpleNamespace(discover_single=discovery), Module=SimpleNamespace(Light='Light'))}):
             result = await kasa_monitor.probe('192.168.222.10')
         self.assertTrue(result['is_on'])
         self.assertTrue(result['read_only'])
@@ -31,14 +31,14 @@ class KasaProbeTests(unittest.IsolatedAsyncioTestCase):
         device = SimpleNamespace(update=AsyncMock(side_effect=TimeoutError('fixture')),
                                  disconnect=AsyncMock())
         with patch.dict(sys.modules, {'kasa': SimpleNamespace(Discover=SimpleNamespace(
-                discover_single=AsyncMock(return_value=device)))}):
+                discover_single=AsyncMock(return_value=device)), Module=SimpleNamespace(Light='Light'))}):
             with self.assertRaises(TimeoutError):
                 await kasa_monitor.probe('192.168.222.10')
         device.disconnect.assert_awaited_once()
 
     async def test_unavailable_device_and_partial_credentials_rejected(self):
         with patch.dict(sys.modules, {'kasa': SimpleNamespace(Discover=SimpleNamespace(
-                discover_single=AsyncMock(return_value=None)))}):
+                discover_single=AsyncMock(return_value=None)), Module=SimpleNamespace(Light='Light'))}):
             with self.assertRaises(ConnectionError):
                 await kasa_monitor.probe('192.168.222.10')
             with self.assertRaises(ValueError):

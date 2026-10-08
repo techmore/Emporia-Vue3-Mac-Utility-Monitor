@@ -150,6 +150,24 @@ class RadonTests(unittest.TestCase):
         self.assertLess(chart['points'][0]['x'], chart['points'][1]['x'])
         self.assertEqual(radon.hourly_chart([], self.now)['points'], [])
 
+    def test_dashboard_plots_every_reading_instead_of_hourly_averages(self):
+        start = self.now - timedelta(hours=4)
+        observations = [{**self.row,
+                         'timestamp': (start + timedelta(minutes=10 * index)).isoformat(),
+                         'value': 0.5 + index / 100}
+                        for index in range(20)]
+        radon.ingest_observations(observations, self.now)
+        for days in (1, 7, 30, 365):
+            html = web.app.test_client().get(f'/radon?days={days}').get_data(as_text=True)
+            self.assertEqual(html.count('<circle cx='), 20)
+            self.assertIn('20 recorded readings plotted', html)
+        rows = radon.get_history('ecosense', 'one', now=self.now)
+        chart = radon.observation_chart(rows, self.now)
+        self.assertEqual(len(chart['points']), len(rows))
+        self.assertEqual(chart['points'][0]['timestamp'], rows[0]['timestamp'])
+        self.assertEqual(chart['points'][0]['value'], rows[0]['radon_bq_m3'])
+        self.assertGreater(chart['points'][-1]['x'] - chart['points'][0]['x'], 800)
+
     def test_dashboard_windows_auto_select_sensor_and_preserve_old_history(self):
         old = {**self.row, 'timestamp': (self.now - timedelta(days=90)).isoformat()}
         radon.ingest_observations([old], self.now)
@@ -160,7 +178,7 @@ class RadonTests(unittest.TestCase):
         year = client.get('/radon?days=365')
         self.assertEqual(year.status_code, 200)
         self.assertIn(b'Latest recorded: <strong>2.50 pCi/L</strong>', year.data)
-        self.assertIn(b'daily averages', year.data)
+        self.assertIn(b'one dot per measurement, with no averaging', year.data)
         for window in (1, 7, 30, 365):
             self.assertEqual(client.get(f'/radon?days={window}').status_code, 200)
         for window in ('0', '366', 'bad'):

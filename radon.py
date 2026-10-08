@@ -272,6 +272,39 @@ def _history_table(conn) -> str:
     return 'radon_cached_readings' if cached else 'radon_readings'
 
 
+def observation_chart(rows: list[dict], now: datetime | None = None, days: int = 7) -> dict:
+    """Plot every recorded measurement at its source time without averaging."""
+    if isinstance(days, bool) or days not in (1, 7, 30, 365):
+        raise ValueError('Invalid history window')
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError('now requires a timezone')
+    end = now.astimezone(timezone.utc)
+    start = end - timedelta(days=days)
+    samples = sorted(
+        ((datetime.fromisoformat(row['timestamp']).astimezone(timezone.utc),
+          row['radon_bq_m3']) for row in rows),
+        key=lambda sample: sample[0],
+    )
+    samples = [(stamp, value) for stamp, value in samples if start <= stamp <= end]
+    if samples:
+        # Fit the observed time range so a few hours of new history remain
+        # distinguishable even when the user selects Week, Month or Year.
+        first, last = samples[0][0], samples[-1][0]
+        start = max(start, first - timedelta(minutes=5))
+        end = min(end, last + timedelta(minutes=5))
+        if end <= start:
+            start = end - timedelta(minutes=1)
+    scale = max((value for _, value in samples), default=1) or 1
+    span = (end - start).total_seconds()
+    points = [{
+        'timestamp': stamp.isoformat(), 'value': value,
+        'x': 50 + 900 * (stamp - start).total_seconds() / span,
+        'y': 180 - 150 * value / scale,
+    } for stamp, value in samples]
+    return {'points': points, 'scale': scale, 'start': start.isoformat(), 'end': end.isoformat()}
+
+
 def hourly_chart(rows: list[dict], now: datetime | None = None, days: int = 7) -> dict:
     """Plot bounded sample means; no interpolation or duration weighting.
 

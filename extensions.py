@@ -12,6 +12,7 @@ import climate
 import energy
 import kasa_history
 import kasa_monitor
+import mitsubishi
 import radon
 
 _kasa_control_lock = threading.Lock()
@@ -19,7 +20,9 @@ _kasa_control_lock = threading.Lock()
 CATALOG = ({'id': 'climate', 'name': 'House climate', 'status': 'experimental',
             'url': '/house', 'sources': ['aqara', 'home_assistant', 'manual']},
            {'id': 'radon', 'name': 'Radon history', 'status': 'not_connected',
-            'url': '/radon', 'sources': ['ecosense', 'home_assistant', 'manual']})
+            'url': '/radon', 'sources': ['ecosense', 'home_assistant', 'manual']},
+           {'id': 'mitsubishi', 'name': 'Mitsubishi Comfort', 'status': 'optional',
+            'url': '/mitsubishi', 'sources': ['comfort_cloud']})
 
 
 def register_extensions(app, render, common) -> None:
@@ -27,13 +30,41 @@ def register_extensions(app, render, common) -> None:
 
     @blueprint.after_request
     def protect_probe_response(response):
-        if request.path.startswith(('/api/kasa/', '/api/ecosense/')) or request.path in ('/kasa', '/radon'):
+        if request.path.startswith(('/api/kasa/', '/api/ecosense/', '/api/mitsubishi')) or request.path in ('/kasa', '/radon', '/mitsubishi'):
             response.headers['Cache-Control'] = 'no-store'
         return response
 
     @blueprint.get('/api/extensions')
     def catalog():
         return jsonify({'extensions': CATALOG})
+
+    @blueprint.get('/mitsubishi')
+    def mitsubishi_page():
+        return render('{% include "mitsubishi.html" %}', active_page='mitsubishi',
+                      comfort=mitsubishi.status(), comfort_history=mitsubishi.history(), **common())
+
+    @blueprint.route('/api/mitsubishi', methods=['GET', 'POST', 'DELETE'])
+    def mitsubishi_module():
+        if request.method == 'GET':
+            return jsonify(mitsubishi.status())
+        if request.headers.get('Origin', '').rstrip('/') != request.host_url.rstrip('/'):
+            return jsonify({'error': 'Explicit same-origin request required'}), 403
+        data = request.get_json()
+        try:
+            if request.method == 'DELETE':
+                if data != {'confirmed': True}:
+                    return jsonify({'error': 'Confirm removal'}), 400
+                return jsonify(mitsubishi.remove())
+            if set(data) != {'email', 'password'}:
+                return jsonify({'error': 'Supply only email and password'}), 400
+            return jsonify(mitsubishi.connect(data['email'], data['password']))
+        except mitsubishi.ComfortError as exc:
+            code = str(exc)
+            status = 409 if code == 'busy' else 401 if code == 'authentication_rejected' else 400 if code == 'invalid_credentials' else 502
+            return jsonify({'error': code}), status
+        except Exception:
+            app.logger.warning('Comfort module request failed')
+            return jsonify({'error': 'module_unavailable'}), 502
 
     @blueprint.get('/kasa')
     def kasa_page():
@@ -164,7 +195,7 @@ def register_extensions(app, render, common) -> None:
                       sensors=sensors, selected=selected, rows=rows, days=days,
                       radon_cache=radon.get_cache_status(),
                       radon_collection=collection,
-                      chart=radon.hourly_chart(rows, days=days), **common())
+                      chart=radon.observation_chart(rows, days=days), **common())
 
     @blueprint.post('/api/radon/readings')
     def radon_readings():

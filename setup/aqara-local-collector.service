@@ -1,0 +1,13 @@
+[Unit]
+Description=Aqara M3 sensor event collector
+After=aqara-matter.service
+Wants=aqara-matter.service
+[Service]
+WorkingDirectory=__DATA_ROOT__
+Environment=DB_PATH=__DATA_ROOT__/energy.db
+ExecStart=__PROJECT_ROOT__/venv/bin/python3 -u __PROJECT_ROOT__/aqara_matter_collect.py
+Restart=on-failure
+RestartSec=10
+UMask=0077
+[Install]
+WantedBy=default.target

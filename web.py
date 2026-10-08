@@ -3,7 +3,9 @@
 Energy Monitor — Flask web server
 Theme: techmore.github.io  (olive palette · Instrument Serif · Inter)
 """
+import csv
 import hmac
+import io
 import json
 import math
 import os
@@ -50,7 +52,7 @@ def validate_local_request():
     """Keep the local service local, and reject cross-origin mutation requests."""
     if request.path == '/api/panel-photos' and request.method == 'POST':
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
-    if request.path.startswith('/api/kasa/'):
+    if request.path.startswith(('/api/kasa/', '/api/mitsubishi')):
         request.max_content_length = 8192
     if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
         return jsonify({"error": "Local host required"}), 403
@@ -824,6 +826,65 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .ch-footer a { color:var(--accent); }
 @media(max-width:600px) { .ch-totals { grid-template-columns:1fr; } #circuit-history { padding:16px; } }
 
+
+.kasa-muted { color:var(--text-light); font-size:.85rem; line-height:1.6; }
+.kasa-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0; }
+.kasa-summary .card { display:flex; flex-direction:column; gap:4px; padding:16px; }
+.kasa-summary strong { font-size:1.8rem; font-variant-numeric:tabular-nums; }
+.kasa-summary span { color:var(--text-light); font-size:.8rem; }
+.kasa-toolbar { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin-bottom:18px; }
+.kasa-toolbar label { display:grid; gap:6px; font-size:.8rem; }
+.kasa-toolbar label:first-child { flex:1; min-width:180px; }
+.kasa-toolbar input,.kasa-toolbar select { width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); font:inherit; }
+.kasa-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:16px; margin:12px 0 24px; }
+.kasa-device { padding:20px; border-top:3px solid var(--border); }
+.kasa-on { border-top-color:var(--green); }
+.kasa-unknown { border-top-color:var(--amber); }
+.kasa-card-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+.kasa-icon { font-size:1.8rem; color:var(--accent); }
+.kasa-state { border:1px solid var(--border); border-radius:999px; padding:5px 10px; font-size:.75rem; font-weight:700; }
+.kasa-on .kasa-state { color:var(--green); }
+.kasa-unknown .kasa-state { color:var(--amber); }
+.kasa-device h4 { font-size:1.05rem; margin-bottom:5px; overflow-wrap:anywhere; }
+.kasa-checked { font-size:.8rem; margin:16px 0; }
+.kasa-device-details { border-top:1px solid var(--border); padding-top:12px; font-size:.8rem; }
+.kasa-device-details summary,.kasa-tools summary { cursor:pointer; font-weight:600; }
+.kasa-device-details p { margin:10px 0; overflow-wrap:anywhere; }
+.kasa-remove { color:var(--red); margin-top:8px; }
+.kasa-tools { margin-top:12px; padding:18px; }
+.kasa-tools>p { margin-top:12px; }
+.kasa-empty { grid-column:1/-1; padding:30px; text-align:center; }
+@media(max-width:600px) { .kasa-summary { grid-template-columns:repeat(2,1fr); } .kasa-toolbar>span { width:100%; } }
+
+
+/* Physical rocker controls: observed state drives the indicator. */
+.kasa-rocker-plate { width:146px; margin:24px auto; padding:10px; border:1px solid var(--border); border-radius:24px; background:linear-gradient(135deg,var(--surface),var(--surface2)); box-shadow:0 6px 16px color-mix(in srgb,var(--text) 12%,transparent),inset 0 1px 0 var(--olive-50); }
+.kasa-rocker-half { width:100%; height:86px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; margin:0; border:1px solid var(--border); color:var(--text-light); background:linear-gradient(var(--surface),var(--surface2)); font-size:.65rem; letter-spacing:.12em; cursor:pointer; transition:box-shadow .2s,background .2s,transform .2s; }
+.kasa-rocker-top { border-radius:15px 15px 2px 2px; border-bottom:0; box-shadow:inset 0 3px 2px color-mix(in srgb,var(--text) 8%,transparent); }
+.kasa-rocker-bottom { border-radius:2px 2px 15px 15px; box-shadow:inset 0 -5px 3px color-mix(in srgb,var(--text) 12%,transparent); }
+.kasa-rocker-symbol { font-size:1.25rem; line-height:1; font-weight:500; }
+.kasa-led { width:24px; height:5px; border-radius:999px; background:var(--border); transition:background .2s,box-shadow .2s; }
+.kasa-on .kasa-rocker-plate { border-color:var(--green); box-shadow:0 0 0 2px color-mix(in srgb,var(--green) 65%,transparent),0 0 24px color-mix(in srgb,var(--green) 35%,transparent); }
+.kasa-on .kasa-led { background:var(--green); box-shadow:0 0 9px var(--green); }
+.kasa-on .kasa-rocker-top { color:var(--text); background:var(--surface2); box-shadow:inset 0 5px 6px color-mix(in srgb,var(--text) 18%,transparent); }
+.kasa-on .kasa-rocker-bottom { background:var(--surface); box-shadow:inset 0 -2px 0 var(--border); }
+.kasa-device[data-state="OFF"] .kasa-rocker-bottom { color:var(--text); box-shadow:inset 0 -5px 6px color-mix(in srgb,var(--text) 18%,transparent); }
+.kasa-rocker-half:hover:not(:disabled) { color:var(--text); background:var(--bg); }
+.kasa-rocker-half:focus-visible { outline:3px solid var(--accent); outline-offset:3px; position:relative; z-index:1; }
+.kasa-rocker-half:active:not(:disabled) { transform:scale(.97); }
+.kasa-rocker-half:disabled { cursor:wait; opacity:.55; }
+.kasa-device[aria-busy="true"] .kasa-led { background:var(--amber); }
+@media(prefers-reduced-motion:reduce) { .kasa-rocker-half,.kasa-led { transition:none; } }
+
+
+.kasa-switch-assembly { display:flex; justify-content:center; align-items:center; gap:20px; margin:12px 0; }
+.kasa-switch-assembly .kasa-rocker-plate { margin:12px 0; flex-shrink:0; }
+.kasa-side-dimmer { display:flex; flex-direction:column; align-items:center; gap:8px; font-size:.75rem; }
+.kasa-side-dimmer label { color:var(--text-light); }
+.kasa-side-dimmer output { font-variant-numeric:tabular-nums; font-weight:700; }
+.kasa-side-dimmer input[type=range] { writing-mode:vertical-lr; direction:rtl; width:28px; height:116px; accent-color:var(--green); cursor:pointer; }
+.kasa-side-dimmer button { padding:5px 10px; font-size:.75rem; }
+
 .kasa-probe-form { display:grid; gap:10px; max-width:460px; margin:16px 0; }
 .kasa-probe-form label { display:grid; gap:4px; }
 .kasa-probe-form input { min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; }
@@ -860,6 +921,7 @@ NAV_HTML = """
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
       <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
+      <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}">HVAC</a>
       <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}">Kasa</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
@@ -4924,6 +4986,7 @@ SETTINGS_HTML = """
 
 
       <!-- ════════════════════════════════ KASA ════════════════════════════════ -->
+      <section class="card"><h3>Optional Mitsubishi Comfort module</h3><p>Add or remove read-only HVAC monitoring independently.</p><a href="/mitsubishi">Configure Comfort connection</a></section>
       {% include "kasa_settings.html" %}
 
 
@@ -5404,6 +5467,7 @@ AQARA_HTML = """
                    background:var(--stone-200); color:var(--stone-500); border-radius:20px;">offline</span>
       {% endif %}
       <div class="card-label">{{ s.name }}</div>
+      {% if s.observed_at %}<div class="card-meta">Last collector observation: {{ s.observed_at }}</div>{% endif %}
       {% if s.temperature is not none %}
       <div class="card-value" style="font-size:2rem;">
         {{ "%.1f"|format(s.temperature) }}<span class="unit">°C</span>
@@ -5438,25 +5502,51 @@ AQARA_HTML = """
   {% endif %}
 
   <p style="font-size:0.72rem; color:var(--stone-400); margin-top:1rem;">
-    Data via <strong>Aqara Cloud OpenAPI v3</strong>. Resource definitions are discovered per device model.
+    {% if aqara_local %}<a href="/api/aqara/local/history.csv">Download recorded history (CSV)</a> · Data via <strong>local Matter · SER8</strong>. Sensor events are recorded automatically; connection snapshots refresh every minute. Pressure is not exposed by this bridge. Names pending identity verification are shown by sensor ID.{% else %}Data via <strong>Aqara Cloud OpenAPI v3</strong>.{% endif %}
   </p>
 </div>
 """
+
+
+@app.route("/api/aqara/local/history.csv")
+def aqara_local_history_csv():
+    import aqara_local
+    columns = ['device_id','timestamp','name','model','temperature','humidity','battery','online','source']
+    def generate():
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=columns)
+        writer.writeheader()
+        yield output.getvalue()
+        for row in aqara_local.iter_history():
+            output.seek(0)
+            output.truncate(0)
+            safe = {key: ("'" + value if isinstance(value, str) and
+                          (value.lstrip().startswith(('=', '+', '-', '@')) or
+                           value.startswith(('\t', '\r', '\n'))) else value)
+                    for key, value in row.items()}
+            writer.writerow(safe)
+            yield output.getvalue()
+    return Response(stream_with_context(generate()), mimetype='text/csv',
+                    headers={'Content-Disposition':'attachment; filename=aqara-sensor-history.csv',
+                             'Cache-Control':'no-store'})
 
 
 @app.route("/aqara")
 def aqara_page():
     import aqara as _aqara
     com = _common()
-    configured = _aqara.is_configured()
-    sensors, error = [], None
-    if configured:
+    import aqara_local
+    local_sensors = aqara_local.get_sensors()
+    configured = bool(local_sensors) or _aqara.is_configured()
+    sensors, error = local_sensors, None
+    if not local_sensors and configured:
         try:
             sensors = _aqara.get_sensors()
         except _aqara.AqaraError as e:
             error = str(e)
     return _render(AQARA_HTML, active_page="settings",
                    aqara_configured=configured,
+                   aqara_local=bool(local_sensors),
                    sensors=sensors,
                    aqara_error=error,
                    **com)

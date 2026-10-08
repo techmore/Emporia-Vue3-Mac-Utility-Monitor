@@ -1,37 +1,37 @@
 <div class="page">
-  <div class="section-head"><h2>Kasa · Lights &amp; Devices</h2><a href="/settings">Register devices in Settings</a></div>
-  <p class="card-meta">SER8 observes device state. Controls require confirmation and fresh identity checks.
-    HS220/HS103 state is not a power measurement. No schedules run automatically.</p>
+  <div class="section-head"><div><h2>Lights &amp; outlets</h2><p class="kasa-muted">Your Kasa devices, at a glance.</p></div><a href="/settings">Manage devices</a></div>
+  <p class="kasa-muted">Observed state is not a power measurement. Controls require confirmation and fresh device identity checks.</p>
+  <div class="kasa-summary" id="kasaPageSummary"></div>
+  <div class="kasa-toolbar"><label>Find a device<input id="kasaPageSearch" type="search" placeholder="Search devices"></label><label>Show<select id="kasaPageFilter"><option value="all">All devices</option><option value="ON">On</option><option value="OFF">Off</option><option value="unknown">Needs attention</option></select></label><button type="button" id="kasaPageRefresh">Refresh</button><span class="kasa-muted">Status updates every 3 seconds</span></div>
   <p id="kasaStatus" role="status" aria-live="polite"></p>
-  <div class="kasa-controls-grid">
-  {% for device in devices %}
-    <section class="card" data-device="{{ device.id }}">
-      <h3>{{ device.label }}</h3><p>{{ device.model or 'Model not queried' }} · {{ device.host }}</p>
-      <p class="kasa-state">{% if device.status == 'ok' %}Last observed {{ 'ON' if device.is_on else 'OFF' }}{% else %}State unknown{% endif %}</p>
-      <p class="card-meta kasa-time">{{ device.queried_at or 'No query recorded' }}</p>
-      <div class="kasa-actions">
-        <button type="button" data-command="on" {% if not device.reported_device_id %}disabled{% endif %}>Turn ON</button>
-        <button type="button" data-command="off" {% if not device.reported_device_id %}disabled{% endif %}>Turn OFF</button>
+  {% for tag, tagged_devices in devices|groupby('tag') %}
+  <section class="kasa-tag-group" data-tag="{{ tag }}"><div class="section-head"><h3>{{ tag }}</h3><span class="kasa-tag-count kasa-muted">{{ tagged_devices|length }} devices</span></div>
+  <div class="kasa-grid">
+  {% for device in tagged_devices %}
+    <section class="card kasa-device" data-device="{{ device.id }}" data-tag="{{ device.tag }}">
+      <div class="kasa-card-top"><span class="kasa-icon">{{ "☼" if device.model == "HS220" else "⏻" }}</span><span class="kasa-state"></span></div><h3>{{ device.label }}</h3><p class="kasa-muted">{{ device.model or "Kasa" }} · {{ "Dimmer switch" if device.model == "HS220" else "Smart outlet" }}</p>
+      <span class="int-badge">{{ device.tag }}</span><p class="card-meta kasa-time">{{ device.queried_at or 'No query recorded' }}</p>
+      <div class="kasa-switch-assembly">
+      <div class="kasa-rocker-plate" role="group" aria-label="{{ device.label }} power">
+        <button type="button" class="kasa-rocker-half kasa-rocker-top" aria-label="Turn on {{ device.label }}" aria-pressed="false" data-command="on" {% if not device.reported_device_id %}disabled{% endif %}><span class="kasa-led" aria-hidden="true"></span><span class="kasa-rocker-symbol" aria-hidden="true">I</span><span>ON</span></button>
+        <button type="button" class="kasa-rocker-half kasa-rocker-bottom" aria-label="Turn off {{ device.label }}" aria-pressed="false" data-command="off" {% if not device.reported_device_id %}disabled{% endif %}><span class="kasa-rocker-symbol" aria-hidden="true">○</span><span>OFF</span></button>
       </div>
       {% if device.model == 'HS220' %}
-      <label>Desired brightness (%) <input class="kasa-brightness" type="number" min="1" max="100" step="1" value="50"></label>
-      <button type="button" data-command="brightness">Apply brightness (may turn light on)</button>
-      {% endif %}
+      <div class="kasa-side-dimmer"><label for="brightness-{{ device.id }}">Intensity</label><output class="kasa-brightness-value" for="brightness-{{ device.id }}">—</output><input id="brightness-{{ device.id }}" aria-label="{{ device.label }} intensity" class="kasa-brightness" type="range" min="1" max="100" step="1" value="50"><span class="kasa-muted">1%</span><button type="button" data-command="brightness" aria-label="Apply brightness (may turn ON)">Apply</button></div>
+      {% endif %}</div>
+      <details class="kasa-device-details"><summary>Circuit &amp; diagnostics</summary><p class="kasa-muted">IP address: {{ device.host }}</p>
+
       <label>Associated monitored circuit
         <select class="kasa-circuit"><option value="">Unassigned</option>
           {% for circuit in circuits %}<option value="{{ circuit.channel_name }}" {% if links.get(device.id) and links[device.id].energy_device_gid == active_device_gid and links[device.id].channel_name == circuit.channel_name %}selected{% endif %}>{{ circuit.channel_name }} · ${{ '%.2f'|format(circuit.total_cents / 100) }} circuit / 24h</option>{% endfor %}
         </select>
       </label><button type="button" class="kasa-link">Save circuit association</button>
-      <p class="card-meta">Circuit cost includes every load on that circuit, not just this device. Association is user supplied, not inferred.</p>
+      <p class="card-meta">Circuit cost includes every load on that circuit, not just this device. Association is user supplied, not inferred.</p></details>
     </section>
   {% else %}<div class="card">No registered Kasa devices. Add a known device in Settings first.</div>{% endfor %}
-  </div>
-  <section class="card" style="margin-top:1rem;"><h3>Costs &amp; Future Scheduling</h3>
-    <p>State history and explicit circuit associations are the foundation for future comparisons.
-      Individual light costs require measured device power or a clearly entered wattage assumption.
-      Dimming percentage does not reliably equal power percentage. Multiple devices sharing a circuit must not each be charged its entire usage.</p>
-    <p>Scheduling and rules are not enabled here. Future rules will need explicit targets, timezone, limits and manual override.</p>
-  </section>
+  </div></section>
+  {% else %}<div class="card">No devices registered yet.</div>{% endfor %}
+
 </div>
 <script>
 (() => {
@@ -43,6 +43,14 @@
     if (!response.ok) throw new Error(result.error || 'Request failed');
     return result;
   }
+  function filterCards() {
+    const query=document.getElementById('kasaPageSearch').value.toLowerCase(), filter=document.getElementById('kasaPageFilter').value;
+    document.querySelectorAll('[data-device]').forEach(card => { card.hidden = !card.querySelector('h3').textContent.toLowerCase().includes(query) || (filter !== 'all' && card.dataset.state !== filter); });
+    document.querySelectorAll('.kasa-tag-group').forEach(group => {const count=[...group.querySelectorAll('[data-device]')].filter(c=>!c.hidden).length;group.hidden=count===0;group.querySelector('.kasa-tag-count').textContent=count+' devices';});
+  }
+  document.getElementById('kasaPageSearch').addEventListener('input',filterCards);
+  document.getElementById('kasaPageFilter').addEventListener('change',filterCards);
+  document.getElementById('kasaPageRefresh').addEventListener('click',refresh);
   async function refresh() {
     try {
       const response = await fetch('/api/kasa/devices', {cache:'no-store'});
@@ -51,13 +59,36 @@
       for (const d of data.devices) {
         const card = [...document.querySelectorAll('[data-device]')].find(c => c.dataset.device === d.id);
         if (!card) continue;
-        const fresh = d.queried_at && Date.now() - Date.parse(d.queried_at) < 120000;
-        card.querySelector('.kasa-state').textContent = d.status === 'ok' && fresh ? 'Last observed ' + (d.is_on ? 'ON' : 'OFF') : 'State unknown or stale';
-        card.querySelector('.kasa-time').textContent = d.queried_at || 'No query recorded';
+        const seconds = (Date.now() - Date.parse(d.queried_at))/1000;
+        const fresh = d.queried_at && seconds >= 0 && seconds < 180;
+        card.dataset.state = d.status === 'ok' && fresh && (d.is_on === 0 || d.is_on === 1) ? (d.is_on ? 'ON' : 'OFF') : 'unknown';
+        card.querySelector('[data-command=on]').setAttribute('aria-pressed',String(card.dataset.state === 'ON'));
+        card.querySelector('[data-command=off]').setAttribute('aria-pressed',String(card.dataset.state === 'OFF'));
+        card.classList.toggle('kasa-on',card.dataset.state === 'ON');
+        card.classList.toggle('kasa-unknown',card.dataset.state === 'unknown');
+        card.querySelector('.kasa-state').textContent = card.dataset.state === 'unknown' ? 'Needs attention' : card.dataset.state;
+        const slider=card.querySelector('.kasa-brightness');
+        if(slider && d.brightness !== null && d.brightness !== undefined && !slider.dataset.edited) {slider.value=d.brightness;card.querySelector('.kasa-brightness-value').textContent=d.brightness+'%';}
+        let metric=card.querySelector('.kasa-query-metric');if(!metric){metric=document.createElement('p');metric.className='kasa-query-metric kasa-muted';card.querySelector('details').append(metric);}
+        metric.textContent=d.duration_ms !== null && d.duration_ms !== undefined ? 'Last query: '+d.duration_ms+' ms · '+(d.observation_source || 'poll') : 'Timing pending';
+        card.querySelector('.kasa-time').textContent = !d.queried_at ? 'Awaiting first reading' : seconds < 60 ? 'Checked just now' : 'Checked ' + Math.floor(seconds/60) + ' min ago';
       }
-    } catch (error) { status.textContent = 'Monitor unavailable; displayed observations may be stale.'; }
+      const counts=[data.devices.length, ...['ON','OFF','unknown'].map(s => [...document.querySelectorAll('[data-device]')].filter(c => c.dataset.state === s).length)];
+      const summary=document.getElementById('kasaPageSummary');summary.replaceChildren();
+      ['Devices','On','Off','Need attention'].forEach((label,i) => {const box=document.createElement('div');box.className='card';const count=document.createElement('strong');count.textContent=counts[i];const title=document.createElement('span');title.textContent=label;box.append(count,title);summary.append(box);});
+      filterCards();
+    } catch (error) {
+      document.querySelectorAll('[data-device]').forEach(card => {
+        card.dataset.state='unknown'; card.classList.remove('kasa-on'); card.classList.add('kasa-unknown');
+        card.querySelector('.kasa-state').textContent='Monitor unavailable';
+        card.querySelectorAll('.kasa-rocker-half').forEach(button => button.setAttribute('aria-pressed','false'));
+      });
+      status.textContent = 'Monitor unavailable; current device states are unknown.';
+    }
   }
   document.querySelectorAll('[data-device]').forEach(card => {
+    const slider=card.querySelector('.kasa-brightness');
+    if(slider) slider.addEventListener('input',()=>{slider.dataset.edited='true';card.querySelector('.kasa-brightness-value').textContent=slider.value+'%';});
     card.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', async () => {
       const command = button.dataset.command;
       const brightness = command === 'brightness' ? Number(card.querySelector('.kasa-brightness').value) : null;
@@ -68,16 +99,20 @@
       const action = command === 'brightness' ? `set brightness to ${brightness}% (may turn ON)` : `turn ${command.toUpperCase()}`;
       if (!confirm(`${label}: ${action}? This changes the actual device.`)) return;
       const buttons = card.querySelectorAll('[data-command]'); buttons.forEach(b => b.disabled = true);
+      card.setAttribute('aria-busy','true');
       status.textContent = 'Sending one command and verifying state…';
       try {
         const data = command === 'brightness' ? {confirmed:true,brightness} : {confirmed:true,is_on:command === 'on'};
         const result = await post('/api/kasa/devices/' + card.dataset.device + '/control', data);
         status.textContent = `Verified ${label}: ${result.is_on ? 'ON' : 'OFF'}` + (result.brightness !== null ? ` · brightness ${result.brightness}%` : '');
+        if(slider) delete slider.dataset.edited;
         await refresh();
       } catch (error) {
+        card.dataset.state='unknown'; card.classList.remove('kasa-on'); card.classList.add('kasa-unknown');
+        card.querySelectorAll('.kasa-rocker-half').forEach(b => b.setAttribute('aria-pressed','false'));
         card.querySelector('.kasa-state').textContent = 'Command outcome unknown — check actual device';
         status.textContent = error.message;
-      } finally { buttons.forEach(b => b.disabled = false); }
+      } finally { card.removeAttribute('aria-busy'); buttons.forEach(b => b.disabled = !card.dataset.device); }
     }));
     card.querySelector('.kasa-link').addEventListener('click', async event => {
       const button = event.currentTarget, channel = card.querySelector('.kasa-circuit').value;
@@ -89,6 +124,6 @@
       finally { button.disabled = false; }
     });
   });
-  refresh(); setInterval(refresh, 30000);
+  refresh(); setInterval(() => {if(!document.hidden) refresh();}, 3000);
 })();
 </script>

@@ -55,3 +55,8 @@ panel-photos/
 
 # Stable runtime process ownership lock (never remove while polling).
 *.poller.lock
+
+# Optional Comfort module runtime secrets and snapshots
+mitsubishi-private.json
+mitsubishi-status.json
+mitsubishi-module.lock

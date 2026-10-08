@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 
@@ -27,7 +28,7 @@ async def probe(host: str, username: str | None = None,
     if bool(username) != bool(password):
         raise ValueError('Both username and password are required for authentication')
     # Optional until the Settings integration and locked dependencies are released.
-    from kasa import Discover
+    from kasa import Discover, Module
 
     async def read() -> dict:
         device = await Discover.discover_single(
@@ -38,9 +39,11 @@ async def probe(host: str, username: str | None = None,
         try:
             await device.update()
             state = device.is_on
+            light = device.modules.get(Module.Light)
             return {'host': host, 'model': device.model, 'alias': device.alias,
                     'device_id': device.device_id,
                     'is_on': state if type(state) is bool else None,
+                    'brightness': light.brightness if light is not None else None,
                     'queried_at': datetime.now(timezone.utc).isoformat(),
                     'read_only': True}
         finally:
@@ -49,7 +52,10 @@ async def probe(host: str, username: str | None = None,
             except Exception as exc:
                 logging.warning('Kasa disconnect failed: %s', type(exc).__name__)
 
-    return await asyncio.wait_for(read(), timeout=10)
+    started = time.monotonic()
+    result = await asyncio.wait_for(read(), timeout=10)
+    result.update(duration_ms=round((time.monotonic()-started)*1000, 1), source="poll")
+    return result
 
 
 async def control(host: str, expected_id: str, *, is_on: bool | None = None,
@@ -101,7 +107,11 @@ async def control(host: str, expected_id: str, *, is_on: bool | None = None,
             except Exception as exc:
                 logging.warning('Kasa disconnect failed: %s', type(exc).__name__)
 
-    return await asyncio.wait_for(run(), timeout=15)
+    started = time.monotonic()
+    result = await asyncio.wait_for(run(), timeout=15)
+    result.update(duration_ms=round((time.monotonic()-started)*1000, 1), source="command")
+    logging.warning("Kasa command verified device=%s duration_ms=%s is_on=%s brightness=%s", expected_id, result["duration_ms"], result["is_on"], result["brightness"])
+    return result
 
 
 def main() -> None:
