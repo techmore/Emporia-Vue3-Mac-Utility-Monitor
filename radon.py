@@ -338,3 +338,21 @@ def hourly_chart(rows: list[dict], now: datetime | None = None, days: int = 7) -
     for point in points:
         point['y'] = 180 - 150 * point['mean'] / scale
     return {'points': points, 'scale': scale, 'start': start.isoformat(), 'end': end.isoformat()}
+
+
+def get_latest_indicator() -> dict | None:
+    """Read one stored measurement for the circuit menu; never contact the sensor."""
+    conn = energy._connect()
+    try:
+        table = _history_table(conn)
+        row = conn.execute(
+            f"SELECT name, timestamp, radon_bq_m3 FROM {table} ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        stamp = datetime.fromisoformat(row["timestamp"])
+        age = (datetime.now(timezone.utc) - stamp).total_seconds()
+        return {"pci_l": row["radon_bq_m3"] / 37, "timestamp": row["timestamp"],
+                "name": row["name"], "stale": age > 10800 or age < -300}
+    finally:
+        conn.close()

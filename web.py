@@ -30,6 +30,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 import energy
 import panel_photos
+import radon
 from extensions import HOUSE_CSS, register_extensions
 from panel_model import breaker_load
 from solar_model import hourly_generation_offset, solar_offset
@@ -4484,6 +4485,13 @@ def api_menu_summary():
         )
         for row in latest if row["channel_name"] not in energy.META_CHANNELS
     }
+    today_totals = {
+        row["channel_name"]: row for row in energy.get_today_circuit_totals(gid)
+    }
+    period_totals = {
+        period: {row["channel_name"]: row for row in energy.get_today_circuit_totals(gid, period)}
+        for period in ("week", "month")
+    }
     breaker_slots = []
     for slot in range(1, panel_slots + 1):
         row = layout.get(slot, {})
@@ -4495,6 +4503,20 @@ def api_menu_summary():
         )
         breaker_slots.append({
             "slot": slot,
+            "period_totals": {
+                period: {
+                    "kwh": totals.get(name, {}).get("total_kwh"),
+                    "cost": totals[name]["total_cents"] / 100
+                    if name in totals and totals[name]["total_cents"] is not None else None,
+                }
+                for period, totals in period_totals.items()
+            },
+            "today_kwh": today_totals.get(name, {}).get("total_kwh"),
+            "today_cost": (
+                today_totals[name]["total_cents"] / 100
+                if name in today_totals and today_totals[name]["total_cents"] is not None
+                else None
+            ),
             "slot_state": "monitored" if name else "unmonitored" if _panel_slot_reserved(row) else "empty",
             "channel_name": name,
             "display_name": row.get("label") or name or "—",
@@ -4549,6 +4571,7 @@ def api_menu_summary():
         "breaker_slots": breaker_slots,
         "last_reading": main["timestamp"] if main else None,
         "top_circuits": circuits[:5],
+        "radon_reading": radon.get_latest_indicator(),
     })
 
 

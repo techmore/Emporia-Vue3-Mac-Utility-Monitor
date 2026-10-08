@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.33 - 2026-10-08
+
+- Preserve live native API additions for per-circuit today/week/month recorded
+  usage/cost and a stored, unit-converted radon indicator. Add regression tests
+  for device boundaries, future readings, empty data and stale radon values.
+- Verify a private online backup for Incus migration, align the guest timezone
+  with the current collector, and verify private Matter/Kasa connectivity without
+  re-pairing or sending device-control commands. Production cutover remains gated.
+
 ## 2.3.32 - 2026-10-08
 
 - Add opt-in macOS tunnel recovery based on actual HTTP health, independent

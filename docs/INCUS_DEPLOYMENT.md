@@ -60,3 +60,33 @@ or host security-policy upgrades. Keep the rule out of unrelated containers.
    old collectors stay disabled. Retain the original installation for rollback.
 
 Until these gates pass, this container is staging, not the production collector.
+
+## Migration preflight - 2026-10-08
+
+An online SQLite backup passed integrity verification with 98,622 readings,
+through 18:58:21 local time. Its bytes were verified identical after private
+transfer to the guest, alongside the existing owner-only credentials/settings.
+These files are staged separately, not activated; no second poller was started.
+
+The guest timezone was corrected from Etc/UTC to America/New_York, matching the
+existing collector's naive timestamp and calendar-query assumptions. Boot
+autostart is explicitly enabled. Two instance-specific loopback proxy devices
+were added without changing other services or exposing a public listener:
+
+```bash
+incus config device add energy-monitor dashboard-private proxy \
+  listen=tcp:127.0.0.1:15033 connect=tcp:127.0.0.1:5051
+incus config device add energy-monitor matter-controller proxy bind=instance \
+  listen=tcp:127.0.0.1:5580 connect=tcp:127.0.0.1:5580
+```
+
+The commissioned Matter controller remains on SER8; the guest bridge returned
+its cached M3 node without pairing or control commands. The known Kasa endpoint
+was reachable over TCP. This follows the supported bidirectional
+[Incus proxy device](https://linuxcontainers.org/incus/docs/main/reference/devices_proxy/)
+mechanism; it does not migrate or duplicate the Matter fabric.
+
+Before cutover, take a new final snapshot after pausing only the original writers,
+preserve sync identity and journal state, remap the private environment's DB_PATH,
+and explicitly enable the selected guest collectors. The laptop still targets
+the original host dashboard; switching its tunnel must be deliberate and verified.
