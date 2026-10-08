@@ -247,24 +247,27 @@ class RadonJournalTests(unittest.TestCase):
         origin = f'http://127.0.0.1:{port}'
         token = 'a' * 32
         environment = {**os.environ, 'DB_PATH': collector, 'ENERGY_SYNC_TOKEN': token}
+        log_path = Path(self.directory.name) / 'collector.log'
+        log = log_path.open('w')
         process = subprocess.Popen(
             [sys.executable, '-u', '-c',
              f'import sys;sys.path.insert(0,{str(root)!r});import web;'
              f'web.app.run(host="127.0.0.1",port={port})'],
             cwd=self.directory.name, env=environment,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=log, stderr=subprocess.STDOUT,
         )
         try:
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + 30
+            probe = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             while True:
                 if process.poll() is not None:
-                    self.fail('Isolated collector exited before readiness')
+                    self.fail('Isolated collector exited before readiness: ' + log_path.read_text())
                 try:
-                    with urllib.request.urlopen(origin + '/api/version', timeout=1):
+                    with probe.open(origin + '/api/version', timeout=1):
                         break
                 except urllib.error.URLError:
                     if time.monotonic() >= deadline:
-                        self.fail('Isolated collector did not become ready')
+                        self.fail('Isolated collector did not become ready: ' + log_path.read_text())
                     time.sleep(0.05)
             with patch.object(energy, 'DB_PATH', str(Path(self.directory.name) / 'http-cache.db')):
                 energy.ensure_table()
@@ -302,3 +305,4 @@ class RadonJournalTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+            log.close()
