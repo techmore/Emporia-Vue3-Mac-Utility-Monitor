@@ -46,3 +46,11 @@ class SolarReportsTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertIn('role="alert"', response.get_data(as_text=True))
                 self.assertNotIn('<script>alert(1)</script>', response.get_data(as_text=True))
+
+    def test_reports_uses_scoped_responsive_groups(self):
+        html = self.client.get('/reports').get_data(as_text=True)
+        self.assertIn('class="page reports-page"', html)
+        self.assertIn('class="reports-columns"', html)
+        self.assertIn('class="reports-review-copy"', html)
+        self.assertNotIn('grid-template-columns:1.15fr 1fr', html)
+        self.assertNotIn('grid-template-columns:1.2fr 1fr', html)
