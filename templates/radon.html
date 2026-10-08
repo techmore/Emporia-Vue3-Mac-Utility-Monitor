@@ -1,0 +1,50 @@
+<section class="house-lab">
+  <header class="house-head"><div><span class="house-eyebrow">RECORDED AIR QUALITY</span><h1>EcoQube · Radon</h1><p>Read-only observations. EcoQube collection is not yet connected.</p></div></header>
+  <p><a href="/house">Back to House</a></p>
+  <p class="house-notice">Measurement times below come from the source, not the time this page opened. No readings means no data, not zero radon. This view does not classify safety or recommend mitigation.</p>
+  {% if not sensors %}
+  <section class="card"><h2>No recorded radon readings</h2><p>Verify your EcoQube model and data access before connecting collection. Temperature sensors are not used as radon measurements.</p></section>
+  {% else %}
+  <section class="card"><h2>Recorded sensors</h2>
+  {% for sensor in sensors %}
+  <form method="get" action="/radon" class="house-toolbar">
+    <input type="hidden" name="days" value="{{ days }}">
+    <input type="hidden" name="source" value="{{ sensor.source }}">
+    <input type="hidden" name="sensor_id" value="{{ sensor.sensor_id }}">
+    <button type="submit">{{ sensor.source }} / {{ sensor.sensor_id }}</button>
+    <span>Last measurement: {{ sensor.last_measurement }} · {{ sensor.sample_count }} samples</span>
+  </form>
+  {% endfor %}</section>
+  {% endif %}
+  <form method="get" action="/radon" class="house-toolbar" aria-label="Radon history window">
+    <input type="hidden" name="source" value="{{ selected.source if selected else '' }}">
+    <input type="hidden" name="sensor_id" value="{{ selected.sensor_id if selected else '' }}">
+    {% for window, label in [(1, 'Day'), (7, 'Week'), (30, 'Month'), (365, 'Year')] %}
+    <button name="days" value="{{ window }}" type="submit" aria-pressed="{{ 'true' if days == window else 'false' }}">{{ label }}</button>
+    {% endfor %}
+  </form>
+  {% if selected %}
+  <section class="card"><h2>Last {{ days }} days · {{ selected.sensor_id if selected else '' }}</h2>
+  {% if rows %}
+  <p>Latest recorded: {{ rows[-1].measured_value }} {{ rows[-1].measured_unit }} at {{ rows[-1].timestamp }}. This is not a live-status indicator.</p>
+  <svg viewBox="0 0 1000 220" role="img" aria-labelledby="radon-chart-title radon-chart-desc" style="width:100%;display:block">
+    <title id="radon-chart-title">Recorded radon {{ 'daily' if days > 7 else 'hourly' }} sample means, Bq/m³</title>
+    <desc id="radon-chart-desc">Each dot is an arithmetic mean of available samples in one UTC {{ 'day' if days > 7 else 'hour' }}. Missing hours are blank, with no connecting lines.</desc>
+    <path d="M50 30V180H950" fill="none" stroke="var(--border)"/>
+    <text x="50" y="20" fill="var(--text-light)">{{ chart.scale|round(1) }} Bq/m³</text>
+    <text x="25" y="185" fill="var(--text-light)">0</text>
+    {% for point in chart.points %}
+    <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3" fill="var(--accent)"><title>{{ point.timestamp }}: {{ point.mean|round(2) }} Bq/m³, {{ point.samples }} samples</title></circle>
+    {% endfor %}
+    <text x="50" y="210" fill="var(--text-light)">{{ chart.start[:10] }} (UTC)</text>
+    <text x="950" y="210" text-anchor="end" fill="var(--text-light)">{{ chart.end[:10] }} (UTC)</text>
+  </svg>
+  <p class="house-caption">Dots show {{ 'daily' if days > 7 else 'hourly' }} averages of recorded samples, not continuous coverage or duration-weighted exposure. Missing hours stay blank. Axis scales to this sensor's observations.</p>
+  <p>Showing the most recent {{ [rows|length, 100]|min }} samples. Original units are preserved; normalized values use Bq/m³.</p>
+  <div style="overflow-x:auto"><table><thead><tr><th scope="col">Measured at (UTC)</th><th scope="col">Original reading</th><th scope="col">Bq/m³</th><th scope="col">Received at (UTC)</th></tr></thead><tbody>
+  {% for row in rows[-100:]|reverse %}<tr><td>{{ row.timestamp }}</td><td>{{ row.measured_value }} {{ row.measured_unit }}</td><td>{{ row.radon_bq_m3 }}</td><td>{{ row.received_at }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p>No measurements recorded in the last {{ days }} days. Older history is not a current reading.</p>{% endif %}
+  </section>
+  {% endif %}
+</section>

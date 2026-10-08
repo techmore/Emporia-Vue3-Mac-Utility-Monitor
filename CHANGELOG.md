@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.6 - 2026-10-07
+
+- Add a recorded EcoQube/radon dashboard with sensor selection and day, week, month, and year history. Missing data stays blank; collection remains unconnected pending verified source timestamps.
+- Add validated, sensor-scoped radon storage and a private read-only EcoSense diagnostic probe.
+
 ## 2.3.5 - 2026-10-07
 
 - Restore the compact olive/stone menu: single-line service banner, two-line cost cards, horizontal circuit rows, smaller padding, and ascending slot order.

@@ -2,9 +2,12 @@
 from flask import Blueprint, jsonify, request
 
 import climate
+import radon
 
 CATALOG = ({'id': 'climate', 'name': 'House climate', 'status': 'experimental',
-            'url': '/house', 'sources': ['aqara', 'home_assistant', 'manual']},)
+            'url': '/house', 'sources': ['aqara', 'home_assistant', 'manual']},
+           {'id': 'radon', 'name': 'Radon history', 'status': 'not_connected',
+            'url': '/radon', 'sources': ['ecosense', 'home_assistant', 'manual']})
 
 
 def register_extensions(app, render, common) -> None:
@@ -17,6 +20,27 @@ def register_extensions(app, render, common) -> None:
     @blueprint.get('/house')
     def house():
         return render('{% include "house.html" %}', active_page='house', **common())
+
+    @blueprint.get('/radon')
+    def radon_history():
+        try:
+            days = int(request.args.get('days', '7'))
+        except ValueError:
+            return jsonify({'error': 'Invalid history window'}), 400
+        if days not in (1, 7, 30, 365):
+            return jsonify({'error': 'Invalid history window'}), 400
+        sensors = radon.get_sensors()
+        source = request.args.get('source', '')
+        sensor_id = request.args.get('sensor_id', '')
+        selected = next((sensor for sensor in sensors
+                         if sensor['source'] == source and sensor['sensor_id'] == sensor_id), None)
+        if not source and not sensor_id and sensors:
+            selected = sensors[0]
+            source, sensor_id = selected['source'], selected['sensor_id']
+        rows = radon.get_history(source, sensor_id, days=days) if selected else []
+        return render('{% include "radon.html" %}', active_page='radon',
+                      sensors=sensors, selected=selected, rows=rows, days=days,
+                      chart=radon.hourly_chart(rows, days=days), **common())
 
     @blueprint.get('/api/climate/replay')
     def replay():

@@ -818,6 +818,7 @@ NAV_HTML = """
       <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
+      <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
     </div>
