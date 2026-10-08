@@ -31,9 +31,12 @@ def absolute_path(value: str) -> str:
     return value
 
 
-def prepare(output: Path, user: str, code: str, data: str, environment: str) -> None:
+def prepare(output: Path, user: str, code: str, data: str, environment: str,
+            *, kasa_interval: int = 60) -> None:
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*", user) or user == "root":
         raise ValueError("Choose a non-root service account")
+    if type(kasa_interval) is not int or not 10 <= kasa_interval <= 86400:
+        raise ValueError("Kasa interval must be between 10 and 86400 seconds")
     values = {
         "__COLLECTOR_USER__": user,
         "__PROJECT_ROOT__": absolute_path(code),
@@ -52,6 +55,10 @@ def prepare(output: Path, user: str, code: str, data: str, environment: str) -> 
             text = text.replace("__PROJECT_ROOT__/web.py", f"__PROJECT_ROOT__/{module}")
         else:
             text = (ROOT / "setup" / f"{name}.service").read_text()
+        if name == "kasa-collector":
+            if text.count("--interval 60") != 1:
+                raise ValueError("Kasa service template is missing its interval argument")
+            text = text.replace("--interval 60", f"--interval {kasa_interval}")
         for key, value in values.items():
             text = text.replace(key, value)
         if "__" in text:
@@ -66,6 +73,7 @@ def prepare(output: Path, user: str, code: str, data: str, environment: str) -> 
         "code_root": code,
         "data_root": data,
         "environment_file": environment,
+        "kasa_interval_seconds": kasa_interval,
         "automatically_enabled_services": [],
         "templates_sha256": {
             name: hashlib.sha256(text.encode()).hexdigest()
@@ -82,8 +90,11 @@ if __name__ == "__main__":
     parser.add_argument("--code", required=True)
     parser.add_argument("--data", required=True)
     parser.add_argument("--environment", required=True)
+    parser.add_argument("--kasa-interval", type=int, default=60,
+                        help="Seconds between Kasa cycles (10-86400; default: 60)")
     args = parser.parse_args()
     try:
-        prepare(args.output, args.user, args.code, args.data, args.environment)
+        prepare(args.output, args.user, args.code, args.data, args.environment,
+                kasa_interval=args.kasa_interval)
     except (ValueError, OSError) as exc:
         parser.exit(1, f"Deployment preparation failed: {exc}\n")
