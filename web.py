@@ -2836,6 +2836,24 @@ mkChart('hourlyChart',
 
 LOG_HTML = """
 <div class="page">
+  <section class="card" style="margin-top:1.5rem;" aria-labelledby="capture-heading">
+    <h2 id="capture-heading">Recorded Capture Quality</h2>
+    <p>Completed hours only; each mark counts distinct minutes with a recorded Main reading for the selected device. This is not process uptime. Imported or compacted data, non-minute polling, and local-clock changes can affect interpretation.</p>
+    {% for hours, buckets in capture_history %}
+    <h3>{{ '48 hours' if hours == 48 else '7 days' }}</h3>
+    <div style="display:flex;gap:2px;margin:8px 0;" role="img" aria-label="{{ hours }} completed hourly capture buckets; details below">
+      {% for bucket in buckets %}
+      <span style="flex:1;min-width:0;height:20px;background:{{ 'var(--green)' if bucket.state == 'dense' else 'var(--amber)' if bucket.state == 'partial' else 'var(--stone-300)' }};" title="{{ bucket.hour }}: {{ bucket.minutes }}/60 minutes ({{ bucket.coverage_pct }}%), {{ bucket.state }}"></span>
+      {% endfor %}
+    </div>
+    <details><summary>Hourly capture details · {{ hours }} hours</summary>
+      <div style="max-height:240px;overflow:auto;"><table><thead><tr><th>Hour (collector local time)</th><th>Recorded minutes</th><th>Coverage</th></tr></thead><tbody>
+      {% for bucket in buckets %}<tr><td>{{ bucket.hour }}</td><td>{{ bucket.minutes }}/60 · {{ bucket.state }}</td><td>{{ bucket.coverage_pct }}%</td></tr>{% endfor %}
+      </tbody></table></div>
+    </details>
+    {% endfor %}
+    <p>Green: at least 95% of minute positions recorded. Amber: partial. Gray: no recorded Main samples—not proof that the collector was offline. Refresh to update these historical strips.</p>
+  </section>
   <div class="section-head" style="margin-top:1.5rem;">
     <h2>Poller Log</h2>
     <span class="section-sub">Last {{ entries|length }} poll cycles &bull; updates live via SSE</span>
@@ -4016,7 +4034,10 @@ def trends_page():
 def log_page():
     com     = _common()
     entries = energy.get_log_entries(200)
-    return _render(LOG_HTML, active_page="settings", entries=entries, **com)
+    capture_history = [(hours, energy.get_capture_history(hours, com['active_device_gid']))
+                       for hours in (48, 168)]
+    return _render(LOG_HTML, active_page="settings", entries=entries,
+                   capture_history=capture_history, **com)
 
 
 # ── REST API ──────────────────────────────────────────────────────────────────

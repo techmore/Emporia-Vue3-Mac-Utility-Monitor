@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.10 - Unreleased
+
+- Add selected-device recorded capture-quality strips for 48 hours and 7 days to Logs, with accessible hourly details and explicit coverage-versus-uptime limitations.
+
 ## 2.3.9 - 2026-10-07
 
 - Allow the panel editor to expand from 16 to 40 slots without a prior reload; save only selected-size rows.

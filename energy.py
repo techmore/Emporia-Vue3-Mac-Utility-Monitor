@@ -2275,6 +2275,34 @@ def backfill_latest_channel_snapshot() -> dict:
     return {"rebuilt": rebuilt}
 
 
+def get_capture_history(hours: int, device_gid: str | None = None,
+                        now: datetime | None = None) -> list[dict]:
+    """Recorded Main minute coverage in completed local-clock hours, not uptime."""
+    if type(hours) is not int or hours not in (48, 168):
+        raise ValueError('hours must be 48 or 168')
+    end = (now or datetime.now()).replace(minute=0, second=0, microsecond=0)
+    start = end - timedelta(hours=hours)
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        rows = conn.execute('''SELECT substr(timestamp,1,13) AS hour,
+            COUNT(DISTINCT substr(timestamp,1,16)) AS minutes FROM readings
+            WHERE device_gid=? AND channel_name='Main' AND usage_kwh>=0
+              AND timestamp>=? AND timestamp<? GROUP BY hour''',
+                            (gid, start.isoformat(), end.isoformat())).fetchall() if gid else []
+    finally:
+        conn.close()
+    counts = {row['hour']: row['minutes'] for row in rows}
+    result = []
+    for index in range(hours):
+        stamp = start + timedelta(hours=index)
+        minutes = min(60, counts.get(stamp.isoformat()[:13], 0))
+        state = 'dense' if minutes >= 57 else 'partial' if minutes else 'missing'
+        result.append({'hour': stamp.isoformat(), 'minutes': minutes,
+                       'coverage_pct': round(minutes / 60 * 100), 'state': state})
+    return result
+
+
 def get_log_entries(n: int = 200) -> list[dict]:
     """Return the most recent n poll timestamps and total kWh recorded."""
     conn = _connect()
