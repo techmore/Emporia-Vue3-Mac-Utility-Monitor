@@ -116,15 +116,25 @@ changes with a checkpoint of current readings and rotates the stream generation.
 The permanent collector identity does not change. This bounds logical journal
 growth relative to retained history; SQLite may retain allocated pages for reuse.
 The client detects a checkpoint change, downloads to a separate staging database,
-and publishes it through SQLite's backup API only after catching up. Failed
+and publishes only the energy cache tables in one SQLite transaction after catching up. Failed
 rebuilds preserve the old cache. Different collector identities are still refused.
 This retention behavior and automatic checkpoint recovery are integration-tested.
 Their operation across the actual SER8/Mac connection remains unverified.
 
-Energy history synchronization does not yet replicate radon observations. The
-Radon dashboard and local ingestion API are separate capabilities; do not assume
-EcoQube data will appear in the Mac's offline cache until radon replication is
-implemented and verified.
+The bundled downloader also fetches `/api/sync/radon` with the same private
+collector token. Radon observations retain their original units, measurement
+timestamps, receipt times and device identities in separate cache tables.
+The Radon dashboard reads this cache when configured and labels the last completed
+download explicitly; download time does not imply a fresh sensor measurement.
+Interrupted downloads retain the saved cursor and previously received data.
+Checkpoint recovery stages a complete radon snapshot, then transactionally
+replaces only radon cache tables. Local collected radon history is never overwritten
+or mixed with remote data. Collector and client must both support the radon endpoint;
+an older collector returns an error rather than silently claiming a complete sync.
+The journal compacts above the greater of 100,000 changes or twice retained samples.
+Automated tests exercise real loopback HTTP downloads, authentication failure,
+deletions and checkpoint recovery, but do not prove deployment on the actual SER8.
+This replicates recorded observations; it does not connect EcoQube collection.
 
 Remaining deployment work is to configure and verify the SER8 services, the
 private connection, and automatic downloads on the actual Mac installation.

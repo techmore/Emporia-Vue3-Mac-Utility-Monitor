@@ -302,6 +302,66 @@ def ensure_table():
             PRIMARY KEY (source, sensor_id, timestamp)
         );
         CREATE INDEX IF NOT EXISTS idx_radon_timestamp ON radon_readings(timestamp);
+        CREATE TABLE IF NOT EXISTS radon_sync_cache_state (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            source_id TEXT NOT NULL,
+            generation_id TEXT NOT NULL,
+            cursor INTEGER NOT NULL,
+            high_watermark INTEGER NOT NULL,
+            synchronized_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS radon_cached_readings (
+            source TEXT NOT NULL,
+            sensor_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            name TEXT NOT NULL,
+            measured_value REAL NOT NULL,
+            measured_unit TEXT NOT NULL,
+            radon_bq_m3 REAL NOT NULL,
+            received_at TEXT NOT NULL,
+            PRIMARY KEY (source, sensor_id, timestamp)
+        );
+
+        CREATE TABLE IF NOT EXISTS radon_changes (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation TEXT NOT NULL CHECK (operation IN ('upsert', 'delete')),
+            source TEXT NOT NULL,
+            sensor_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            name TEXT,
+            measured_value REAL,
+            measured_unit TEXT,
+            radon_bq_m3 REAL,
+            received_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS radon_stream_generation (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            generation_id TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO radon_stream_generation VALUES (1, lower(hex(randomblob(16))));
+        CREATE TRIGGER IF NOT EXISTS radon_sync_insert AFTER INSERT ON radon_readings
+        BEGIN
+            INSERT INTO radon_changes(operation, source, sensor_id, timestamp, name,
+                measured_value, measured_unit, radon_bq_m3, received_at)
+            VALUES ('upsert', NEW.source, NEW.sensor_id, NEW.timestamp, NEW.name,
+                NEW.measured_value, NEW.measured_unit, NEW.radon_bq_m3, NEW.received_at);
+        END;
+        CREATE TRIGGER IF NOT EXISTS radon_sync_update AFTER UPDATE ON radon_readings
+        BEGIN
+            INSERT INTO radon_changes(operation, source, sensor_id, timestamp)
+            SELECT 'delete', OLD.source, OLD.sensor_id, OLD.timestamp
+            WHERE OLD.source != NEW.source OR OLD.sensor_id != NEW.sensor_id
+                OR OLD.timestamp != NEW.timestamp;
+            INSERT INTO radon_changes(operation, source, sensor_id, timestamp, name,
+                measured_value, measured_unit, radon_bq_m3, received_at)
+            VALUES ('upsert', NEW.source, NEW.sensor_id, NEW.timestamp, NEW.name,
+                NEW.measured_value, NEW.measured_unit, NEW.radon_bq_m3, NEW.received_at);
+        END;
+        CREATE TRIGGER IF NOT EXISTS radon_sync_delete AFTER DELETE ON radon_readings
+        BEGIN
+            INSERT INTO radon_changes(operation, source, sensor_id, timestamp)
+            VALUES ('delete', OLD.source, OLD.sensor_id, OLD.timestamp);
+        END;
 
         CREATE TABLE IF NOT EXISTS collector_identity (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -378,6 +438,18 @@ def ensure_table():
     """)
     # Seed pre-existing history once, atomically with its migration marker.
     conn.execute("BEGIN IMMEDIATE")
+    if not conn.execute(
+        "SELECT 1 FROM migrations WHERE name = 'radon_sync_seed_v1'"
+    ).fetchone():
+        conn.execute("""INSERT INTO radon_changes(operation, source, sensor_id, timestamp,
+            name, measured_value, measured_unit, radon_bq_m3, received_at)
+            SELECT 'upsert', source, sensor_id, timestamp, name, measured_value,
+                   measured_unit, radon_bq_m3, received_at FROM radon_readings
+            ORDER BY timestamp, source, sensor_id""")
+        conn.execute(
+            "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
+            ("radon_sync_seed_v1", datetime.now().isoformat()),
+        )
     if not conn.execute(
         "SELECT 1 FROM migrations WHERE name = 'reading_sync_seed_v1'"
     ).fetchone():

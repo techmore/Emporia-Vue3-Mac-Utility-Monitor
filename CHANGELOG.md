@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.21 - 2026-10-07
+
+- Add authenticated radon history replication with ordered updates/deletions, private separate cache tables, explicit cache status, resumable downloads, journal checkpoints and atomic staged recovery. Preserve local collected data and unrelated cache tables. Real EcoQube collection and SER8 deployment remain unverified.
+- Publish the native downloader test fixture PID atomically to remove an observed stop/read race.
+
 ## 2.3.20 - 2026-10-07
 
 - Reject oversized radon numbers and timezone conversions outside the supported UTC date range as validation errors, preserving atomic ingestion and avoiding HTTP 500 responses.
