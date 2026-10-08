@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.7 - Unreleased
+## 2.3.7 - 2026-10-07
 
 - Lead the Guide with a linked setup checklist, collection verification, separate billing configuration, and truthful integration status; make reference cards responsive.
 
