@@ -4385,10 +4385,17 @@ function saveLayout() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({slots, panel_slots: parseInt(document.getElementById('panelSize').value) || null})
-  }).then(r => r.json()).then(() => {
+  }).then(async r => {
+    const result = await r.json();
+    if (!r.ok || result.ok !== true) throw new Error(result.error || 'Save failed');
     const m = document.getElementById('saveMsg');
+    m.textContent = 'Saved';
     m.style.display = 'inline';
     setTimeout(() => m.style.display = 'none', 2500);
+  }).catch(error => {
+    const m = document.getElementById('saveMsg');
+    m.textContent = 'Not saved: ' + error.message;
+    m.style.display = 'inline';
   });
 }
 document.getElementById('panelSize').addEventListener('change', function() {

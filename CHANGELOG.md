@@ -1,7 +1,8 @@
 # Changelog
 
-## 2.3.8 - Unreleased
+## 2.3.8 - 2026-10-07
 
+- Show panel save errors instead of falsely reporting success on rejected requests.
 - Reject non-object panel layout requests with HTTP 400 instead of server errors. Add isolated pole/amp persistence, estimated-load, and invalid-batch regression tests.
 
 ## 2.3.7 - 2026-10-07
