@@ -808,6 +808,14 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .ch-footer a { color:var(--accent); }
 @media(max-width:600px) { .ch-totals { grid-template-columns:1fr; } #circuit-history { padding:16px; } }
 
+.reports-columns { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:14px; align-items:start; }
+.reports-extremes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.reports-page .card, .reports-page .section-block { min-width:0; }
+.reports-review-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
+.reports-review-copy { flex:1 1 180px; min-width:0; overflow-wrap:anywhere; }
+@media(max-width:720px) { .reports-columns { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:420px) { .reports-extremes { grid-template-columns:minmax(0,1fr); } }
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -1708,7 +1716,7 @@ setTimeout(() => location.reload(), 60000);
 """
 
 REPORTS_HTML = """
-<div class="page">
+<div class="page reports-page">
   <div class="section-head" style="margin-bottom:1rem;">
     <div>
       <div class="eyebrow">Analysis</div>
@@ -1806,14 +1814,14 @@ REPORTS_HTML = """
         <div class="card-meta">{{ standby|length }} candidates; continuity not verified</div>
       </div>
     </div>
-    <div style="display:grid; grid-template-columns:1.15fr 1fr; gap:14px; align-items:start;">
+    <div class="reports-columns">
       <div class="card">
         <div class="card-label" style="margin-bottom:8px;">Recommended Reviews</div>
         <div style="display:flex; flex-direction:column; gap:10px;">
           {% for item in recommendations %}
           <div style="padding:10px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-              <div>
+            <div class="reports-review-row">
+              <div class="reports-review-copy">
                 <div style="font-size:0.9rem; font-weight:700; color:var(--text);">{{ item.title }}</div>
                 <div style="font-size:0.82rem; color:var(--text-light); margin-top:3px;">{{ item.body }}</div>
               </div>
@@ -1875,7 +1883,7 @@ REPORTS_HTML = """
       <h2>Billing Review</h2>
       <span class="section-sub">Month-over-month cost and daily extremes</span>
     </div>
-    <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:14px; align-items:start;">
+    <div class="reports-columns">
       <div class="section-block">
       {% if month_comparison.this_month and month_comparison.last_month %}
       {% set this_kwh = month_comparison.this_month.total_kwh or 0 %}
@@ -1902,7 +1910,7 @@ REPORTS_HTML = """
       {% endif %}
 
       {% if trend and trend.best_day and trend.worst_day %}
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+      <div class="reports-extremes">
         <div class="card">
           <div class="card-label">Best Day (14d)</div>
           <div class="card-value" style="font-size:1.1rem; color:#81c784;">{{ "%.1f"|format(trend.best_day.total_kwh) }}<span class="unit">kWh</span></div>

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.19 - 2026-10-07
+
+- Scope responsive recommendation/billing grids and wrapping review rows to Reports, preventing mobile overflow exposed by real circuit history. Preserve table-local scrolling.
+
 ## 2.3.18 - 2026-10-07
 
 - Add explicit same-window solar offset scenarios in Reports using recorded Main demand, separate avoided usage charges/export credits, unknown compensation handling and capture-quality caveats. Fixed charges and payback are excluded.
