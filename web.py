@@ -55,6 +55,8 @@ def validate_local_request():
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
     if request.path.startswith(('/api/kasa/', '/api/mitsubishi')):
         request.max_content_length = 8192
+    if request.path == '/api/aqara/local/label':
+        request.max_content_length = 8192
     if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
         return jsonify({"error": "Local host required"}), 403
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
@@ -122,6 +124,17 @@ _refresh_runtime_config()
 # ── Shared design tokens (mirrors techmore.github.io) ─────────────────────────
 BASE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+.aqara-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:12px 0; }
+.aqara-toolbar label { display:flex; align-items:center; gap:5px; }
+.aqara-toolbar select, .aqara-label-form input { max-width:100%; padding:6px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:5px; }
+.aqara-chart { width:100%; max-height:300px; display:block; margin:12px 0; }
+.aqara-chart text { font-size:14px; }
+.aqara-sensor-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); }
+.aqara-sensor-card { min-width:0; }
+.aqara-sensor-card .card-label, .aqara-sensor-card .card-meta { overflow-wrap:anywhere; }
+.aqara-label-form { display:grid; gap:6px; margin-top:8px; }
+.aqara-legend { display:flex; flex-wrap:wrap; gap:12px; font-size:0.78rem; }
+.aqara-legend span { border-left:4px solid var(--accent); padding-left:6px; overflow-wrap:anywhere; }
 .kasa-controls-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:14px; margin-top:16px; }
 .kasa-controls-grid label { display:grid; gap:4px; margin:12px 0; }
 .kasa-controls-grid input, .kasa-controls-grid select { width:100%; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
@@ -922,6 +935,7 @@ NAV_HTML = """
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
       <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
+      <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
       <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}">HVAC</a>
       <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}">Kasa</a>
       <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
@@ -5441,11 +5455,29 @@ def api_panel_layout():
 
 
 AQARA_HTML = """
+{% from "aqara_trend_chart.html" import draw_chart %}
 <div class="page">
   <div class="section-head" style="margin-top:1.5rem;">
     <h2>Aqara Sensors</h2>
     <span class="section-sub">Temperature, humidity &amp; battery readings</span>
   </div>
+  <form class="aqara-toolbar" action="/aqara" method="get" aria-label="Aqara display options">
+    {% if selected_sensor %}<input type="hidden" name="sensor" value="{{ selected_sensor }}">{% endif %}
+    {% if plot_all %}<input type="hidden" name="view" value="all">{% endif %}
+    <label>History <select name="window">
+      {% for value, label in [('4h','4 hours'),('24h','24 hours'),('7d','7 days'),('30d','30 days'),('all','All recorded')] %}
+      <option value="{{ value }}" {{ 'selected' if value == history_window else '' }}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+    <label>Plot <select name="metric"><option value="temperature" {{ 'selected' if history_metric == 'temperature' else '' }}>Temperature</option><option value="humidity" {{ 'selected' if history_metric == 'humidity' else '' }}>Humidity</option></select></label>
+    <label>Temperature <select name="unit"><option value="F" {{ 'selected' if temperature_unit == 'F' else '' }}>°F</option><option value="C" {{ 'selected' if temperature_unit == 'C' else '' }}>°C</option></select></label>
+    <button type="submit">Apply</button>
+    {% if aqara_local %}<a href="{{ url_for('aqara_page', window=history_window, metric=history_metric, unit=temperature_unit, view='all') }}">Plot all</a>{% endif %}
+    {% if selected_sensor or plot_all %}<a href="{{ url_for('aqara_page', window=history_window, metric=history_metric, unit=temperature_unit) }}">All sensor cards</a>{% endif %}
+  </form>
+  {% if aqara_local %}
+  <p class="card-meta">Charts use online collector-observation means in {{ bucket_minutes }}-minute UTC buckets, with min/max in each tooltip. Cached snapshots may repeat an earlier measurement. Missing or offline buckets break the line; chart recency does not prove a fresh sensor measurement.</p>
+  {% endif %}
 
   {% if not aqara_configured %}
   <!-- Not configured state -->
@@ -5484,9 +5516,16 @@ AQARA_HTML = """
   {% endif %}
 
   {% if sensors %}
-  <div class="grid-4" style="margin-bottom:1.5rem;">
+  {% if plot_all and aqara_local %}
+  <section class="card" style="margin:1rem 0;">
+    <h3>All sensors · {{ history_metric|capitalize }}</h3>
+    <div class="aqara-legend">{% for series in comparison_chart.series %}<span style="border-color:{{ series.color }}">{{ series.name }}</span>{% endfor %}</div>
+    {{ draw_chart(comparison_chart, 'aqara-comparison', history_metric|capitalize) }}
+  </section>
+  {% endif %}
+  <div class="grid-4 aqara-sensor-grid" style="margin-bottom:1.5rem;">
     {% for s in sensors %}
-    <div class="card" style="position:relative;">
+    <div class="card aqara-sensor-card" style="position:relative;">
       {% if not s.online %}
       <span style="position:absolute; top:10px; right:10px; font-size:0.65rem; padding:2px 7px;
                    background:var(--stone-200); color:var(--stone-500); border-radius:20px;">offline</span>
@@ -5495,10 +5534,7 @@ AQARA_HTML = """
       {% if s.observed_at %}<div class="card-meta">Last collector observation: {{ s.observed_at }}</div>{% endif %}
       {% if s.temperature is not none %}
       <div class="card-value" style="font-size:2rem;">
-        {{ "%.1f"|format(s.temperature) }}<span class="unit">°C</span>
-        <span style="font-size:1rem; color:var(--text-light); margin-left:4px;">
-          / {{ "%.1f"|format(s.temperature * 9/5 + 32) }}°F
-        </span>
+        {{ "%.1f"|format(s.temperature * 9/5 + 32 if temperature_unit == 'F' else s.temperature) }}<span class="unit">°{{ temperature_unit }}</span>
       </div>
       {% else %}
       <div class="card-value" style="color:var(--stone-400);">—</div>
@@ -5516,6 +5552,17 @@ AQARA_HTML = """
       </div>
       {% endif %}
       <div style="margin-top:0.5rem; font-size:0.68rem; color:var(--stone-400);">{{ s.model }}</div>
+      {% if aqara_local %}
+      {{ draw_chart(sensor_charts[s.did], 'aqara-card-' ~ loop.index, history_metric|capitalize) }}
+      <a href="{{ url_for('aqara_page', sensor=s.did, window=history_window, metric=history_metric, unit=temperature_unit) }}">Explore history</a>
+      <details style="margin-top:8px;"><summary>Room label</summary>
+        <p class="card-meta">Sensor ID: {{ s.did }}. Verify the room before naming it; blank restores the sensor name.</p>
+        <form class="aqara-label-form" data-device-id="{{ s.did }}">
+          <label>Room name <input name="name" maxlength="120" value="{{ s.name }}" autocomplete="off"></label>
+          <button type="submit">Save room label</button><p role="status" aria-live="polite"></p>
+        </form>
+      </details>
+      {% else %}<p class="card-meta">Cloud snapshot only; no local recorded history is available.</p>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -5530,7 +5577,23 @@ AQARA_HTML = """
     {% if aqara_local %}<a href="/api/aqara/local/history.csv">Download recorded history (CSV)</a> · Data via <strong>local Matter · SER8</strong>. Sensor events are recorded automatically; connection snapshots refresh every minute. Pressure is not exposed by this bridge. Names pending identity verification are shown by sensor ID.{% else %}Data via <strong>Aqara Cloud OpenAPI v3</strong>.{% endif %}
   </p>
 </div>
+<script src="{{ url_for('static', filename='aqara-labels.js') }}" defer></script>
 """
+
+
+@app.post('/api/aqara/local/label')
+def aqara_local_label():
+    import aqara_local
+    if request.headers.get('Origin', '').rstrip('/') != request.host_url.rstrip('/'):
+        return jsonify({'error': 'Explicit same-origin request required'}), 403
+    data = request.get_json()
+    if set(data) != {'device_id', 'name'}:
+        return jsonify({'error': 'Supply only sensor identity and room name'}), 400
+    try:
+        aqara_local.save_label(data['device_id'], data['name'])
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return jsonify({'saved': True}), 200, {'Cache-Control': 'no-store'}
 
 
 @app.route("/api/aqara/local/history.csv")
@@ -5559,6 +5622,13 @@ def aqara_local_history_csv():
 @app.route("/aqara")
 def aqara_page():
     import aqara as _aqara
+    import aqara_trends
+    history_window = request.args.get('window', '4h')
+    history_metric = request.args.get('metric', 'temperature')
+    unit = request.args.get('unit', 'F')
+    if (history_window not in aqara_trends.WINDOWS or unit not in {'F', 'C'}
+            or history_metric not in {'temperature', 'humidity'}):
+        return jsonify({'error': 'Invalid history display options'}), 400
     com = _common()
     import aqara_local
     local_sensors = aqara_local.get_sensors()
@@ -5569,12 +5639,27 @@ def aqara_page():
             sensors = _aqara.get_sensors()
         except _aqara.AqaraError as e:
             error = str(e)
-    return _render(AQARA_HTML, active_page="settings",
+    selected = request.args.get('sensor')
+    if selected is not None:
+        sensors = [sensor for sensor in sensors if sensor['did'] == selected]
+        if not sensors:
+            return jsonify({'error': 'Sensor not found'}), 404
+    trends = aqara_trends.get_trends(history_window, history_metric, selected) if local_sensors else None
+    charts = {sensor['did']: aqara_trends.chart_model(trends, [sensor], unit)
+              for sensor in sensors} if trends else {}
+    response = _render(AQARA_HTML, active_page="aqara",
                    aqara_configured=configured,
                    aqara_local=bool(local_sensors),
                    sensors=sensors,
                    aqara_error=error,
+                   history_window=history_window, history_metric=history_metric,
+                   temperature_unit=unit, selected_sensor=selected,
+                   plot_all=request.args.get('view') == 'all',
+                   bucket_minutes=trends['seconds'] / 60 if trends else None,
+                   sensor_charts=charts,
+                   comparison_chart=aqara_trends.chart_model(trends, sensors, unit) if trends else None,
                    **com)
+    return response, 200, {'Cache-Control': 'no-store'}
 
 
 @app.route("/settings")

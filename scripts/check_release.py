@@ -19,4 +19,6 @@ for name in ('web.py', 'energy.py', 'climate.py', 'climate_collect.py', 'extensi
              'EnergyMonitorApp/Sources/CollectorSync.swift', 'sync_history.py', 'radon.py',
              'templates/radon.html', 'ecosense.py', 'ecosense_collect.py', 'mitsubishi.py', 'mitsubishi_collect.py', 'aqara_local.py', 'aqara_matter_collect.py', 'templates/mitsubishi.html', 'panel_photos.py', 'templates/panel_photos.html', 'solar_model.py', 'templates/solar_scenario.html', 'kasa_monitor.py', 'kasa_history.py', 'kasa_collect.py', 'templates/kasa_settings.html', 'templates/kasa.html'):
     assert (root / name).is_file(), f'Missing release file: {name}'
+for name in ('aqara_trends.py', 'templates/aqara_trend_chart.html', 'static/aqara-labels.js'):
+    assert (root / name).is_file(), f'Missing release file: {name}'
 print(version)

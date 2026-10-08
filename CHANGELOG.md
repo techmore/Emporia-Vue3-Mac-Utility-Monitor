@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.35 - 2026-10-08
+
+- Give Aqara a dedicated desktop tab, Fahrenheit-first display and four-hour
+  recorded temperature/humidity trends per sensor, with longer windows,
+  sensor-focused history and Plot all. Preserve Celsius storage and gaps, bound
+  history chart output and distinguish cached collector observations from fresh
+  measurements. Add verified room-label editing backed by SQLite with guarded
+  same-origin writes. Include new modules/assets in release validation.
+
 ## 2.3.34 - 2026-10-08
 
 - Make the verified Kasa collection cadence an explicit, validated deployment
