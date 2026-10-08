@@ -80,3 +80,13 @@ remain available in the original-unit table. The chart does not infer safety.
 ## Recorded dashboard
 
 Open `/radon` using the Radon navigation tab. Day and Week use hourly sample means; Month and Year use daily sample means. Sensor and window selection are carried in the URL. The first recorded sensor is selected automatically only when no identity was requested. Missing buckets stay blank, old samples are not presented as live, and no safety classification is inferred. Refresh the page after importing new observations. Collection is not enabled by this page.
+
+## Timestamp diagnostics
+
+The probe reports `candidate_timestamps_utc` only for recognized top-level time
+fields containing timezone-qualified ISO timestamps. It normalizes those values
+to UTC without printing arbitrary raw strings. Naive dates and numeric epoch
+values are omitted rather than guessed. A device update, creation or last-seen
+time is **not** necessarily the radon measurement time: compare it with the
+vendor app before mapping any field. `measurement_time_verified` and
+`history_ingested` remain false; diagnostics never insert observations.

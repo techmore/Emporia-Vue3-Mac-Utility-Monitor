@@ -77,3 +77,21 @@ class EcoSenseTests(unittest.TestCase):
         self.assertNotIn('private-password', output.getvalue())
         self.assertNotIn('account@example.com', output.getvalue())
         self.assertEqual(json.loads(output.getvalue()), {'devices': []})
+
+    def test_timestamp_candidates_are_normalized_but_never_verified(self):
+        result = ecosense.describe_devices([{
+            'radon_level': 25.9, 'serial_number': 'private-serial',
+            'timestamp': '2026-10-07T20:00:00-04:00',
+            'updated_at': '2026-10-08T00:01:00Z',
+            'measured_at': '2026-10-07T20:00:00',
+            'last_seen': 'private-token', 'created_at': 1234567890,
+            'email': 'private@example.com', 'password': 'private-password',
+        }])[0]
+        self.assertEqual(result['candidate_timestamps_utc'], {
+            'timestamp': '2026-10-08T00:00:00+00:00',
+            'updated_at': '2026-10-08T00:01:00+00:00'})
+        self.assertFalse(result['measurement_time_verified'])
+        self.assertFalse(result['history_ingested'])
+        output = json.dumps(result)
+        for private in ('private-serial', 'private-token', 'private@example.com', 'private-password'):
+            self.assertNotIn(private, output)
