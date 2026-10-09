@@ -53,6 +53,12 @@ power. Require explicit legacy storage-zone review, retain fold evidence without
 ambiguous wall keys and preserve ordinary UTC guards. No continuous scheduler or
 production legacy adoption is enabled. See `tests/test_completed_history.py`.
 
+Chart-capable history requires protocol 3 with `measurement_model=interval_v2`
+before any journal page, even a supported CSV event. Immutable chart source order
+keeps the gate sticky. `sync_history` requires explicit model acknowledgment;
+upgrade the collector first. Same-generation cache changes allow only additive
+v1-to-v2 support with unchanged timestamps/zone. See `tests/test_chart_sync_contract.py`.
+
 `emporia_history.py` validates captured completed chart windows without a DB.
 Require returned `firstUsageInstant`; never substitute an echoed live `instant`
 or the SDK's requested-start fallback. Clip inclusive end buckets and preserve

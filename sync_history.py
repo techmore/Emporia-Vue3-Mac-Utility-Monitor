@@ -30,6 +30,7 @@ def fetch_page(origin: str, token: str, state: dict, *, stream: str = 'readings'
     query = {"after": state["cursor"], "limit": 500}
     if stream == 'readings':
         query['protocol_version'] = 3
+        query['measurement_model'] = 'interval_v2'
     if state.get("source_id"):
         query["source_id"] = state["source_id"]
     if state.get("generation_id"):
@@ -42,7 +43,12 @@ def fetch_page(origin: str, token: str, state: dict, *, stream: str = 'readings'
         payload = response.read(4 * 1024 * 1024 + 1)
     if len(payload) > 4 * 1024 * 1024:
         raise ValueError("Collector response exceeds the page size limit")
-    return json.loads(payload)
+    page = json.loads(payload)
+    if stream == 'readings':
+        policy = page.get('time_policy') if isinstance(page, dict) else None
+        if not isinstance(policy, dict) or policy.get('measurement_model') != 'interval_v2':
+            raise ValueError('Collector did not acknowledge interval_v2; upgrade the collector before syncing')
+    return page
 
 
 def _download_radon_pages(origin: str, token: str, max_pages: int,

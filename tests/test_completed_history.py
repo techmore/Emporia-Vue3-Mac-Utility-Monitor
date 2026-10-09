@@ -225,7 +225,8 @@ class CompletedHistoryTests(unittest.TestCase):
             state = energy.apply_reading_changes(first)
         self.publish()
         while True:
-            page = energy.get_reading_changes(state['cursor'], limit=1)
+            page = energy.get_reading_changes(state['cursor'], limit=1, protocol_version=3,
+                                              measurement_model='interval_v2')
             with patch.object(energy, 'DB_PATH', str(cache)):
                 state = energy.apply_reading_changes(page)
                 rows = self.rows('sync_cached_readings')

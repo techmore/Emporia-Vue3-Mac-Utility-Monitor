@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.3.52 - Unreleased
+
+- Negotiate `interval_v2` before any chart-capable journal page, including CSV
+  replacements/deletions and identity/reset checks. Older clients receive HTTP
+  426 without changes; immutable chart source order keeps the gate active after
+  pruning/checkpoints. The same read snapshot covers capability and journal.
+- Require the collector to acknowledge the upgraded downloader's model before
+  applying even a supported CSV page. Upgrade the collector before using this
+  downloader; an older server ignoring negotiation cannot partially mutate cache.
+- Allow only additive v1-to-v2 measurement support on an otherwise unchanged
+  cache contract. Preserve source/generation, reading IDs and stored costs; refuse
+  downgrades, unknown models or timestamp/reporting-zone changes. Swift offline
+  history explicitly accepts both known models for legacy and UTC caches.
+- Verify old-client refusal, supported-first-event replacement, single-event
+  resume, concurrent publication, sticky retention gates, malformed contracts,
+  actual HTTP downloads and native legacy/UTC totals. Collection scheduling,
+  production reconciliation and backed-up SER8/UTC cutover remain open. No deploy.
+
 ## 2.3.51 - Unreleased
 
 - Retain exact completed chart response bytes, scoped request/receipt identity,

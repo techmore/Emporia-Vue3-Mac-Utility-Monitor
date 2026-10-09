@@ -19,6 +19,20 @@ service endpoint. Never run its preserved poller alongside the guest.
 Subsequent release upgrades are reflected by `/api/version` and the private
 deployment manifest; the original cutover receipt is not a latest-version pointer.
 
+## Development 2.3.52 Upgrade Order
+
+This unreleased development branch is not the currently deployed collector.
+Upgrade and verify the collector **before** using its new history downloader.
+The downloader requires protocol 3 with an acknowledged `interval_v2` measurement
+model; an older collector ignoring negotiation is refused before cache updates.
+Existing history remains intact, but download cannot resume until that upgrade.
+
+Once chart evidence is retained, the collector returns HTTP 426 to incompatible
+clients before even a CSV replacement/delete page. Upgrade the Mac app/downloader
+too. This additive model change preserves source/generation, reading IDs and
+stored costs; it does not authorize UTC activation or a production cutover.
+See [history contract and disposable tests](docs/EMPORIA_HISTORY_CONTRACT.md#client-capability-contract-development-2352).
+
 ## Original Native SER8 Deployment — 2026-10-08
 
 Release 2.3.26 is installed on the verified Ubuntu SER8. SSH was verified over

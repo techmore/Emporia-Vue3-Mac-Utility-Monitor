@@ -4135,23 +4135,33 @@ def api_sync_readings():
         after = int(request.args.get("after", "0"))
         limit = int(request.args.get("limit", "500"))
         protocol = int(request.args.get('protocol_version', '2'))
+        measurement_model = request.args.get('measurement_model')
+        if any(len(request.args.getlist(key)) > 1 for key in ('protocol_version', 'measurement_model')):
+            raise ValueError('Sync contract parameters must occur only once')
         expected_generation = request.args.get("generation_id")
         if expected_generation:
-            identity = energy.get_reading_changes(0, 1, protocol_version=protocol)
+            identity = energy.get_reading_changes(0, 1, protocol_version=protocol,
+                                                  measurement_model=measurement_model)
             if request.args.get("source_id") != identity["source_id"]:
                 return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
             if expected_generation != identity["generation_id"]:
                 return jsonify({"error": "Stream checkpoint changed", "reset_required": True,
                                 "source_id": identity["source_id"],
                                 "generation_id": identity["generation_id"]}), 409
-        page = energy.get_reading_changes(after, limit, protocol_version=protocol)
+        page = energy.get_reading_changes(after, limit, protocol_version=protocol,
+                                         measurement_model=measurement_model)
         if expected_generation and expected_generation != page["generation_id"]:
             return jsonify({"error": "Stream checkpoint changed; retry"}), 409
         expected_source = request.args.get("source_id")
         if expected_source and expected_source != page["source_id"]:
             return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
-    except energy.SyncUpgradeRequired:
-        return jsonify(error='Upgrade the client before downloading UTC history', required_protocol=3), 426
+    except energy.SyncUpgradeRequired as exc:
+        payload = {'error': str(exc), 'required_protocol': 3}
+        if exc.measurement_model:
+            payload['required_measurement_model'] = exc.measurement_model
+        response = jsonify(payload)
+        response.headers['Cache-Control'] = 'no-store'
+        return response, 426
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     response = jsonify(page)
@@ -4377,7 +4387,8 @@ def api_menu_summary():
     return jsonify({
         "version": VERSION, "online": online, "current_watts": watts,
         "active_device_gid": gid,
-        "collector_source_id": energy.get_reading_changes(0, 1, protocol_version=3)["source_id"],
+        "collector_source_id": energy.get_reading_changes(0, 1, protocol_version=3,
+                                                         measurement_model='interval_v2')["source_id"],
         "cost_24h": total["total_cents"] / 100 if total and total["total_cents"] is not None else None,
         "month_cost": this_month["total_cents"] / 100 if this_month and this_month["total_cents"] is not None else None,
         "month_days_recorded": this_month["days_recorded"] if this_month else 0,

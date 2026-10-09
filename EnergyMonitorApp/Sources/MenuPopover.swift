@@ -198,7 +198,7 @@ struct DownloadedHistoryReader {
             policy = rows.first
         }
         if let policy = policy {
-            guard policy["measurement_model"] == "interval_v1",
+            guard ["interval_v1", "interval_v2"].contains(policy["measurement_model"] ?? ""),
                   ["utc_v1", "legacy_local_v1"].contains(policy["timestamp_format"] ?? "") else { return nil }
             if policy["timestamp_format"] == "legacy_local_v1" && policy["reporting_timezone"] != nil { return nil }
         }

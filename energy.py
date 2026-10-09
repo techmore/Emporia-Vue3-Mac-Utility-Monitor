@@ -1103,10 +1103,15 @@ def ensure_table(path: str | Path | None = None):
 
 
 class SyncUpgradeRequired(ValueError):
-    """Older clients must not receive a timestamp format they misinterpret."""
+    """Refuse incompatible history before any journal page can mutate a cache."""
+
+    def __init__(self, message: str, measurement_model: str | None = None):
+        super().__init__(message)
+        self.measurement_model = measurement_model
 
 
-def get_reading_changes(after: int = 0, limit: int = 500, *, protocol_version: int = 2) -> dict:
+def get_reading_changes(after: int = 0, limit: int = 500, *, protocol_version: int = 2,
+                        measurement_model: str | None = None) -> dict:
     """Return a bounded page and collector identity from one consistent read transaction."""
     if isinstance(after, bool) or not isinstance(after, int) or after < 0:
         raise ValueError("after must be a nonnegative integer")
@@ -1114,12 +1119,21 @@ def get_reading_changes(after: int = 0, limit: int = 500, *, protocol_version: i
         raise ValueError("limit must be between 1 and 1000")
     if type(protocol_version) is not int or protocol_version not in (2, 3):
         raise ValueError('Unsupported sync protocol')
+    if measurement_model not in (None, 'interval_v1', 'interval_v2'):
+        raise ValueError('Unsupported measurement model')
+    if protocol_version < 3 and measurement_model is not None:
+        raise ValueError('Measurement model negotiation requires protocol 3')
     conn = _connect()
     try:
         conn.execute("BEGIN")
         clock = _utc_clock(conn)
         if clock and protocol_version < 3:
             raise SyncUpgradeRequired('UTC history requires an upgraded client')
+        # Immutable source order keeps this gate sticky through pruning/checkpoints.
+        # Check inside the journal's read snapshot, not just the requested page.
+        if (conn.execute("SELECT 1 FROM energy_source_order WHERE kind='emporia_chart_v1' LIMIT 1").fetchone()
+                and measurement_model != 'interval_v2'):
+            raise SyncUpgradeRequired('Chart history requires an upgraded client', 'interval_v2')
         source_id = conn.execute("SELECT source_id FROM collector_identity").fetchone()[0]
         generation_id = conn.execute("SELECT generation_id FROM reading_stream_generation").fetchone()[0]
         watermark = conn.execute(
@@ -1142,7 +1156,7 @@ def get_reading_changes(after: int = 0, limit: int = 500, *, protocol_version: i
             result['time_policy'] = {
                 'timestamp_format': 'utc_v1' if clock else 'legacy_local_v1',
                 'reporting_timezone': clock.reporting_timezone if clock else None,
-                'measurement_model': 'interval_v1',
+                'measurement_model': measurement_model or 'interval_v1',
             }
         return result
     finally:
@@ -1176,7 +1190,7 @@ def _reading_sync_policy(page: dict) -> dict | None:
         return None
     if not isinstance(policy, dict) or set(policy) != {'timestamp_format', 'reporting_timezone', 'measurement_model'}:
         raise ValueError('Missing or unsupported sync format contract')
-    if policy['measurement_model'] != 'interval_v1':
+    if policy['measurement_model'] not in ('interval_v1', 'interval_v2'):
         raise ValueError('Unsupported measurement model')
     if policy['timestamp_format'] == 'utc_v1':
         if not isinstance(policy['reporting_timezone'], str):
@@ -1223,6 +1237,9 @@ def apply_reading_changes(page: dict) -> dict:
             raise ValueError("Invalid reading identity")
         if row.get("operation") not in {"upsert", "delete"}:
             raise ValueError("Invalid change operation")
+        if row.get('measurement_source') == 'emporia_chart' and (
+                not policy or policy['measurement_model'] != 'interval_v2'):
+            raise ValueError('Chart history requires the interval_v2 contract')
         if row["operation"] == "upsert":
             if not isinstance(row.get("timestamp"), str) or not isinstance(row.get("device_gid"), str):
                 raise ValueError("Invalid reading timestamp or device")
@@ -1255,7 +1272,13 @@ def apply_reading_changes(page: dict) -> dict:
             raise ValueError("Sync cursor changed; reload cache state and retry")
         cached_policy = conn.execute('SELECT timestamp_format,reporting_timezone,measurement_model FROM sync_cache_format WHERE singleton=1').fetchone()
         if cached_policy and dict(cached_policy) != policy:
-            raise ValueError('Sync format changed; a new generation and cache snapshot are required')
+            # The only same-generation transition is additive chart support.
+            upgraded = dict(cached_policy)
+            if upgraded['measurement_model'] != 'interval_v1':
+                raise ValueError('Sync format changed; a new generation and cache snapshot are required')
+            upgraded['measurement_model'] = 'interval_v2'
+            if upgraded != policy:
+                raise ValueError('Sync format changed; a new generation and cache snapshot are required')
         if state and not cached_policy and clock:
             raise ValueError('UTC format requires a new cache snapshot, not a legacy-cache append')
         if not state and (conn.execute('SELECT 1 FROM sync_cached_readings LIMIT 1').fetchone()

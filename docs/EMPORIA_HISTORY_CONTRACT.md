@@ -136,6 +136,40 @@ only 20 buckets or all nulls, retain the complete hour. With conflicting values,
 retain earlier accepted values and show review warnings. Never use these examples
 as permission to modify or reprice production history.
 
+## Client Capability Contract (Development 2.3.52)
+
+Protocol 3 alone negotiates timestamps, not chart measurement support. An older
+client can accept a CSV replacement of a coarse row and reject the next chart
+page, leaving a partial cache. Testing only pages containing charts is too late.
+
+Chart-aware downloaders request `protocol_version=3&measurement_model=interval_v2`.
+The collector declares that model in `time_policy` and checks immutable chart
+source order inside the **same read transaction** as the journal. Once chart
+evidence exists, every incompatible request receives HTTP 426 without changes,
+even when the next event is CSV/delete, the page is empty, or the client requests
+a generation reset. Pruning readings or checkpointing the journal cannot downgrade
+this requirement. Retained but unselected chart evidence also activates the gate.
+
+The new downloader refuses a collector that ignores the requested model before
+applying any page. **Upgrade the collector before using the 2.3.52 downloader.**
+This deliberately does not silently fall back to older servers: they cannot
+guarantee chart-free subsequent pages. Existing compatible caches remain intact
+on HTTP 426 or missing acknowledgment; neither triggers snapshot replacement.
+
+An identified legacy v2 cache or v3 `interval_v1` cache can resume into v3
+`interval_v2` while retaining source, generation, IDs, values and stored cents.
+The only same-generation policy change is additive v1-to-v2 measurement support
+with unchanged timestamp format and reporting zone. Model downgrades, unknown
+models and calendar changes fail closed; UTC cutover still requires its reviewed
+new-generation snapshot. Chart rows under a missing/v1 contract reject the entire
+page. Swift offline history explicitly recognizes the two supported models.
+
+Verify with `venv/bin/python3 -m unittest discover -s tests -p test_chart_sync_contract.py -v`.
+Disposable fixtures cover a 3kWh CSV hour replaced by one CSV minute and 59 chart
+minutes: incompatible clients get no first CSV page, compatible caches retain
+3kWh/67.74 cents after resume. Real HTTP downloader and actual Swift reader tests
+cover legacy and UTC caches without modifying production or activating UTC.
+
 ## Still Required For Collection
 
 1. Schedule completed-window collection with durable per-channel cursors, bounded

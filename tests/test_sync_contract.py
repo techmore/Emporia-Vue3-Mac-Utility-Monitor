@@ -236,13 +236,14 @@ print("Offline downloaded UTC history verified")
 
     def test_client_negotiates_energy_format_without_changing_radon_protocol(self):
         opener = MagicMock()
-        opener.open.return_value.__enter__.return_value.read.return_value = b'{}'
+        opener.open.return_value.__enter__.return_value.read.return_value = b'{"time_policy":{"measurement_model":"interval_v2"}}'
         with patch.object(sync_history.urllib.request, 'build_opener', return_value=opener):
             for stream in ('readings', 'radon'):
                 sync_history.fetch_page('http://localhost', 'a'*32, {'cursor': 0}, stream=stream)
                 request = opener.open.call_args.args[0]
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.full_url).query)
                 self.assertEqual(query.get('protocol_version'), ['3'] if stream == 'readings' else None)
+                self.assertEqual(query.get('measurement_model'), ['interval_v2'] if stream == 'readings' else None)
 
     @staticmethod
     def utc_page_policy():
