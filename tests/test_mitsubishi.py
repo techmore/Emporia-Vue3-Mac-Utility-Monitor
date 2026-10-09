@@ -58,6 +58,27 @@ class ComfortTests(unittest.TestCase):
         self.assertIsNone(mitsubishi._number(True))
         self.assertIsNone(mitsubishi._number(float('nan')))
 
+    def test_verified_adapter_metadata_is_allowlisted(self):
+        responses = self.responses()
+        zone = responses[-1][0]
+        zone.update(id='zone', hasActiveSchedule=True, holdMode='temporary')
+        zone['adapter'].update(hasSensor=True, hasMhk2=False,
+            spAuto=22, previousOperationMode='cool',
+            updatedAt='2026-10-09T08:00:00-04:00',
+            lastStatusChangeAt='not-a-timestamp')
+        with patch.object(mitsubishi, '_request', side_effect=responses):
+            unit = mitsubishi.connect('user@example.com', 'PRIVATE_PASSWORD')['units'][0]
+        self.assertIs(unit['schedule_active'], True)
+        self.assertIs(unit['has_mhk2'], False)
+        self.assertEqual(unit['auto_setpoint_c'], 22)
+        self.assertEqual(unit['vendor_updated_at'], '2026-10-09T12:00:00+00:00')
+        self.assertIsNone(unit['vendor_status_changed_at'])
+        self.assertNotIn('DO_NOT_STORE', json.dumps(mitsubishi.history()))
+
+    def test_vendor_timestamp_requires_timezone(self):
+        self.assertIsNone(mitsubishi._vendor_timestamp('2026-10-09T12:00:00'))
+        self.assertIsNone(mitsubishi._vendor_timestamp(False))
+
     def test_remove_stops_requests_retains_history(self):
         self.connect()
         with patch.object(mitsubishi, '_request') as request:

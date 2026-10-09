@@ -1,7 +1,7 @@
 <div class="page">
   <div class="page-hdr"><h2>Mitsubishi Comfort <span class="chip">Optional module</span></h2></div>
   <section class="card">
-    <h3>Read-only HVAC monitoring</h3>
+    <h3>Comfort overview</h3>
     <p>Connect your Comfort account to add temperature, mode and heating/cooling setpoints.
     No temperatures, schedules or operating modes are changed. No adapter reboots are sent.</p>
     <p>Cloud retrieval time is not a sensor measurement time. Adapter “connected” is a vendor-reported
@@ -10,8 +10,9 @@
     <p id="comfortTime">{% if comfort.queried_at %}Cloud retrieved: {{ comfort.queried_at }}{% endif %}</p>
     <div id="comfortUnits" class="kasa-controls-grid"></div>
   </section>
+  {% with history_kind='mitsubishi', history_title='Comfort history & unit comparisons' %}{% include 'device_history.html' %}{% endwith %}
   <section class="card" style="margin-top:16px">
-    <h3>Add / reconnect module</h3>
+    <details {% if not comfort.enabled %}open{% endif %}><summary>Add / reconnect module</summary>
     <form id="comfortConnect" class="kasa-controls-grid">
       <label>Comfort email<input name="email" type="email" required maxlength="320" autocomplete="username"></label>
       <label>Comfort password<input name="password" type="password" required maxlength="1024" autocomplete="current-password"></label>
@@ -25,12 +26,13 @@
     <p id="comfortMessage" role="status" aria-live="polite"></p>
     <p>Continuous collection requires the separate optional <code>mitsubishi_collect.py</code> service.
     If it is not running, snapshots become stale after three minutes.</p>
+    </details>
   </section>
   <section class="card" style="margin-top:16px">
     <h3>Recorded cloud snapshots</h3>
     <p>Last 100 observations. These timestamps record retrieval, not physical measurement. Missing values are unknown.</p>
-    <div style="overflow-x:auto"><table><thead><tr><th>Retrieved (UTC)</th><th>Unit</th><th>Room °C</th><th>Mode</th></tr></thead><tbody>
-    {% for row in comfort_history %}<tr><td>{{ row.queried_at }}</td><td>{{ row.name }}</td><td>{{ row.temperature_c if row.temperature_c is not none else 'Unknown' }}</td><td>{{ row.mode or 'Unknown' }}</td></tr>
+    <div style="overflow-x:auto"><table><thead><tr><th>Retrieved (UTC)</th><th>Unit</th><th>Room °F</th><th>Mode</th></tr></thead><tbody>
+    {% for row in comfort_history %}<tr><td>{{ row.queried_at }}</td><td>{{ row.name }}</td><td>{{ '%.1f'|format(row.temperature_c * 1.8 + 32) if row.temperature_c is not none else 'Unknown' }}</td><td>{{ row.mode or 'Unknown' }}</td></tr>
     {% else %}<tr><td colspan="4">No recorded Comfort snapshots yet.</td></tr>{% endfor %}
     </tbody></table></div>
   </section>
@@ -45,14 +47,36 @@
     for (const unit of data.units || []) {
       const card = document.createElement('section'); card.className = 'card';
       const title = document.createElement('h4'); title.textContent = unit.name; card.append(title);
-      const temp = value => value == null ? 'Unknown' : `${value.toFixed(1)} °C / ${(value*1.8+32).toFixed(1)} °F`;
+      const main = document.createElement('div'); main.className='comfort-card-main';
+      const temperature = document.createElement('strong'); temperature.className='comfort-temperature';
+      temperature.textContent=unit.temperature_c == null ? 'Unknown' : `${(unit.temperature_c*1.8+32).toFixed(1)} °F`;
+      const operating = document.createElement('span'); operating.className='chip';
+      operating.textContent=unit.is_on === true ? (unit.mode || 'Enabled') : unit.is_on === false ? 'Off' : 'Unknown';
+      main.append(temperature,operating); card.append(main);
+      const temp = value => value == null ? 'Unknown' : `${(value*1.8+32).toFixed(1)} °F`;
+      const details=document.createElement('div'); details.className='comfort-details';
+      for (const text of ['Heat target: ' + temp(unit.heat_setpoint_c),
+        'Cool target: ' + temp(unit.cool_setpoint_c),
+        'Auto target: ' + temp(unit.auto_setpoint_c),
+        'Humidity: ' + (unit.humidity_pct == null ? 'Unknown' : unit.humidity_pct.toFixed(1)+'%')]) {
+        const p=document.createElement('p');p.textContent=text;details.append(p);
+      }
+      card.append(details);
+      const diagnostics=document.createElement('details');
+      const summary=document.createElement('summary');summary.textContent='Schedule & adapter details';diagnostics.append(summary);
       for (const text of ['Cloud device: ' + unit.serial,
         'Vendor connection: ' + (unit.connected ? 'Connected' : 'Unknown / disconnected'),
         'HVAC enabled: ' + (unit.is_on === true ? 'ON' : unit.is_on === false ? 'OFF' : 'Unknown'),
-        'Room: ' + temp(unit.temperature_c), 'Heat setpoint: ' + temp(unit.heat_setpoint_c),
-        'Cool setpoint: ' + temp(unit.cool_setpoint_c), 'Mode: ' + (unit.mode || 'Unknown')]) {
-        const p = document.createElement('p'); p.textContent = text; card.append(p);
+        'Site: ' + (unit.site_name || 'Unknown'),
+        'Active schedule: ' + (unit.schedule_active === true ? 'Yes' : unit.schedule_active === false ? 'No' : 'Unknown'),
+        'Hold mode: ' + (unit.hold_mode || 'Unknown'),
+        'External room sensor: ' + (unit.has_sensor === true ? 'Yes' : unit.has_sensor === false ? 'No' : 'Unknown'),
+        'MHK2 reported: ' + (unit.has_mhk2 === true ? 'Yes' : unit.has_mhk2 === false ? 'No' : 'Unknown'),
+        'Vendor updated: ' + (unit.vendor_updated_at || 'Unknown'),
+        'Vendor state changed: ' + (unit.vendor_status_changed_at || 'Unknown')]) {
+        const p = document.createElement('p'); p.textContent = text; diagnostics.append(p);
       }
+      card.append(diagnostics);
       units.append(card);
     }
   }

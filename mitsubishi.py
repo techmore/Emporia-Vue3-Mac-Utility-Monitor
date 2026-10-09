@@ -85,6 +85,20 @@ def _number(value, low=-80, high=80):
     return float(value) if math.isfinite(value) and low <= value <= high else None
 
 
+def _text(value, limit=200):
+    return value[:limit] if isinstance(value, str) else None
+
+
+def _vendor_timestamp(value):
+    if not isinstance(value, str) or len(value) > 64:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return stamp.astimezone(timezone.utc).isoformat() if stamp.tzinfo else None
+    except ValueError:
+        return None
+
+
 def _read_units(config: dict) -> list[dict]:
     def get(path):
         try:
@@ -127,6 +141,16 @@ def _read_units(config: dict) -> list[dict]:
                 'cool_setpoint_c': _number(adapter.get('spCool')) if connected else None,
                 'humidity_pct': _number(adapter.get('humidity'), 0, 100) if connected else None,
                 'mode': mode[:50] if connected and isinstance(mode, str) else None,
+                'site_name': _text(site.get('name')),
+                'zone_id': _text(zone.get('id')),
+                'auto_setpoint_c': _number(adapter.get('spAuto')) if connected else None,
+                'previous_mode': _text(adapter.get('previousOperationMode'), 50) if connected else None,
+                'schedule_active': zone.get('hasActiveSchedule') if type(zone.get('hasActiveSchedule')) is bool else None,
+                'hold_mode': _text(zone.get('holdMode'), 50),
+                'has_sensor': adapter.get('hasSensor') if type(adapter.get('hasSensor')) is bool else None,
+                'has_mhk2': adapter.get('hasMhk2') if type(adapter.get('hasMhk2')) is bool else None,
+                'vendor_updated_at': _vendor_timestamp(adapter.get('updatedAt')),
+                'vendor_status_changed_at': _vendor_timestamp(adapter.get('lastStatusChangeAt')),
             })
     if len({unit['serial'] for unit in units}) != len(units):
         raise ComfortError('invalid_response')
