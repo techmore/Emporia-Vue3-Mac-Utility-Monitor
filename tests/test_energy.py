@@ -232,7 +232,7 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual([row["label"] for row in legs], ["Leg A", "Leg B"])
         self.assertTrue(all(row["live_estimated"] for row in legs))
 
-    def test_fix_csv_kwatts_import_runs_only_once(self):
+    def test_retired_csv_correction_preserves_unproven_history_on_every_call(self):
         conn = energy._connect()
         conn.execute(
             """INSERT INTO readings
@@ -252,9 +252,10 @@ class EnergyTests(unittest.TestCase):
         ).fetchone()
         conn.close()
 
-        self.assertEqual(first["fixed"], 1)
+        self.assertEqual(first["fixed"], 0)
         self.assertEqual(second["fixed"], 0)
-        self.assertEqual(tuple(row), (1.0, 0.1))
+        self.assertTrue(first['disabled'])
+        self.assertEqual(tuple(row), (60.0, 6.0))
 
     def test_render_template_string_autoescapes_user_content(self):
         with web.app.app_context():

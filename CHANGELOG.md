@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3.39 - 2026-10-08
+
+- Retire the unproven startup divide-by-60 correction; preserve historical values
+  and migration evidence. Verified original exports are required for any repair.
+- Validate CSV units, filename intervals and declared zones before writing. Reject
+  unsupported power durations and nonfinite values; report ambiguous/gap timestamps
+  without guessing. Daily power conversion uses actual source-zone day duration.
+- Publish imported readings, journal changes, accepted-row snapshots and device
+  capabilities atomically. Ignored duplicate uploads cannot replace live snapshots;
+  failed publication rolls back the entire import and closes its connection.
+- Return useful HTTP 400 validation errors and generic HTTP 500 publication errors.
+  Document import/reconciliation gates. Interval-aware power modeling remains #135;
+  UTC migration remains #127. No historical repair or schema change is performed.
+
 ## 2.3.38 - 2026-10-08
 
 - Restore full circuit-detail pages and every period tab by removing copied
