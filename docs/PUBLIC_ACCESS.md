@@ -2,7 +2,7 @@
 
 ## Verified state (2026-10-08)
 
-SER8's Incus instance serves release 2.3.35 on guest loopback port 5051,
+SER8's Incus instance serves the reviewed collector on guest loopback port 5051,
 reached privately through host loopback 15033. The collector continues
 independently of the Mac SSH tunnel. The energy.stoverparc.org HTTPS probe
 failed its TLS handshake, and the active Caddyfile has no route for this host.

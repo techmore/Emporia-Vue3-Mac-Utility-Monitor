@@ -3,7 +3,7 @@
 ## Current SER8 Deployment - 2026-10-08
 
 The authoritative collector has moved from the retained native services into
-the `energy-monitor` Incus instance on release 2.3.35. The Mac keeps its existing
+the `energy-monitor` Incus instance, initially on release 2.3.35. The Mac keeps its existing
 origin `http://127.0.0.1:15001`, Keychain credentials and offline cache; its SSH
 forward now targets SER8 loopback **15033**, which proxies to guest loopback 5051.
 The old native writers are stopped and disabled. The Matter controller/fabric
@@ -16,6 +16,8 @@ See [production receipt](docs/INCUS_DEPLOYMENT.md) and
 [repeat migration/rollback procedure](docs/COLLECTOR_MIGRATION.md).
 The native deployment below is retained as historical evidence, not the current
 service endpoint. Never run its preserved poller alongside the guest.
+Subsequent release upgrades are reflected by `/api/version` and the private
+deployment manifest; the original cutover receipt is not a latest-version pointer.
 
 ## Original Native SER8 Deployment — 2026-10-08
 

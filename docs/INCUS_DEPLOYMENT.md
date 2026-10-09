@@ -5,12 +5,14 @@ For reusable native macOS, native Linux and container instructions, see
 
 ## Production receipt - 2026-10-08
 
-The `energy-monitor` instance is now the authoritative collector, running
+The `energy-monitor` instance became the authoritative collector on
 release **2.3.35** from merged commit
 `c03c68fd6b16387c0a206ae1562160d14a24b682`. The earlier staging records below
-are historical; they do not describe the current production endpoint.
+are historical; they do not describe the production endpoint. The table records
+cutover-time paths; check `/api/version` and `/etc/energy-monitor/deployment.json`
+for the active release after subsequent upgrades.
 
-| Component | Current deployment |
+| Component | Deployment at cutover |
 | --- | --- |
 | Reviewed source | `/opt/energy-monitor/releases/2.3.35` |
 | Independent locked Python runtime | `/opt/energy-monitor/runtimes/2.3.35` |

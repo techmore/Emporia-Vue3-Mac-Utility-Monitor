@@ -173,6 +173,9 @@ def register_extensions(app, render, common) -> None:
             return jsonify({'error': 'Invalid history window'}), 400
         if days not in (1, 7, 30, 365):
             return jsonify({'error': 'Invalid history window'}), 400
+        trend = request.args.get('trend', '1')
+        if trend not in ('0', '1'):
+            return jsonify({'error': 'Invalid recorded trend option'}), 400
         sensors = radon.get_sensors()
         source = request.args.get('source', '')
         sensor_id = request.args.get('sensor_id', '')
@@ -193,6 +196,7 @@ def register_extensions(app, render, common) -> None:
             collection = {'state': 'status_unavailable'}
         return render('{% include "radon.html" %}', active_page='radon',
                       sensors=sensors, selected=selected, rows=rows, days=days,
+                      show_trend=trend == '1',
                       radon_cache=radon.get_cache_status(),
                       radon_collection=collection,
                       chart=radon.observation_chart(rows, days=days), **common())
