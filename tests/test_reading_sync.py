@@ -334,7 +334,7 @@ class ReadingJournalTests(unittest.TestCase):
         before = energy.get_sync_cache_status()
         conn = energy._connect()
         try:
-            conn.execute("INSERT INTO sync_cached_readings VALUES (42, 'old', 'A', 1, 'Main', 1, 23)")
+            conn.execute("INSERT INTO sync_cached_readings(reading_id,timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents) VALUES (42, 'old', 'A', 1, 'Main', 1, 23)")
             conn.execute("CREATE TRIGGER fail_reset BEFORE INSERT ON sync_cache_generation "
                          "BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END")
             conn.commit()

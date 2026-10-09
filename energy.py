@@ -36,6 +36,62 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MEASUREMENT_FIELDS = (
+    'measurement_seconds', 'measurement_source', 'source_timezone', 'provider_timestamp',
+)
+
+
+def _finite_measurement_number(value) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _validate_measurement_evidence(row: dict) -> None:
+    seconds, source = row.get('measurement_seconds'), row.get('measurement_source')
+    if source not in (None, 'emporia_minute', 'csv_energy', 'csv_power', 'compacted'):
+        raise ValueError('Invalid measurement source')
+    if seconds is not None:
+        if (not _finite_measurement_number(seconds)
+                or seconds <= 0 or source in (None, 'compacted')):
+            raise ValueError('Invalid measurement duration evidence')
+        if source == 'emporia_minute' and seconds != 60:
+            raise ValueError('Emporia minute observations require a 60-second duration')
+    zone = row.get('source_timezone')
+    if zone is not None:
+        if not isinstance(zone, str):
+            raise ValueError('Invalid measurement source timezone')
+        try:
+            ZoneInfo(zone)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError('Invalid measurement source timezone') from exc
+    stamp = row.get('provider_timestamp')
+    if stamp is not None:
+        if not isinstance(stamp, str):
+            raise ValueError('Invalid provider timestamp')
+        try:
+            moment = datetime.fromisoformat(stamp)
+        except ValueError as exc:
+            raise ValueError('Invalid provider timestamp') from exc
+        if moment.tzinfo is None:
+            raise ValueError('Provider timestamp must carry an explicit offset')
+
+
+def reading_average_watts(row: dict) -> float | None:
+    """Average over the evidenced measurement interval, never an instantaneous load."""
+    try:
+        _validate_measurement_evidence(row)
+    except ValueError:
+        return None
+    seconds, kwh = row.get('measurement_seconds'), row.get('usage_kwh')
+    if seconds is None or not _finite_measurement_number(kwh):
+        return None
+    watts = kwh * (3_600_000 / seconds)
+    return watts if math.isfinite(watts) else None
+
 
 def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
     """Write heartbeat file so Flask can monitor poller health."""
@@ -767,8 +823,23 @@ def ensure_table(path: str | Path | None = None):
             poles       INTEGER DEFAULT 1   -- 1 = single-pole (120V), 2 = double-pole (240V)
         );
     """)
-    # Seed pre-existing history once, atomically with its migration marker.
+    # Add evidence without inferring duration/source for pre-existing rows.
     conn.execute("BEGIN IMMEDIATE")
+    for table in ('readings', 'latest_channel_snapshot', 'reading_changes', 'sync_cached_readings'):
+        columns = {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
+        for field in MEASUREMENT_FIELDS:
+            if field not in columns:
+                kind = 'REAL' if field == 'measurement_seconds' else 'TEXT'
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN {field} {kind}')
+    # Replace old triggers in the same transaction so new journal events retain evidence.
+    fields = 'timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents,' + ','.join(MEASUREMENT_FIELDS)
+    values = ','.join('NEW.' + field for field in fields.split(','))
+    for operation in ('insert', 'update'):
+        conn.execute(f'DROP TRIGGER IF EXISTS readings_sync_{operation}')
+        conn.execute(f"""CREATE TRIGGER readings_sync_{operation} AFTER {operation.upper()} ON readings
+            BEGIN INSERT INTO reading_changes(operation,reading_id,{fields})
+            VALUES ('upsert',NEW.id,{values}); END""")
+    # Seed pre-existing history once, atomically with its migration marker.
     if not conn.execute(
         "SELECT 1 FROM migrations WHERE name = 'radon_sync_seed_v1'"
     ).fetchone():
@@ -785,9 +856,11 @@ def ensure_table(path: str | Path | None = None):
         "SELECT 1 FROM migrations WHERE name = 'reading_sync_seed_v1'"
     ).fetchone():
         conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
-            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+            measurement_seconds,measurement_source,source_timezone,provider_timestamp)
             SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
-                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+                   usage_kwh, cost_cents,measurement_seconds,measurement_source,
+                   source_timezone,provider_timestamp FROM readings ORDER BY id""")
         conn.execute(
             "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
             ("reading_sync_seed_v1", datetime.now().isoformat()),
@@ -884,6 +957,7 @@ def apply_reading_changes(page: dict) -> dict:
                 value = row.get(key)
                 if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
                     raise ValueError("Invalid reading measurement")
+            _validate_measurement_evidence(row)
             if row.get("channel_name") is not None and not isinstance(row["channel_name"], str):
                 raise ValueError("Invalid channel name")
             if row.get("channel_num") is not None and type(row["channel_num"]) not in (int, str):
@@ -907,14 +981,20 @@ def apply_reading_changes(page: dict) -> dict:
                 conn.execute("DELETE FROM sync_cached_readings WHERE reading_id=?", (row["reading_id"],))
             else:
                 conn.execute("""INSERT INTO sync_cached_readings(reading_id, timestamp,
-                    device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+                    measurement_seconds,measurement_source,source_timezone,provider_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(reading_id) DO UPDATE SET timestamp=excluded.timestamp,
                     device_gid=excluded.device_gid, channel_num=excluded.channel_num,
                     channel_name=excluded.channel_name, usage_kwh=excluded.usage_kwh,
-                    cost_cents=excluded.cost_cents""",
+                    cost_cents=excluded.cost_cents,
+                    measurement_seconds=excluded.measurement_seconds,
+                    measurement_source=excluded.measurement_source,
+                    source_timezone=excluded.source_timezone,
+                    provider_timestamp=excluded.provider_timestamp""",
                     tuple(row.get(key) for key in ("reading_id", "timestamp", "device_gid",
-                                                  "channel_num", "channel_name", "usage_kwh", "cost_cents")))
+                                                  "channel_num", "channel_name", "usage_kwh", "cost_cents",
+                                                  *MEASUREMENT_FIELDS)))
         synchronized_at = datetime.now().isoformat() if not page["has_more"] else (
             state["synchronized_at"] if state else None
         )
@@ -948,9 +1028,11 @@ def compact_reading_journal(max_entries: int = 1_000_000) -> bool:
         conn.execute("DELETE FROM reading_changes")
         conn.execute("DELETE FROM sqlite_sequence WHERE name='reading_changes'")
         conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
-            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+            measurement_seconds,measurement_source,source_timezone,provider_timestamp)
             SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
-                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+                   usage_kwh, cost_cents,measurement_seconds,measurement_source,
+                   source_timezone,provider_timestamp FROM readings ORDER BY id""")
         conn.execute("UPDATE reading_stream_generation SET generation_id=lower(hex(randomblob(16)))")
         conn.commit()
         return True
@@ -1065,18 +1147,32 @@ def _upsert_latest_snapshot_with_conn(
     usage_kwh: float,
     cost_cents: float,
     timestamp: str,
+    measurement_seconds: float | None = None,
+    measurement_source: str | None = None,
+    source_timezone: str | None = None,
+    provider_timestamp: str | None = None,
 ) -> None:
+    _validate_measurement_evidence(dict(
+        measurement_seconds=measurement_seconds, measurement_source=measurement_source,
+        source_timezone=source_timezone, provider_timestamp=provider_timestamp,
+    ))
     conn.execute(
         """INSERT INTO latest_channel_snapshot(
-               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
-           ) VALUES (?, ?, ?, ?, ?, ?)
+               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+               measurement_seconds,measurement_source,source_timezone,provider_timestamp
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(device_gid, channel_name) DO UPDATE SET
                channel_num=excluded.channel_num,
                usage_kwh=excluded.usage_kwh,
                cost_cents=excluded.cost_cents,
-               timestamp=excluded.timestamp
+               timestamp=excluded.timestamp,
+               measurement_seconds=excluded.measurement_seconds,
+               measurement_source=excluded.measurement_source,
+               source_timezone=excluded.source_timezone,
+               provider_timestamp=excluded.provider_timestamp
            WHERE excluded.timestamp >= latest_channel_snapshot.timestamp""",
-        (str(device_gid), channel_name, None if channel_num is None else str(channel_num), usage_kwh, cost_cents, timestamp),
+        (str(device_gid), channel_name, None if channel_num is None else str(channel_num), usage_kwh, cost_cents, timestamp,
+         measurement_seconds,measurement_source,source_timezone,provider_timestamp),
     )
 
 
@@ -1084,9 +1180,11 @@ def rebuild_latest_channel_snapshot() -> int:
     conn = _connect()
     c = conn.cursor()
     rows = c.execute(
-        """SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
+        """SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
            FROM (
                SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                      measurement_seconds,measurement_source,source_timezone,provider_timestamp,
                       ROW_NUMBER() OVER (
                           PARTITION BY device_gid, channel_name
                           ORDER BY timestamp DESC, id DESC
@@ -1098,8 +1196,9 @@ def rebuild_latest_channel_snapshot() -> int:
     c.execute("DELETE FROM latest_channel_snapshot")
     c.executemany(
         """INSERT INTO latest_channel_snapshot(
-               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
-           ) VALUES (?, ?, ?, ?, ?, ?)""",
+               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+               measurement_seconds,measurement_source,source_timezone,provider_timestamp
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         [
             (
                 row["device_gid"],
@@ -1108,6 +1207,7 @@ def rebuild_latest_channel_snapshot() -> int:
                 row["usage_kwh"],
                 row["cost_cents"],
                 row["timestamp"],
+                *(row[field] for field in MEASUREMENT_FIELDS),
             )
             for row in rows
         ],
@@ -1348,93 +1448,106 @@ def poll_and_store(vue, device_gids):
     global RATE_CENTS
     RATE_CENTS = _read_rate_cents()
     conn = _connect()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    usage_dict = None
-    for attempt in range(1, 4):
-        try:
-            usage_dict = vue.get_device_list_usage(
-                deviceGids=device_gids,
-                instant=None,
-                scale=Scale.MINUTE.value,
-                unit=Unit.KWH.value,
-            )
-            break
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            if attempt == 3:
-                conn.close()
-                raise
-            logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
-            time.sleep(2 * attempt)
+        usage_dict = None
+        for attempt in range(1, 4):
+            try:
+                usage_dict = vue.get_device_list_usage(
+                    deviceGids=device_gids,
+                    instant=None,
+                    scale=Scale.MINUTE.value,
+                    unit=Unit.KWH.value,
+                )
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                if attempt == 3:
+                    raise
+                logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
+                time.sleep(2 * attempt)
 
-    now = datetime.now().isoformat()
+        now = datetime.now().isoformat()
 
-    for gid, device in usage_dict.items():
-        capability = {
-            "has_main": False,
-            "has_mains_a": False,
-            "has_mains_b": False,
-            "has_mains_c": False,
-        }
-        for channelnum, channel in device.channels.items():
-            if channel.usage is None:
-                continue
-            channel_name = _normalize_channel_name(channel.name)
-            if channel_name == "Main":
-                capability["has_main"] = True
-            elif channel_name == "Mains_A":
-                capability["has_mains_a"] = True
-            elif channel_name == "Mains_B":
-                capability["has_mains_b"] = True
-            elif channel_name == "Mains_C":
-                capability["has_mains_c"] = True
+        for gid, device in usage_dict.items():
+            capability = {
+                "has_main": False,
+                "has_mains_a": False,
+                "has_mains_b": False,
+                "has_mains_c": False,
+            }
+            for channelnum, channel in device.channels.items():
+                if channel.usage is None:
+                    continue
+                channel_name = _normalize_channel_name(channel.name)
+                if channel_name == "Main":
+                    capability["has_main"] = True
+                elif channel_name == "Mains_A":
+                    capability["has_mains_a"] = True
+                elif channel_name == "Mains_B":
+                    capability["has_mains_b"] = True
+                elif channel_name == "Mains_C":
+                    capability["has_mains_c"] = True
 
-            cost = channel.usage * RATE_CENTS
+                cost = channel.usage * RATE_CENTS
+                if (type(channel.usage) not in (int, float) or not math.isfinite(channel.usage)
+                        or not math.isfinite(cost)):
+                    raise ValueError('Emporia returned nonfinite energy or cost')
+                # SDK timestamp is provider observation time, not a proven interval boundary.
+                provider_moment = getattr(channel, 'timestamp', None)
+                provider_stamp = None
+                if isinstance(provider_moment, datetime) and provider_moment.tzinfo is not None:
+                    provider_stamp = provider_moment.astimezone(timezone.utc).isoformat()
 
-            c.execute(
-                """INSERT INTO readings
-                   (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (now, gid, channelnum, channel_name, channel.usage, cost),
-            )
-            _upsert_latest_snapshot_with_conn(
+                c.execute(
+                    """INSERT INTO readings
+                       (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+                        measurement_seconds,measurement_source,source_timezone,provider_timestamp)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (now, gid, channelnum, channel_name, channel.usage, cost,
+                     60, 'emporia_minute', None, provider_stamp),
+                )
+                _upsert_latest_snapshot_with_conn(
+                    conn,
+                    device_gid=str(gid),
+                    channel_name=channel_name,
+                    channel_num=channelnum,
+                    usage_kwh=channel.usage,
+                    cost_cents=cost,
+                    timestamp=now,
+                    measurement_seconds=60, measurement_source='emporia_minute',
+                    source_timezone=None, provider_timestamp=provider_stamp,
+                )
+            _save_device_capabilities_with_conn(
                 conn,
                 device_gid=str(gid),
-                channel_name=channel_name,
-                channel_num=channelnum,
-                usage_kwh=channel.usage,
-                cost_cents=cost,
-                timestamp=now,
+                service_mode=_classify_service_mode(**capability),
+                has_main=capability["has_main"],
+                has_mains_a=capability["has_mains_a"],
+                has_mains_b=capability["has_mains_b"],
+                has_mains_c=capability["has_mains_c"],
+                mains_c_no_ct=False,
+                source="live_poll",
             )
-        _save_device_capabilities_with_conn(
-            conn,
-            device_gid=str(gid),
-            service_mode=_classify_service_mode(**capability),
-            has_main=capability["has_main"],
-            has_mains_a=capability["has_mains_a"],
-            has_mains_b=capability["has_mains_b"],
-            has_mains_c=capability["has_mains_c"],
-            mains_c_no_ct=False,
-            source="live_poll",
-        )
 
-    # Prune old rows to keep the database from growing unboundedly.
-    cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
-    c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
-    global _last_compaction
-    compacted = 0
-    if time.monotonic() - _last_compaction > 3600:
-        _last_compaction = time.monotonic()
-        compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+        # Prune old rows to keep the database from growing unboundedly.
+        cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
+        c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
+        global _last_compaction
+        compacted = 0
+        if time.monotonic() - _last_compaction > 3600:
+            _last_compaction = time.monotonic()
+            compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+            conn.commit()
+            for report in write_monthly_reports():
+                logger.info("Wrote monthly report %s", report)
+        if compacted:
+            logger.info("Compacted %s minute rows into hourly rows", compacted)
+
         conn.commit()
-        for report in write_monthly_reports():
-            logger.info("Wrote monthly report %s", report)
-    if compacted:
-        logger.info("Compacted %s minute rows into hourly rows", compacted)
-
-    conn.commit()
-    conn.close()
-    logger.info("[%s] Recorded readings", now)
+        logger.info("[%s] Recorded readings", now)
+    finally:
+        conn.close()
 
 
 _last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
@@ -1472,8 +1585,9 @@ def compact_minute_readings(conn, days: int) -> int:
                     AND substr(r.timestamp, 1, 13) = substr(c.ts, 1, 13)
                    WHERE r.timestamp < ?)""", (cutoff,)).rowcount
         conn.execute(
-            """INSERT INTO readings (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-               SELECT ts, device_gid, channel_num, channel_name, usage_kwh, cost_cents FROM _compact""")
+            """INSERT INTO readings (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+                                  measurement_source)
+               SELECT ts, device_gid, channel_num, channel_name, usage_kwh, cost_cents, 'compacted' FROM _compact""")
     conn.execute("DROP TABLE _compact")
     return removed
 
@@ -1891,7 +2005,8 @@ def get_latest(device_gid: str | None = None):
         return []
 
     c.execute(
-        """SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
+        """SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
            FROM latest_channel_snapshot
            WHERE device_gid = ?
            ORDER BY usage_kwh DESC""",
@@ -1899,9 +2014,11 @@ def get_latest(device_gid: str | None = None):
     )
     results = c.fetchall()
     if not results:
-        c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
+        c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
             FROM (
                 SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp,
                        ROW_NUMBER() OVER (
                            PARTITION BY channel_name
                            ORDER BY timestamp DESC, id DESC
@@ -2339,7 +2456,8 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None, 
         # A future snapshot can mask an older valid reading for one channel;
         # fill only missing channels from bounded recorded history.
         latest = conn.execute(
-            """SELECT channel_name,channel_num,usage_kwh,timestamp FROM latest_channel_snapshot
+            """SELECT channel_name,channel_num,usage_kwh,timestamp,
+                          measurement_seconds,measurement_source,source_timezone,provider_timestamp FROM latest_channel_snapshot
                WHERE device_gid=? AND timestamp<=? ORDER BY usage_kwh DESC""", (gid, until),
         ).fetchall() if gid else []
         names = {row['channel_name'] for row in latest}
@@ -2348,8 +2466,10 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None, 
             (gid, until),
         ).fetchone() if gid else None
         history = conn.execute(
-            """SELECT channel_name,channel_num,usage_kwh,timestamp FROM (
+            """SELECT channel_name,channel_num,usage_kwh,timestamp,
+                          measurement_seconds,measurement_source,source_timezone,provider_timestamp FROM (
                    SELECT channel_name,channel_num,usage_kwh,timestamp,
+                          measurement_seconds,measurement_source,source_timezone,provider_timestamp,
                           ROW_NUMBER() OVER(PARTITION BY channel_name ORDER BY timestamp DESC,id DESC) rn
                    FROM readings WHERE device_gid=? AND timestamp<=?)
                WHERE rn=1 ORDER BY usage_kwh DESC""", (gid, until),
@@ -2517,7 +2637,8 @@ def _csv_interval_seconds(interval: str, moment: datetime, zone: str | None) -> 
 def _refresh_import_snapshot_with_conn(conn, device_gid: str) -> None:
     """Publish only accepted database values, never an ignored conflicting upload."""
     rows = conn.execute(
-        """SELECT device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp
+        """SELECT device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
            FROM (SELECT *, ROW_NUMBER() OVER (
                     PARTITION BY channel_name ORDER BY timestamp DESC,id DESC) rn
                  FROM readings WHERE device_gid=? AND channel_name IS NOT NULL)
@@ -2538,7 +2659,8 @@ def import_emporia_csv(
     Power columns require a known interval; energy columns retain their raw kWh.
     Declared zones are validated, and ambiguous/nonexistent wall times are reported
     rather than guessed. Storage remains legacy local until coordinated UTC cutover.
-    Interval/source metadata returned here is not yet persisted per reading (#135).
+    Measurement duration and declared source-zone evidence are persisted per reading.
+    This does not prove non-overlap with other imported resolutions (#135).
     """
     import csv
 
@@ -2619,7 +2741,8 @@ def import_emporia_csv(
                 except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
-                rows_to_insert.append((moment.isoformat(), gid, None, name, kwh, cents))
+                rows_to_insert.append((moment.isoformat(), gid, None, name, kwh, cents,
+                                       duration, 'csv_power' if power else 'csv_energy', zone, None))
 
     conn = _connect()
     try:
@@ -2627,8 +2750,9 @@ def import_emporia_csv(
             conn.execute('BEGIN IMMEDIATE')
             inserted = conn.executemany(
                 """INSERT OR IGNORE INTO readings
-                   (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents)
-                   VALUES (?,?,?,?,?,?)""", rows_to_insert,
+                   (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents,
+                    measurement_seconds,measurement_source,source_timezone,provider_timestamp)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""", rows_to_insert,
             ).rowcount if rows_to_insert else 0
             skipped += len(rows_to_insert) - inserted
             if rows_to_insert:

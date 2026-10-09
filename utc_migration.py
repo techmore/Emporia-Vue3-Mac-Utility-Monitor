@@ -61,9 +61,17 @@ def _fingerprints(connection, tables: list[str], journal_watermark: int) -> dict
 
 
 def _plan(connection, legacy_timezone: str) -> list[dict]:
+    def source_zone(row):
+        # CSV headers prove their wall-clock zone. Provider UTC does not prove
+        # the zone of a poll's separately stored legacy local receipt timestamp.
+        if row['measurement_source'] in ('csv_energy', 'csv_power') and row['source_timezone']:
+            return row['source_timezone']
+        return legacy_timezone
+
     audit = audit_reading_timestamps(
-        (dict(row) for row in connection.execute(
-            "SELECT id,timestamp,device_gid,channel_name FROM readings ORDER BY id"
+        ({**dict(row), 'source_timezone': source_zone(row)} for row in connection.execute(
+            "SELECT id,timestamp,device_gid,channel_name,measurement_source,source_timezone "
+            "FROM readings ORDER BY id"
         )), legacy_timezone=legacy_timezone,
     )
     if not audit["candidate_conversion_unblocked"]:
@@ -71,11 +79,14 @@ def _plan(connection, legacy_timezone: str) -> list[dict]:
     result = []
     for table, (keys, column) in TIME_COLUMNS.items():
         fields = ",".join(_identifier(name) for name in (*keys, column))
+        has_evidence = table in ('readings', 'reading_changes', 'latest_channel_snapshot')
+        if has_evidence:
+            fields += ',measurement_source,source_timezone'
         for row in connection.execute(f"SELECT {fields} FROM {_identifier(table)}"):
             original = row[column]
             if original is None:
                 continue
-            resolved = classify_timestamp(original, legacy_timezone)
+            resolved = classify_timestamp(original, source_zone(row) if has_evidence else legacy_timezone)
             if resolved["status"] not in ("legacy_unique", "aware"):
                 raise ValueError(f"Unresolved timestamp in {table}")
             result.append({

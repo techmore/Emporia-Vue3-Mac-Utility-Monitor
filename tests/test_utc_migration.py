@@ -35,7 +35,7 @@ class UtcRehearsalTests(unittest.TestCase):
                 )
                 connection.execute("INSERT INTO reading_changes(operation,reading_id) VALUES ('delete',999)")
                 connection.execute("INSERT INTO poller_health_events(timestamp,ok) VALUES ('2026-10-08T20:00:00',1)")
-                connection.execute("INSERT INTO latest_channel_snapshot VALUES ('A','Main','1',4.5,100.4,'2026-11-01T01:30:00-05:00')")
+                connection.execute("INSERT INTO latest_channel_snapshot(device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp) VALUES ('A','Main','1',4.5,100.4,'2026-11-01T01:30:00-05:00')")
                 connection.execute("INSERT INTO radon_readings VALUES ('manual','sensor','2026-10-09T00:00:00+00:00','Label',0.7,'pCi/L',25.9,'2026-10-09T00:01:00+00:00')")
                 connection.execute("INSERT INTO sync_cache_state VALUES (1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',3,3,'2026-10-08T20:00:00')")
             self.identity = connection.execute("SELECT source_id FROM collector_identity").fetchone()[0]
@@ -53,6 +53,36 @@ class UtcRehearsalTests(unittest.TestCase):
 
     def digest(self, path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def test_csv_source_zone_overrides_assumption_without_reinterpreting_poll_receipt(self):
+        connection = energy._connect()
+        try:
+            connection.execute("INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents,measurement_seconds,measurement_source,source_timezone) VALUES ('2026-10-08T12:00:00','B','Main',3,67.74,3600,'csv_energy','America/Chicago')")
+            connection.execute("INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents,measurement_seconds,measurement_source,provider_timestamp) VALUES ('2026-10-08T12:00:00','C','Main',.05,1.129,60,'emporia_minute','2026-10-08T16:00:00+00:00')")
+            connection.commit()
+        finally:
+            connection.close()
+        energy.rebuild_latest_channel_snapshot()
+        snapshot = self.root / 'with-source-evidence.db'
+        energy.backup_database(snapshot)
+        digest = self.digest(snapshot)
+        destination = self.root / 'with-source-evidence.utc-rehearsal.db'
+        rehearse_utc_copy(snapshot, destination, expected_sha256=digest,
+                          legacy_timezone='America/New_York', reporting_timezone='America/New_York')
+        connection = energy._connect(destination, allow_utc_rehearsal=True, read_only=True)
+        try:
+            for table in ('readings', 'latest_channel_snapshot', 'reading_changes'):
+                rows = {row['device_gid']: dict(row) for row in connection.execute(
+                    f"SELECT * FROM {table} WHERE device_gid IN ('B','C') ORDER BY 1"
+                )}
+                self.assertEqual(rows['B']['timestamp'], '2026-10-08T17:00:00.000000+00:00')
+                self.assertEqual(rows['C']['timestamp'], '2026-10-08T16:00:00.000000+00:00')
+                self.assertEqual(rows['B']['source_timezone'], 'America/Chicago')
+                self.assertEqual(rows['C']['provider_timestamp'], '2026-10-08T16:00:00+00:00')
+                self.assertEqual(rows['B']['usage_kwh'], 3)
+        finally:
+            connection.close()
+        self.assertEqual(self.digest(snapshot), digest)
 
     def convert(self, **changes):
         options = {"expected_sha256": self.hash, "legacy_timezone": "America/New_York",

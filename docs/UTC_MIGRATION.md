@@ -15,7 +15,8 @@ applies to that snapshot, not later readings or unverified original source zones
 ## Evidence and interpretation
 
 Emporia poll writes use `datetime.now().isoformat()`. The CSV importer parses
-wall-clock buckets but does not persist their source-zone header. The supplied
+wall-clock buckets; development 2.3.41 now persists source-zone evidence for new
+accepted imports, but old rows do not gain provenance by schema upgrade. The supplied
 exports declare `Time Bucket (America/New_York)`; that proves the timezone of
 those files, not every row ever imported. `channel_num IS NULL` is not sufficient
 provenance: compaction can also remove a channel number from live readings.
@@ -269,3 +270,12 @@ future-snapshot fallback, independent banner chart labels and three host-timezon
 subprocesses. It exposed duplicated dashboard markup that made circuit detail
 return HTTP 500; the development template now retains only circuit-owned sections.
 These are fixture HTTP checks, not a live UTC collector or native-cache rehearsal.
+
+Development 2.3.41 persists measurement evidence in energy observations, latest
+snapshots, reading changes and downloaded caches. CSV source-zone evidence takes
+precedence over the rehearsal's explicitly declared fallback assumption in
+conversion and projected collision checks. The provider timestamp of a minute
+poll is kept separately; its UTC offset cannot reinterpret a local receipt time.
+A mixed Chicago-export/New-York-receipt fixture verifies all three timestamp
+replicas, exact energy/provider evidence and an unchanged archive hash. This is
+a private conversion test, not permission to enable production UTC writers.

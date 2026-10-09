@@ -1,6 +1,16 @@
 # Changelog
 
-## 2.3.40 - Unreleased
+## 2.3.41 - Unreleased
+
+- Persist per-reading duration, measurement source, declared source timezone and
+  provider observation timestamp through CSV/minute polling, latest snapshots,
+  reading journals and Python/native-runner sync caches. Preserve unknown legacy
+  evidence and raw energy/cost; aggregate compaction cannot invent a full hour of
+  capture. Add an evidence-only average-power function and transactional poll
+  cleanup. CSV source zones take precedence over declared fallback assumptions in
+  private UTC conversion, without reinterpreting local poll receipt timestamps.
+  Dashboard power consumers, mixed-resolution overlap, cache capability
+  negotiation and coordinated UTC writers remain unfinished; #135/#127 stay open.
 
 - UTC integration in development: transactional conversion rehearsal on a new
   private copy of a verified backup. Preserve original timestamp evidence,

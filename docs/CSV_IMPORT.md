@@ -40,14 +40,36 @@ proposing replacements. Normal re-import intentionally skips conflicting rows.
 Never infer a historical unit from timestamp precision, device ID or apparent
 plausibility of the resulting number.
 
-Per-reading interval/provenance persistence, compaction, sync and power consumers
-remain required in #135. Returning validated import metadata is not persisting
-it with every observation or making existing power estimates correct.
+Development 2.3.41 persists `measurement_seconds`, `measurement_source`,
+`source_timezone` and `provider_timestamp` alongside each reading, its latest
+snapshot, change journal and downloaded cache. CSV duration comes from the declared
+filename and actual source-zone day bounds. Accepted duplicates preserve original
+evidence. A missing interval remains null; legacy rows are not backfilled by guess.
+Emporia polling records the requested minute duration and retains an offset-aware
+SDK observation timestamp separately from local receipt time. This provider
+instant is not a proven interval-start/end or a non-overlap guarantee.
+Its UTC offset also does not prove the zone of the legacy local receipt timestamp;
+poll `source_timezone` stays null until an explicit storage policy is implemented.
+
+Compacted sums are explicitly marked `compacted` with unknown duration: counting
+samples or putting a sum at an hour boundary does not prove continuous coverage.
+`reading_average_watts` derives interval-average power only from valid duration
+and source evidence; unknown stays null, zero stays zero, signed energy is retained.
+The existing dashboard/native live power consumers have not yet been converted
+and can still display incorrect estimates. #135 remains open for those consumers,
+mixed-resolution overlap and verified historical reconciliation. The additive
+fields still use sync protocol 2; old clients can ignore them and are not yet
+safe for the future UTC/power cutover. No production data is changed by this draft.
+
+Schema upgrades live only in `ensure_table`. An older archived UTC rehearsal
+requires schema upgrade on a separate private copy and a new verified receipt;
+adding columns changes its schema fingerprints. Never modify the sole archive.
 
 ## Verification
 
 ```bash
 venv/bin/python3 -m unittest discover -s tests -p test_import_integrity.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_measurement_evidence.py -v
 venv/bin/python3 -m unittest discover -s tests -v
 ```
 

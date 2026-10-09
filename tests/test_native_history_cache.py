@@ -49,7 +49,7 @@ print("Downloaded history verified")
                     conn.execute("INSERT INTO sync_cache_state VALUES(1,?,2,2,?)",
                                  ("a" * 32, "2026-10-07T12:30:00"))
                     conn.executemany(
-                        "INSERT INTO sync_cached_readings VALUES(?,?,?,?,?,?,?)",
+                        "INSERT INTO sync_cached_readings(reading_id,timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents) VALUES(?,?,?,?,?,?,?)",
                         [(1, "2026-10-07T12:00:00", "A", 1, "Heat Pump", 1.25, 28.225),
                          (2, "2026-10-07T12:00:00", "B", 1, "Heat Pump", 999, 999)],
                     )
