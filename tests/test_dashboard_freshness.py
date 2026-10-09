@@ -122,7 +122,8 @@ class DashboardFreshnessTests(unittest.TestCase):
             }))
             for age, online in ((30, True), (180, False), (-60.000001, False)):
                 reading = {"timestamp": self.stamp(age), "device_gid": "A",
-                           "channel_name": "Main", "usage_kwh": 0.01}
+                           "channel_name": "Main", "usage_kwh": 0.01,
+                           "measurement_seconds": 60, "measurement_source": "emporia_minute"}
                 with self.subTest(age=age), patch.object(energy, "get_latest", return_value=[reading]):
                     response = web.app.test_client().get("/api/menu-summary")
                     self.assertEqual(response.status_code, 200)

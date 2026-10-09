@@ -1,14 +1,18 @@
 """Shared breaker display calculations; never infer an unconfigured rating."""
+import math
 
-def breaker_load(watts: float, amps: int | None, poles: int = 1) -> dict:
+
+def breaker_load(watts: float | None, amps: int | None, poles: int = 1) -> dict:
+    power_known = type(watts) in (int, float) and math.isfinite(watts)
     unknown = {
         "zone_cls": "", "load_cls": "", "fill_cls": "fill-normal",
-        "load_bar_w": 0, "load_label": "Rating not set" if not amps else "",
+        "load_bar_w": 0, "load_label": "Power unavailable" if not power_known else "Rating not set" if not amps else "",
         "safe_bar_pct": 0, "safe_cls": "", "rating_known": bool(amps and amps > 0),
+        "power_known": power_known,
     }
-    if not amps or amps <= 0 or watts <= 0:
+    if not power_known or not amps or amps <= 0 or watts == 0:
         return unknown
-    current = watts / (240 if poles == 2 else 120)
+    current = abs(watts) / (240 if poles == 2 else 120)
     load_pct = current / amps * 100
     reference_pct = load_pct / 0.8
     if reference_pct >= 100:
@@ -23,4 +27,5 @@ def breaker_load(watts: float, amps: int | None, poles: int = 1) -> dict:
         "zone_cls": zone, "load_cls": load, "fill_cls": fill,
         "load_bar_w": min(100, load_pct), "load_label": f"{current:.1f}/{amps}A",
         "safe_bar_pct": min(100, reference_pct), "safe_cls": state, "rating_known": True,
+        "power_known": True,
     }

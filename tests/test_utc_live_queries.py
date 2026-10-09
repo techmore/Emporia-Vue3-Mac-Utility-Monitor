@@ -28,13 +28,14 @@ class UtcLiveQueryTests(unittest.TestCase):
         self.original_connect = energy._connect
         self.artifact = self.root/'converted.db'
 
-    def convert(self, rows, zone='America/New_York', health=(), snapshots=False):
+    def convert(self, rows, zone='America/New_York', minute=False, health=(), snapshots=False):
         connection = self.original_connect()
         try:
             with connection:
                 connection.executemany(
-                    'INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents) VALUES (?,?,?,?,?)',
-                    rows,
+                    '''INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents,
+                       measurement_seconds,measurement_source) VALUES (?,?,?,?,?,?,?)''',
+                    [(*row, 60 if minute else None, 'emporia_minute' if minute else None) for row in rows],
                 )
                 connection.executemany('INSERT INTO poller_health_events(timestamp,ok) VALUES (?,?)', health)
         finally:
@@ -259,14 +260,14 @@ class UtcLiveQueryTests(unittest.TestCase):
                       ('2026-10-09T03:30:00Z', 'A', 'Pump', 0.01, 0.2),
                       ('2026-10-09T04:00:00.000001Z', 'A', 'Pump', 100, 2000),
                       ('2026-10-09T04:00:00.000001Z', 'A', 'Main', 100, 2000),
-                      ('2026-10-09T03:30:00Z', 'B', 'Main', 999, 999)])
+                      ('2026-10-09T03:30:00Z', 'B', 'Main', 999, 999)], minute=True)
         now = datetime(2026, 10, 9, 4, tzinfo=timezone.utc)
         with self.queries():
             peak = energy.get_peak_usage('A', now=now)
             instant = energy.get_peak_24h('A', now=now)
         self.assertEqual(peak['peak_hours'], [{'hour': '23', 'avg_kwh': 0.01}])
         self.assertEqual(peak['peak_days'][0]['day'], 'Thursday')
-        self.assertEqual(instant, {'peak_watts': 600, 'peak_time': '11 PM (10/08) -0400'})
+        self.assertEqual(instant, {'peak_watts': 600, 'peak_time': '11 PM (10/08) -0400', 'measurement_seconds': 60})
 
     def test_same_named_circuit_context_is_device_scoped_and_route_uses_shared_query(self):
         now = datetime(2026, 10, 8, 16, tzinfo=timezone.utc)
@@ -307,7 +308,7 @@ class UtcLiveQueryTests(unittest.TestCase):
         self.convert([('2026-11-01T01:10:00-04:00', 'A', 'Main', 0.001, 0.02),
                       ('2026-11-01T01:10:00-05:00', 'A', 'Main', 0.002, 0.04),
                       ('2026-11-02T06:59:30Z', 'A', 'Main', 0.01, 0.2),
-                      ('2026-11-02T06:59:30Z', 'A', 'Pump', 0.005, 0.1)], snapshots=True)
+                      ('2026-11-02T06:59:30Z', 'A', 'Pump', 0.005, 0.1)], snapshots=True, minute=True)
         heartbeat = {'timestamp': EnergyClock.stamp(instant), 'ok': True, 'error': None}
         with self.queries(), patch.object(energy, 'datetime', Clock), patch.object(web, 'datetime', Clock), \
              patch.object(energy, 'read_poller_status', return_value=heartbeat):

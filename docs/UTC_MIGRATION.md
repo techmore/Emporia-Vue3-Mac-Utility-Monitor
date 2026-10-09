@@ -279,3 +279,11 @@ poll is kept separately; its UTC offset cannot reinterpret a local receipt time.
 A mixed Chicago-export/New-York-receipt fixture verifies all three timestamp
 replicas, exact energy/provider evidence and an unchanged archive hash. This is
 a private conversion test, not permission to enable production UTC writers.
+
+Development 2.3.42 uses this evidence for dashboard/native-menu live power and
+historical circuit averages. Only fresh Emporia minute observations qualify as
+live; unknown duration, imported intervals and stale provider times remain
+unavailable. Aligned monitored peak averages reject mixed interval/source cohorts.
+These consumer changes do not repair overlapping historical energy, prove complete
+panel coverage, negotiate old clients or enable UTC collection. #135/#127 remain
+open and production activation is still blocked by the coordinated cutover gates.

@@ -27,13 +27,14 @@ class UtcDurationQueryTests(unittest.TestCase):
         self.original_connect = energy._connect
         self.artifact = self.root/'converted.db'
 
-    def convert(self, rows, zone='America/New_York'):
+    def convert(self, rows, zone='America/New_York', minute=False):
         connection = self.original_connect()
         try:
             with connection:
                 connection.executemany(
-                    'INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents) VALUES (?,?,?,?,?)',
-                    rows,
+                    '''INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents,
+                       measurement_seconds,measurement_source) VALUES (?,?,?,?,?,?,?)''',
+                    [(*row, 60 if minute else None, 'emporia_minute' if minute else None) for row in rows],
                 )
         finally:
             connection.close()
@@ -194,7 +195,7 @@ class UtcDurationQueryTests(unittest.TestCase):
                  ((now-timedelta(days=10)).isoformat(), 'A', 'Dryer', 4, 80),
                  ((now+timedelta(microseconds=1)).isoformat(), 'A', 'Dryer', 100, 2000),
                  ((now-timedelta(seconds=30)).isoformat(), 'B', 'Dryer', 999, 999)]
-        self.convert(rows)
+        self.convert(rows, minute=True)
         with self.queries():
             result = energy.get_circuit_history('Dryer', 'A', now)
             self.assertIsNone(energy.get_circuit_history('missing', 'A', now))

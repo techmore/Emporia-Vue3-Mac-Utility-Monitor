@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.3.42 - Unreleased
+
+- Derive live power only from fresh evidenced Emporia minute observations, checking
+  both receipt and provider age. Preserve unknown power across dashboard events,
+  circuit previews, menu summaries and breaker ratings; keep recorded zero distinct.
+  Imported hourly averages are labeled historical, not live. Peak monitored averages
+  require aligned duration/source evidence rather than multiplying every kWh by 60,000.
+  Missing native legs cannot manufacture a total; recorded Main zero is authoritative.
+  Unknown/stale/imported readings cannot enter standby lists or power-based safety alerts.
+- Give the thin Today/Yesterday charts independent sizing containers to prevent
+  Chart.js from including row-label width and overflowing the banner on mobile.
+- Development only: historical overlap, sync capability negotiation and coordinated
+  UTC writers remain unfinished. No production reprice, migration or deployment;
+  #135 and #127 stay open.
+
 ## 2.3.41 - Unreleased
 
 - Persist per-reading duration, measurement source, declared source timezone and

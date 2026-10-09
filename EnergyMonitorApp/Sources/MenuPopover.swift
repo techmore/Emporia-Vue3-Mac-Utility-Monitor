@@ -406,9 +406,9 @@ struct MonitorPopover: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Circle().fill(monitor.online ? Theme.green : Theme.red)
+                Circle().fill(monitor.online ? (monitor.summary?.currentWatts != nil ? Theme.green : Theme.amber) : Theme.red)
                     .frame(width: 6, height: 6)
-                    .accessibilityLabel(monitor.online ? "Live readings" : "Not live")
+                    .accessibilityLabel(monitor.online ? (monitor.summary?.currentWatts != nil ? "Live minute-average power" : "Power unavailable") : "Not live")
                 Text(monitor.summary?.panelLabel ?? "Service Panel")
                     .font(.caption.weight(.medium)).lineLimit(1)
                 Spacer(minLength: 4)
@@ -506,7 +506,7 @@ struct MonitorPopover: View {
         }
         .buttonStyle(.plain)
         .disabled(!active)
-        .accessibilityLabel(active ? "Slot \(slot.slot), \(slot.displayName), \(peak ? "top usage, " : "")\(watts.map { String(format: "%.0f watts", $0) } ?? "offline"), view circuit history" : "Slot \(slot.slot), empty")
+        .accessibilityLabel(active ? "Slot \(slot.slot), \(slot.displayName), \(peak ? "top usage, " : "")\(watts.map { String(format: "%.0f watts", $0) } ?? "power unavailable"), view circuit history" : "Slot \(slot.slot), empty")
     }
 
     private func circuitView(_ circuit: MenuCircuit) -> some View {

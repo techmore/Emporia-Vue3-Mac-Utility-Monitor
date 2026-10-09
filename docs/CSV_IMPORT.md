@@ -55,9 +55,14 @@ Compacted sums are explicitly marked `compacted` with unknown duration: counting
 samples or putting a sum at an hour boundary does not prove continuous coverage.
 `reading_average_watts` derives interval-average power only from valid duration
 and source evidence; unknown stays null, zero stays zero, signed energy is retained.
-The existing dashboard/native live power consumers have not yet been converted
-and can still display incorrect estimates. #135 remains open for those consumers,
-mixed-resolution overlap and verified historical reconciliation. The additive
+Development 2.3.42 converts dashboard/native menu consumers: live estimates require
+fresh `emporia_minute` observations with a 60-second interval and fresh provider
+time when supplied. Imports never become live merely because their timestamp is
+recent. Circuit previews can show a labeled historical interval average. Unknown
+power is not zero or a safe breaker rating; signed export uses magnitude for
+estimated loading. Peaks are aligned monitored averages, not instantaneous or
+whole-home peaks. #135 remains open for mixed-resolution overlap, historical
+reconciliation and production verification. The additive
 fields still use sync protocol 2; old clients can ignore them and are not yet
 safe for the future UTC/power cutover. No production data is changed by this draft.
 
@@ -70,6 +75,7 @@ adding columns changes its schema fingerprints. Never modify the sole archive.
 ```bash
 venv/bin/python3 -m unittest discover -s tests -p test_import_integrity.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_measurement_evidence.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_power_consumers.py -v
 venv/bin/python3 -m unittest discover -s tests -v
 ```
 

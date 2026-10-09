@@ -20,7 +20,7 @@ from pyemvue.enums import Scale, Unit
 
 from energy_clock import EnergyClock
 from runtime_store import write_private_json
-from timestamp_model import classify_timestamp, reporting_day_bounds
+from timestamp_model import ISO_TIMESTAMP, classify_timestamp, reporting_day_bounds
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
@@ -91,6 +91,41 @@ def reading_average_watts(row: dict) -> float | None:
         return None
     watts = kwh * (3_600_000 / seconds)
     return watts if math.isfinite(watts) else None
+
+
+def reading_live_watts(row: dict | None, *, now: datetime | None = None,
+                       max_age_seconds: int = 180) -> float | None:
+    """Recent provider minute average; an import is historical, never a live sample.
+
+    Until coordinated UTC cutover, naive receipts retain host-local interpretation.
+    A supplied provider instant must also be fresh; receipt time cannot hide stale API data.
+    """
+    if not isinstance(row, dict) or row.get('measurement_source') != 'emporia_minute':
+        return None
+    if row.get('measurement_seconds') != 60:
+        return None
+    watts = reading_average_watts(row)
+    if watts is None:
+        return None
+    stamps = [row.get('timestamp')]
+    if row.get('provider_timestamp') is not None:
+        stamps.append(row['provider_timestamp'])
+    for stamp in stamps:
+        if not isinstance(stamp, str) or not ISO_TIMESTAMP.fullmatch(stamp):
+            return None
+        try:
+            moment = datetime.fromisoformat(stamp)
+            reference = now or datetime.now(moment.tzinfo)
+            if moment.tzinfo is None:
+                reference = reference.astimezone().replace(tzinfo=None) if reference.tzinfo else reference
+            else:
+                reference = reference.astimezone(timezone.utc)
+            age = (reference - moment).total_seconds()
+        except (ValueError, OverflowError):
+            return None
+        if not -60 <= age < max_age_seconds:
+            return None
+    return watts
 
 
 def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
@@ -2152,30 +2187,38 @@ def get_intraday_comparison(device_gid: str | None = None, *,
 
 def get_peak_24h(device_gid: str | None = None, *,
                  now: datetime | None = None) -> dict:
-    """Highest recorded circuit energy in 24h; watt estimate still assumes minute intervals."""
+    """Highest evidenced aligned monitored-circuit interval average in 24h, not instantaneous power."""
     conn = _connect()
     try:
         c = conn.cursor()
         clock, _, since, until = _query_window(conn, timedelta(hours=24), now)
         resolved_gid = _resolve_device_gid(c, device_gid)
         if not resolved_gid:
-            return {"peak_watts": 0, "peak_time": None}
-        # Sum all channels per timestamp to get total load, pick the max
-        c.execute("""
-            SELECT timestamp, SUM(usage_kwh) as total_kwh
+            return {"peak_watts": None, "peak_time": None, "measurement_seconds": None}
+        conn.create_function('energy_average_watts', 3,
+            lambda kwh, seconds, source: reading_average_watts(dict(
+                usage_kwh=kwh, measurement_seconds=seconds, measurement_source=source,
+            )), deterministic=True)
+        # Do not sum unknown durations, mixed scales, different source zones or
+        # distinct provider instants into a fictitious simultaneous panel load.
+        row = conn.execute("""
+            SELECT timestamp, SUM(energy_average_watts(usage_kwh,measurement_seconds,
+                       measurement_source)) watts, MIN(measurement_seconds) measurement_seconds
             FROM readings
-            WHERE timestamp >= ? AND timestamp <= ?
-              AND device_gid = ?
+            WHERE timestamp>=? AND timestamp<=? AND device_gid=?
               AND channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
             GROUP BY timestamp
-            ORDER BY total_kwh DESC,timestamp DESC
-            LIMIT 1
-        """, (since, until, resolved_gid))
-        row = c.fetchone()
+            HAVING COUNT(*)=COUNT(energy_average_watts(usage_kwh,measurement_seconds,measurement_source))
+              AND COUNT(DISTINCT measurement_seconds)=1
+              AND COUNT(DISTINCT COALESCE(source_timezone,''))=1
+              AND COUNT(DISTINCT COALESCE(provider_timestamp,''))=1
+              AND COUNT(DISTINCT CASE WHEN measurement_source='emporia_minute' THEN 'live' ELSE 'csv' END)=1
+              AND ABS(watts)<=1.7976931348623157e308
+            ORDER BY watts DESC,timestamp DESC LIMIT 1
+        """, (since, until, resolved_gid)).fetchone()
         if not row:
-            return {"peak_watts": 0, "peak_time": None}
-        # Poll data is requested at one-minute scale, so convert kWh/min to watts.
-        watts = (row["total_kwh"] or 0) * 60 * 1000
+            return {"peak_watts": None, "peak_time": None, "measurement_seconds": None}
+        watts = row['watts']
         ts = row["timestamp"]
         try:
             dt = clock.local(clock.parse(ts)) if clock else datetime.fromisoformat(ts)
@@ -2188,7 +2231,8 @@ def get_peak_24h(device_gid: str | None = None, *,
         except ValueError:
             logger.warning("Invalid recorded peak timestamp")
             time_label = ts[:16]
-        return {"peak_watts": watts, "peak_time": time_label}
+        return {"peak_watts": watts, "peak_time": time_label,
+                "measurement_seconds": row["measurement_seconds"]}
     finally:
         conn.close()
 
@@ -2274,7 +2318,7 @@ def get_circuit_history(
         if not gid:
             return None
         latest = conn.execute(
-            """SELECT timestamp, usage_kwh FROM readings
+            """SELECT timestamp,usage_kwh,measurement_seconds,measurement_source,source_timezone,provider_timestamp FROM readings
                WHERE device_gid=? AND channel_name=? AND timestamp<=?
                ORDER BY timestamp DESC LIMIT 1""",
             (gid, channel_name, until),
@@ -2337,12 +2381,12 @@ def get_circuit_history(
                 'change_pct': change, 'comparison_sampled': dense,
                 'series': series,
             })
-        latest_moment = clock.parse(latest['timestamp']) if clock else datetime.fromisoformat(latest['timestamp'])
-        age = (now - latest_moment).total_seconds()
         return {
             'channel_name': channel_name, 'device_gid': gid,
             'last_reading': latest['timestamp'],
-            'live_watts': latest['usage_kwh'] * 60000 if 0 <= age < 180 and latest['usage_kwh'] is not None else None,
+            'live_watts': reading_live_watts(dict(latest), now=now),
+            'latest_average_watts': reading_average_watts(dict(latest)),
+            'measurement_seconds': latest['measurement_seconds'],
             'windows': windows,
         }
     finally:

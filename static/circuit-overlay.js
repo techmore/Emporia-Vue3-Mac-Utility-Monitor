@@ -78,7 +78,11 @@
     byId('ch-cost').textContent = window.total_cents == null ? 'No data' : `$${(window.total_cents / 100).toFixed(2)}`;
     byId('ch-trend').textContent = window.change_pct == null ? 'Collecting history' : `${window.change_pct > 0 ? '↑' : window.change_pct < 0 ? '↓' : '→'} ${Math.abs(window.change_pct).toFixed(1)}%`;
     byId('ch-history-note').textContent = `${window.readings.toLocaleString()} readings in the last ${selectedDays} ${selectedDays === 1 ? 'day' : 'days'}. ${window.change_pct == null ? 'A trend needs sufficiently sampled current and previous periods.' : `Compared with the previous ${selectedDays}-day period.`}`;
-    byId('ch-power').textContent = payload.live_watts == null ? 'Live power unavailable' : `${Math.round(payload.live_watts).toLocaleString()} W · minute average`;
+    byId('ch-power').textContent = payload.live_watts != null
+      ? `${Math.round(payload.live_watts).toLocaleString()} W · minute average`
+      : payload.latest_average_watts != null && payload.measurement_seconds > 0
+        ? `${Math.round(payload.latest_average_watts).toLocaleString()} W · last recorded ${payload.measurement_seconds} s average (not live)`
+        : 'Live power unavailable';
     byId('ch-periods').querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.days) === selectedDays)));
     drawChart(window.series);
   }
