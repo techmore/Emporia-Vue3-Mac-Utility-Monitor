@@ -5625,8 +5625,12 @@ def api_import_csv():
         tmp_path = tmp.name
     try:
         result = energy.import_emporia_csv(tmp_path, original_filename=f.filename)
-    except Exception as exc:
-        result = {"imported": 0, "skipped": 0, "errors": 1, "message": str(exc)}
+    except (ValueError, csv.Error) as exc:
+        return jsonify({"imported": 0, "skipped": 0, "errors": 1, "message": str(exc)}), 400
+    except Exception:
+        app.logger.exception("CSV import failed; transaction rolled back")
+        return jsonify({"imported": 0, "skipped": 0, "errors": 1,
+                        "message": "Import failed; no changes were published. Check the server log."}), 500
     finally:
         os.unlink(tmp_path)
     return jsonify(result)
@@ -5684,13 +5688,7 @@ if __name__ == "__main__":
     n = energy.migrate_channel_names()
     if n:
         app.logger.info("[startup] migrated %s channel name(s)", n)
-    # One-time migration: fix kWatts CSV rows stored without unit conversion
-    csv_fix = energy.fix_csv_kwatts_import()
-    if csv_fix["fixed"]:
-        app.logger.info(
-            "[startup] fixed %s CSV kWatts rows (÷60 unit correction)",
-            f"{csv_fix['fixed']:,}",
-        )
+    # Historical unit repair requires verified source data, never a timestamp heuristic.
     snapshot_fix = energy.backfill_latest_channel_snapshot()
     if snapshot_fix["rebuilt"]:
         app.logger.info("[startup] rebuilt latest snapshot for %s channel(s)", snapshot_fix["rebuilt"])
