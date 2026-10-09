@@ -1,9 +1,10 @@
 # Kasa Integration Verification Plan
 
 Status: issue #66. Dedicated `/kasa` controls and circuit associations are implemented; physical control verification remains outstanding. Settings provides a single-device read-only state probe.
-No successful physical switch or off-network test is recorded. Device registration
-and a separate read-only collector are implemented; automatic service startup,
-remote replication and control remain incomplete.
+No successful physical switch or off-network control test is recorded. Device
+registration, safeguarded controls, and automatic collector startup are implemented.
+SER8 monitoring is deployed inside Incus; the Mac accesses it through the private
+SSH forward. Kasa observations are not replicated into the Mac's offline history cache.
 
 ## Compatibility
 
@@ -40,9 +41,9 @@ CSRF/authentication safeguards, bounded requests, capability checks, and fresh
 post-command verification. Credential storage and collector-to-client protocol
 must be implemented and verified before remote control is considered complete.
 
-Remaining: identify actual devices, prove local communication, implement
-automatic monitoring startup and safeguarded controls, and prove the off-network path. No current compatibility or remote-control
-claim is justified by mock tests alone.
+Remaining: compare reported state against the physical devices/vendor app, approve
+and verify one controlled action, and prove switch-reboot and off-network control
+behavior. Mock tests alone do not establish successful physical control.
 
 ## Read-Only Probe
 
@@ -81,8 +82,10 @@ The first successful query pins the reported hardware identity. If another
 device subsequently occupies that IP, it is reported as `DeviceIdentityChanged`
 rather than silently accepted. Remove and re-register only after verifying the
 physical replacement; removal deletes that device's local observation history.
-Registered monitoring is local to this database and is not yet replicated to
-remote clients. It does not provide power measurements or switch controls.
+Registered monitoring is stored in the collector database. Remote clients can view
+it through their authenticated connection, but it is not replicated into the Mac's
+offline history cache. The collector does not issue control commands or provide
+power measurements; confirmed actions use the separate control pane below.
 
 ## Optional Linux Startup
 
@@ -108,7 +111,13 @@ verification, use `sudo systemctl daemon-reload` and
 `sudo systemctl enable --now energy-monitor-kasa.service`. Inspect its status
 and journal, and confirm new query timestamps after restarting the host.
 No service is enabled automatically by registration or the macOS app.
-Actual SER8 installation and reboot persistence remain unverified.
+On SER8, the generated system service is named `kasa-collector.service` inside
+the `energy-monitor` Incus instance and polls every ten seconds. Container restart
+recovery was verified on 2.3.35; all six service units were active with zero automatic
+restarts after the 2.3.36 upgrade. A full SER8 host reboot remains unverified.
+The former native host collectors are stopped and disabled; do not enable a second
+collector against the same production state. See [Incus deployment](INCUS_DEPLOYMENT.md)
+and [deployment options](DEPLOYMENT_OPTIONS.md) for the deployment and rollback procedures.
 
 ## Dedicated Control Pane
 
@@ -123,7 +132,8 @@ HS220 and HS103 state observations do not measure light watts or energy. Schedul
 and automatic controls are not enabled.
 
 On October 8, read-only SER8 discovery identified four HS220 dimmers and two HS103
-plugs. Barn-1st was registered and its OFF state queried by the enabled collector.
+plugs. All six are registered and returning successful collector queries. A fresh
+single-device read-only probe also returned an HS220's OFF state on October 8.
 This establishes network communication, not successful physical control. Before
 closing issue #66, approve one noncritical light, verify its actual operation and
 restore the initial state. Restart/reboot and off-network control remain separate gates.
