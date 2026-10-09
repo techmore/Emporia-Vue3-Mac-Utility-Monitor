@@ -16,6 +16,9 @@
   rollback failure guards and original-export binding/reversal. UTC live guards and
   production services remain unchanged. Source disagreements, pre-ledger adoption,
   completed-history publication and production cutover remain #140/#135/#127 gates.
+- A CLI error after publication reports an unknown outcome, not a false rollback.
+  Verify the destination/receipt before retry or activation; inject post-publication
+  receipt failure to confirm preserved output and secret-free diagnostics.
 
 ## 2.3.49 - Unreleased
 

@@ -230,6 +230,26 @@ class IdentityReconciliationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)['artifact_published'])
 
+    def test_cli_does_not_claim_rollback_after_published_receipt_failure(self):
+        from scripts.reconcile_csv_identity import main
+
+        plan = self.review()
+        stderr = io.StringIO()
+        with patch('identity_reconciliation.file_sha256', side_effect=OSError('private detail')):
+            with patch('sys.stderr', stderr):
+                result = main(['--snapshot', str(self.archive), '--expected-sha256', self.digest,
+                    '--source-gid', '8C9E94', '--canonical-gid', '551741',
+                    '--destination', str(self.destination),
+                    '--reviewed-plan-sha256', plan['plan_sha256']])
+        self.assertEqual(result, 1)
+        self.assertTrue(self.destination.is_file())
+        self.assertEqual(self.hash(self.archive), self.digest)
+        self.assertEqual({row['device_gid'] for row in self.rows(self.destination, 'readings')}, {'551741'})
+        self.assertIn('Publication outcome is unknown', stderr.getvalue())
+        self.assertNotIn('No artifact was published', stderr.getvalue())
+        self.assertNotIn('private detail', stderr.getvalue())
+        self.assertNotIn(str(self.destination), stderr.getvalue())
+
     def test_unrelated_and_newer_retained_target_snapshots_survive(self):
         conn = energy._connect()
         try:

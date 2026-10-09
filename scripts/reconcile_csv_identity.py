@@ -39,7 +39,8 @@ def main(argv=None) -> int:
                 reviewed_plan_sha256=args.reviewed_plan_sha256)
     except (OSError, ValueError, RuntimeError, ImportError, sqlite3.DatabaseError):
         print('Identity review failed; check the private standalone backup, verified hashes, '
-              'source evidence and review. No artifact was published by this run.', file=sys.stderr)
+              'source evidence and review. Publication outcome is unknown; inspect any destination '
+              'and obtain a complete verified receipt before retrying or activating it.', file=sys.stderr)
         return 1
     finally:
         if previous is None:

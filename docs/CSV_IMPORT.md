@@ -133,6 +133,9 @@ The CLI isolates import-time bootstrap even when `DB_PATH` points to an existing
 installation. Exit 0 means this **candidate** is unblocked, not deployed or proven
 bill-correct; exit 2 returns blocker counts; exit 1 indicates invalid inputs or a
 failed operation. Reports and backups must stay private and outside Git.
+An operation error does not prove that a destination was never published: receipt
+verification can fail after atomic publication. Inspect any destination privately;
+do not retry blindly or activate it without a complete independently verified receipt.
 
 The plan requires one discovery-backed canonical candidate, not a name match or
 an ambiguous suffix guess. It verifies every retained observation against exact
