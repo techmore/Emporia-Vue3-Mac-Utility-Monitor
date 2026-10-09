@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.38 - 2026-10-08
+
+- Restore full circuit-detail pages and every period tab by removing copied
+  dashboard sections that referenced missing template values and returned HTTP 500.
+- Scope circuit charts and context comparisons to the same selected device.
+  Read comparison windows from one snapshot, retain recorded zeroes, and correct
+  the polls/hour label. Add actual route regression tests, including empty data
+  and escaped circuit names. No timestamp migration or database schema change.
+
 ## 2.3.37 - 2026-10-08
 
 - Add a read-only UTC migration preflight for private exported reading identities.
