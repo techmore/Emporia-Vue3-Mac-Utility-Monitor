@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import re
 import sqlite3
 import stat
 import tempfile
@@ -11,6 +12,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pyemvue
 import requests
@@ -18,7 +20,7 @@ from pyemvue.enums import Scale, Unit
 
 from energy_clock import EnergyClock
 from runtime_store import write_private_json
-from timestamp_model import classify_timestamp
+from timestamp_model import classify_timestamp, reporting_day_bounds
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
@@ -93,13 +95,12 @@ META_CHANNELS = frozenset({"Main", "Mains_A", "Mains_B", "Mains_C", "Balance"})
 # Device GID that always reports 0 W (secondary/phantom device) — exclude from queries
 _GHOST_DEVICE = "81134"
 
-# kWatts CSV: interval label → minutes per bucket
-_KWATTS_INTERVAL_MINUTES: dict[str, float] = {
-    "1SEC": 1 / 60,
-    "1MIN": 1.0,
-    "15MIN": 15.0,
-    "1H": 60.0,
-    "1DAY": 1440.0,
+# Daily buckets require actual source-zone calendar bounds, not a fixed 24 hours.
+_CSV_FIXED_INTERVAL_SECONDS: dict[str, int] = {
+    "1SEC": 1,
+    "1MIN": 60,
+    "15MIN": 900,
+    "1H": 3600,
 }
 
 
@@ -2445,7 +2446,7 @@ def _clean_csv_channel_name(col: str) -> str:
     """
     name = col.strip()
     # Strip unit suffix: " (kWatts)", " (kWhs)", " (kW)", etc.
-    for suffix in (" (kWatts)", " (kWhs)", " (kW)"):
+    for suffix in (" (kWatts)", " (kWhs)", " (kW)", " (kWh)"):
         if name.endswith(suffix):
             name = name[: -len(suffix)].strip()
             break
@@ -2489,215 +2490,175 @@ def _service_mode_rank(mode: str) -> int:
     }.get(mode, 0)
 
 
+def _csv_source_timezone(header: str) -> str | None:
+    match = re.fullmatch(r"Time Bucket(?: \(([^()]+)\))?", header.strip())
+    if not match:
+        raise ValueError("Expected a Time Bucket timestamp header")
+    zone = match.group(1)
+    if zone is not None:
+        try:
+            ZoneInfo(zone)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError("Invalid declared source timezone") from exc
+    return zone
+
+
+def _csv_interval_seconds(interval: str, moment: datetime, zone: str | None) -> float | None:
+    if interval != '1DAY':
+        return _CSV_FIXED_INTERVAL_SECONDS.get(interval)
+    if zone is None:
+        return None
+    if moment.time() != datetime.min.time():
+        raise ValueError("Daily CSV buckets must start at source-zone midnight")
+    start, end = reporting_day_bounds(moment.date(), zone)
+    return (end - start).total_seconds()
+
+
+def _refresh_import_snapshot_with_conn(conn, device_gid: str) -> None:
+    """Publish only accepted database values, never an ignored conflicting upload."""
+    rows = conn.execute(
+        """SELECT device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp
+           FROM (SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY channel_name ORDER BY timestamp DESC,id DESC) rn
+                 FROM readings WHERE device_gid=? AND channel_name IS NOT NULL)
+           WHERE rn=1""", (device_gid,),
+    ).fetchall()
+    conn.execute("DELETE FROM latest_channel_snapshot WHERE device_gid=?", (device_gid,))
+    for row in rows:
+        _upsert_latest_snapshot_with_conn(conn, **dict(row))
+
+
 def import_emporia_csv(
     filepath: str,
     device_gid: str | None = None,
     original_filename: str | None = None,
 ) -> dict:
+    """Validate an export before atomically publishing energy, snapshots and capabilities.
+
+    Power columns require a known interval; energy columns retain their raw kWh.
+    Declared zones are validated, and ambiguous/nonexistent wall times are reported
+    rather than guessed. Storage remains legacy local until coordinated UTC cutover.
+    Interval/source metadata returned here is not yet persisted per reading (#135).
     """
-    Import an Emporia energy export CSV into the readings table.
+    import csv
 
-    Expected format:
-      Column 0: "Time Bucket (America/New_York)"  → "MM/DD/YYYY HH:MM:SS"
-      Columns 1+: "{Device}-{ChannelDesc} (kWatts)" or "(kWhs)" → float or "No CT"
-
-    Unit handling:
-      - Columns suffixed "(kWatts)" store average power in kW per bucket.
-        These are converted to kWh using the interval duration (parsed from filename).
-        e.g. 1MIN: kWh = kW × (1/60);  15MIN: kWh = kW × (15/60)
-      - Columns suffixed "(kWhs)" are already in kWh — stored as-is.
-
-    Returns {"imported": N, "skipped": N, "errors": N, "unit": "kWatts"|"kWhs"}.
-    """
-    import csv as csv_mod
-    from pathlib import Path
-
-    filepath = Path(filepath)
-    # Use original filename (from upload) for device_gid + interval, not temp path
-    name_stem = Path(original_filename).stem if original_filename else filepath.stem
-
-    if device_gid is None:
-        # "8C9E94-Barn-1MIN.csv" → "8C9E94"
-        parts = name_stem.split("-")
-        device_gid = parts[0] if parts else "IMPORT"
-
-    # Detect time-bucket interval from filename (last segment after last "-")
-    # e.g. "8C9E94-Barn-1MIN" → "1MIN"
-    interval_str = name_stem.split("-")[-1].upper()
-    interval_minutes = _KWATTS_INTERVAL_MINUTES.get(interval_str)  # None if unrecognised
-
-    conn = _connect()
-    c = conn.cursor()
-    imported = skipped = errors = 0
-    detected_unit: str | None = None
-    capability = {
-        "has_main": False,
-        "has_mains_a": False,
-        "has_mains_b": False,
-        "has_mains_c": False,
-        "mains_c_no_ct": False,
-    }
-
-    with open(filepath, newline="", encoding="utf-8-sig") as f:
-        reader = csv_mod.DictReader(f)
+    path = Path(filepath)
+    stem = Path(original_filename).stem if original_filename else path.stem
+    gid = str(device_gid) if device_gid is not None else stem.split('-')[0]
+    if not gid:
+        raise ValueError("CSV device identity must be nonempty")
+    interval = stem.split('-')[-1].upper()
+    rate = RATE_CENTS
+    if not math.isfinite(rate) or rate < 0:
+        raise ValueError("Electricity rate must be finite and nonnegative")
+    skipped = errors = ambiguous = nonexistent = 0
+    capability = dict.fromkeys(('has_main', 'has_mains_a', 'has_mains_b', 'has_mains_c', 'mains_c_no_ct'), False)
+    units, durations, rows_to_insert = set(), set(), []
+    with path.open(newline='', encoding='utf-8-sig') as handle:
+        reader = csv.DictReader(handle)
         headers = reader.fieldnames or []
-        if not headers:
-            conn.close()
-            return {"imported": 0, "skipped": 0, "errors": 1,
-                    "message": "Empty or invalid CSV"}
+        if len(headers) < 2 or any(not isinstance(header, str) for header in headers):
+            raise ValueError("Empty or invalid CSV headers")
+        if len(set(headers)) != len(headers):
+            raise ValueError("Duplicate CSV headers are not supported")
+        zone = _csv_source_timezone(headers[0])
+        columns = []
+        for header in headers[1:]:
+            match = re.search(r" \((kWatts|kW|kWhs|kWh)\)$", header.strip())
+            if not match:
+                raise ValueError("Unsupported CSV measurement unit")
+            power = match.group(1) in ('kWatts', 'kW')
+            if power and interval not in {*_CSV_FIXED_INTERVAL_SECONDS, '1DAY'}:
+                raise ValueError("Power-unit CSV requires a recognized filename interval")
+            if power and interval == '1DAY' and zone is None:
+                raise ValueError("Daily power conversion requires a declared source timezone")
+            units.add('kWatts' if power else 'kWhs')
+            name = _clean_csv_channel_name(header)
+            if not name or any(name == existing[1] for existing in columns):
+                raise ValueError("CSV channel names must be nonempty and unique after normalization")
+            if name in ('Main', 'Mains_A', 'Mains_B', 'Mains_C'):
+                capability[{'Main': 'has_main', 'Mains_A': 'has_mains_a', 'Mains_B': 'has_mains_b', 'Mains_C': 'has_mains_c'}[name]] = True
+            columns.append((header, name, power))
 
-        ts_col = headers[0]
-
-        # Determine unit from first data column header suffix
-        # Build [(col_header, channel_name, is_kwatts), …]
-        channel_cols = []
-        for col in headers[1:]:
-            is_kwatts = "(kWatts)" in col or "(kW)" in col
-            if detected_unit is None:
-                detected_unit = "kWatts" if is_kwatts else "kWhs"
-            channel_name = _clean_csv_channel_name(col)
-            if channel_name == "Main":
-                capability["has_main"] = True
-            elif channel_name == "Mains_A":
-                capability["has_mains_a"] = True
-            elif channel_name == "Mains_B":
-                capability["has_mains_b"] = True
-            elif channel_name == "Mains_C":
-                capability["has_mains_c"] = True
-            channel_cols.append((col, channel_name, is_kwatts))
-
-        # Conversion factor for kWatts columns: kWh = kW × (interval_minutes / 60)
-        # Fall back to assuming 1MIN if interval not parseable from filename
-        if interval_minutes is None:
-            interval_minutes = 1.0  # safe default; warn via returned dict
-        kwatts_to_kwh = interval_minutes / 60.0
-
-        rows_to_insert = []
         for row in reader:
-            ts_raw = row.get(ts_col, "").strip()
-            if not ts_raw:
+            if None in row:
+                errors += 1
+                continue
+            stamp = (row.get(headers[0]) or '').strip()
+            if not stamp:
                 skipped += 1
                 continue
             try:
-                dt = datetime.strptime(ts_raw, "%m/%d/%Y %H:%M:%S")
-                ts_iso = dt.isoformat()
+                moment = datetime.strptime(stamp, '%m/%d/%Y %H:%M:%S')
+                if zone:
+                    status = classify_timestamp(moment.isoformat(), zone)['status']
+                    if status != 'legacy_unique':
+                        ambiguous += status == 'ambiguous'
+                        nonexistent += status == 'nonexistent'
+                        errors += 1
+                        continue
+                duration = _csv_interval_seconds(interval, moment, zone)
             except ValueError:
                 errors += 1
                 continue
-
-            for col, channel_name, is_kwatts in channel_cols:
-                val = row.get(col, "").strip()
-                if not val or val.lower() == "no ct":
-                    if channel_name == "Mains_C" and val.lower() == "no ct":
-                        capability["mains_c_no_ct"] = True
+            if duration is not None:
+                durations.add(duration)
+            for header, name, power in columns:
+                value = (row.get(header) or '').strip()
+                if not value or value.lower() == 'no ct':
+                    if name == 'Mains_C' and value.lower() == 'no ct':
+                        capability['mains_c_no_ct'] = True
                     skipped += 1
                     continue
                 try:
-                    raw_value = float(val)
-                except ValueError:
+                    raw = float(value)
+                    kwh = raw * (duration / 3600) if power else raw
+                    cents = kwh * rate
+                    if not all(math.isfinite(number) for number in (raw, kwh, cents)):
+                        raise ValueError("Nonfinite energy or cost")
+                except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
+                rows_to_insert.append((moment.isoformat(), gid, None, name, kwh, cents))
 
-                # Apply unit conversion
-                usage_kwh = raw_value * kwatts_to_kwh if is_kwatts else raw_value
-                cost_cents = usage_kwh * RATE_CENTS
-                rows_to_insert.append(
-                    (ts_iso, device_gid, None, channel_name, usage_kwh, cost_cents)
-                )
-
-    if rows_to_insert:
-        c.executemany(
-            """INSERT OR IGNORE INTO readings
-               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            rows_to_insert,
-        )
-        imported = c.rowcount
-        skipped += len(rows_to_insert) - imported
-        for ts_iso, row_device_gid, channel_num, channel_name, usage_kwh, cost_cents in rows_to_insert:
-            _upsert_latest_snapshot_with_conn(
-                conn,
-                device_gid=str(row_device_gid),
-                channel_name=channel_name,
-                channel_num=channel_num,
-                usage_kwh=usage_kwh,
-                cost_cents=cost_cents,
-                timestamp=ts_iso,
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            inserted = conn.executemany(
+                """INSERT OR IGNORE INTO readings
+                   (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents)
+                   VALUES (?,?,?,?,?,?)""", rows_to_insert,
+            ).rowcount if rows_to_insert else 0
+            skipped += len(rows_to_insert) - inserted
+            if rows_to_insert:
+                _refresh_import_snapshot_with_conn(conn, gid)
+            _save_device_capabilities_with_conn(
+                conn, device_gid=gid,
+                service_mode=_classify_service_mode(**capability),
+                source='csv_import', **capability,
             )
-
-    conn.commit()
-    conn.close()
-    save_device_capabilities(
-        str(device_gid),
-        service_mode=_classify_service_mode(
-            has_main=capability["has_main"],
-            has_mains_a=capability["has_mains_a"],
-            has_mains_b=capability["has_mains_b"],
-            has_mains_c=capability["has_mains_c"],
-            mains_c_no_ct=capability["mains_c_no_ct"],
-        ),
-        has_main=capability["has_main"],
-        has_mains_a=capability["has_mains_a"],
-        has_mains_b=capability["has_mains_b"],
-        has_mains_c=capability["has_mains_c"],
-        mains_c_no_ct=capability["mains_c_no_ct"],
-        source="csv_import",
-    )
+    finally:
+        conn.close()
+    duration = next(iter(durations)) if len(durations) == 1 else _CSV_FIXED_INTERVAL_SECONDS.get(interval)
+    unit = next(iter(units)) if len(units) == 1 else 'mixed'
     return {
-        "imported": imported,
-        "skipped": skipped,
-        "errors": errors,
-        "unit": detected_unit or "unknown",
-        "interval": interval_str,
-        "conversion_factor": kwatts_to_kwh if detected_unit == "kWatts" else 1.0,
+        'imported': inserted, 'skipped': skipped, 'errors': errors,
+        'unit': unit, 'interval': interval, 'interval_seconds': duration,
+        'source_timezone': zone, 'ambiguous_timestamps': ambiguous,
+        'nonexistent_timestamps': nonexistent,
+        'conversion_factor': duration / 3600 if unit == 'kWatts' and duration is not None else 1.0 if unit == 'kWhs' else None,
     }
 
 
 def fix_csv_kwatts_import() -> dict:
+    """Deprecated compatibility entrypoint: never guess historical units or mutate data.
+
+    Timestamp precision/device identity cannot prove kW versus kWh or duration.
+    Retain previous markers and values; repair requires verified original exports.
     """
-    One-time migration: CSV rows imported before unit-detection was added stored
-    kWatts values directly as usage_kwh (kWh).  For 1-minute buckets this inflates
-    every reading by 60×.
-
-    Heuristic: rows whose timestamp has NO fractional-second component came from
-    CSV imports (live poller always writes microseconds).  We divide those rows'
-    usage_kwh and cost_cents by 60 (assumes 1MIN source files, which is what
-    Emporia exports by default and what was historically imported here).
-
-    Safe to re-run — already-corrected rows are not touched because after
-    correction their values will be small and a second ÷60 would make them tiny,
-    but we guard against double-application by only touching rows in the ghost
-    import device bucket (device_gid != '551741' and not LIKE '%.%' timestamp).
-
-    Returns {"fixed": N} count of rows updated.
-    """
-    conn = _connect()
-    c = conn.cursor()
-    migration_name = "fix_csv_kwatts_import_v1"
-    already_applied = c.execute(
-        "SELECT 1 FROM migrations WHERE name = ?",
-        (migration_name,),
-    ).fetchone()
-    if already_applied:
-        conn.close()
-        return {"fixed": 0}
-    # Rows from CSV import: exact-second timestamps (no '.' in timestamp string)
-    # Exclude the real live device (551741) which should never have exact timestamps
-    c.execute(
-        """UPDATE readings
-           SET usage_kwh  = usage_kwh  / 60.0,
-               cost_cents = cost_cents / 60.0
-           WHERE timestamp NOT LIKE '%.%'
-             AND device_gid != '551741'""",
-    )
-    fixed = c.rowcount
-    c.execute(
-        "INSERT INTO migrations(name, applied_at) VALUES(?, ?)",
-        (migration_name, datetime.now().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-    return {"fixed": fixed}
+    logger.warning("Heuristic CSV correction is disabled; verified source data is required")
+    return {'fixed': 0, 'disabled': True}
 
 
 def backfill_latest_channel_snapshot() -> dict:

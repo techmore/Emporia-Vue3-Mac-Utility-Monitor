@@ -25,4 +25,5 @@ for name in ('timestamp_model.py', 'scripts/audit_timestamps.py', 'docs/UTC_MIGR
     assert (root / name).is_file(), f'Missing UTC preflight file: {name}'
 for name in ('utc_migration.py', 'energy_clock.py', 'scripts/rehearse_utc_migration.py'):
     assert (root / name).is_file(), f'Missing UTC rehearsal file: {name}'
+assert (root / 'docs/CSV_IMPORT.md').is_file(), 'Missing CSV import/reconciliation guide'
 print(version)
