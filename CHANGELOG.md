@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.3.40 - 2026-10-09
+
+- Add a private systemd update-check timer for Linux collectors. Compare the
+  deployed HTTP version against both stable GitHub releases and immutable merged
+  main source, so an older published release does not hide newer source updates.
+- Persist bounded, read-only check results and explicit failed/partial states;
+  run twice daily with missed-check recovery after restart. Updates are reported
+  without changing application code or collector data automatically.
+- Install and verify the checker in SER8's existing energy-monitor container.
+
 ## 2.3.39 - 2026-10-08
 
 - Retire the unproven startup divide-by-60 correction; preserve historical values

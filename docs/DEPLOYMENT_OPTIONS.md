@@ -1,5 +1,8 @@
 # Deployment options
 
+For automatic release and merged-source availability checks on an existing Linux
+collector, see [Server update checks](SERVER_UPDATE_CHECKS.md).
+
 The application supports a native macOS app, a native Linux collector, or a
 Linux collector inside Incus/LXD. Use one authoritative collector database.
 The Mac can be a client of either Linux option, with local cached history.
