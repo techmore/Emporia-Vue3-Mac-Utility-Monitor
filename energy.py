@@ -12,6 +12,7 @@ import stat
 import tempfile
 import time
 from contextlib import contextmanager
+from copy import copy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -22,6 +23,7 @@ from pyemvue.enums import Scale, Unit
 
 from csv_projection import identity as _csv_identity
 from csv_projection import publish_csv as _publish_csv
+from device_identity import bind_source, canonical_id, record_discovery, resolve_export
 from energy_clock import EnergyClock
 from runtime_store import write_private_json
 from timestamp_model import ISO_TIMESTAMP, classify_timestamp, reporting_day_bounds
@@ -608,6 +610,30 @@ def ensure_table(path: str | Path | None = None):
             device_gid TEXT NOT NULL, interval TEXT NOT NULL, source_timezone TEXT,
             headers_json TEXT NOT NULL, rate_cents REAL NOT NULL, content BLOB NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS device_identities (
+            canonical_gid TEXT PRIMARY KEY, display_name TEXT NOT NULL, first_seen_utc TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS device_identity_aliases (
+            kind TEXT NOT NULL CHECK (kind IN ('cloud_gid','manufacturer_id','export_suffix')),
+            alias TEXT NOT NULL, canonical_gid TEXT NOT NULL, first_seen_utc TEXT NOT NULL,
+            PRIMARY KEY (kind,alias,canonical_gid),
+            FOREIGN KEY (canonical_gid) REFERENCES device_identities(canonical_gid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_alias ON device_identity_aliases(alias);
+        CREATE TRIGGER IF NOT EXISTS device_alias_immutable_update BEFORE UPDATE ON device_identity_aliases
+        BEGIN SELECT RAISE(ABORT, 'Device discovery claim is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS device_alias_immutable_delete BEFORE DELETE ON device_identity_aliases
+        BEGIN SELECT RAISE(ABORT, 'Device discovery claim is immutable'); END;
+        CREATE TABLE IF NOT EXISTS csv_source_bindings (
+            batch_id TEXT PRIMARY KEY, export_identity TEXT NOT NULL, canonical_gid TEXT NOT NULL,
+            resolution TEXT NOT NULL CHECK (resolution IN ('discovery_alias','operator_selected')),
+            bound_at_utc TEXT NOT NULL,
+            FOREIGN KEY (batch_id) REFERENCES csv_source_batches(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS csv_binding_immutable_update BEFORE UPDATE ON csv_source_bindings
+        BEGIN SELECT RAISE(ABORT, 'CSV monitor binding is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_binding_immutable_delete BEFORE DELETE ON csv_source_bindings
+        BEGIN SELECT RAISE(ABORT, 'CSV monitor binding is immutable'); END;
         CREATE TABLE IF NOT EXISTS csv_source_observations (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
             id TEXT NOT NULL UNIQUE, batch_id TEXT NOT NULL, row_number INTEGER NOT NULL,
@@ -1605,16 +1631,44 @@ def login_vue():
 
 
 def get_devices_with_channels(vue):
-    devices = vue.get_devices()
+    devices = list(vue.get_devices())
     device_gids = []
     device_info = {}
+    seen_channels = {}
     for device in devices:
+        canonical_id(device.device_gid)
         if device.device_gid not in device_gids:
             device_gids.append(device.device_gid)
-            device_info[device.device_gid] = device
-        else:
-            device_info[device.device_gid].channels += device.channels
+            device_info[device.device_gid] = copy(device)
+            device_info[device.device_gid].channels = []
+            seen_channels[device.device_gid] = set()
+        target = device_info[device.device_gid]
+        for attr in ('device_name', 'time_zone'):
+            if not getattr(target, attr, '') and getattr(device, attr, ''):
+                setattr(target, attr, getattr(device, attr))
+        for channel in device.channels:
+            key = str(channel.channel_num)
+            if key not in seen_channels[device.device_gid]:
+                target.channels.append(channel)
+                seen_channels[device.device_gid].add(key)
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            record_discovery(conn, devices, datetime.now(timezone.utc).isoformat(timespec='microseconds'))
+    finally:
+        conn.close()
     return device_gids, device_info
+
+
+def get_registered_devices() -> list[dict]:
+    """Canonical cloud monitors learned by the poller, never inferred from readings."""
+    conn = _connect()
+    try:
+        return [dict(row) for row in conn.execute(
+            'SELECT canonical_gid,display_name FROM device_identities ORDER BY display_name,canonical_gid')]
+    finally:
+        conn.close()
 
 
 def _normalize_channel_name(name: str | None) -> str | None:
@@ -2906,6 +2960,8 @@ def import_emporia_csv(
     filepath: str,
     device_gid: str | None = None,
     original_filename: str | None = None,
+    *,
+    require_registered_device: bool = False,
 ) -> dict:
     """Validate an export before atomically publishing energy, snapshots and capabilities.
 
@@ -2915,14 +2971,15 @@ def import_emporia_csv(
     an explicit CSV source zone. Ordinary UTC activation remains guarded.
     Retain exact source bytes/cells, then project non-overlapping verified intervals.
     Conflicts and unmanaged/unknown history need explicit reconciliation (#135).
+    Automatic identity requires persisted cloud discovery. Explicit Python callers
+    may assert a device ID; HTTP callers must select a registered canonical monitor.
+    Operator selections bind only this source, never an unverified global alias.
     """
     import csv
 
     path = Path(filepath)
     stem = Path(original_filename).stem if original_filename else path.stem
-    gid = str(device_gid) if device_gid is not None else stem.split('-')[0]
-    if not gid:
-        raise ValueError("CSV device identity must be nonempty")
+    export_identity = stem.split('-')[0].upper()
     interval = stem.split('-')[-1].upper()
     rate = RATE_CENTS
     if not math.isfinite(rate) or rate < 0:
@@ -2931,7 +2988,6 @@ def import_emporia_csv(
     capability = dict.fromkeys(('has_main', 'has_mains_a', 'has_mains_b', 'has_mains_c', 'mains_c_no_ct'), False)
     content = path.read_bytes()
     digest = hashlib.sha256(content).hexdigest()
-    batch_id = _csv_identity('csv_source_v1', gid, interval, digest)
     units, durations, observations = set(), set(), []
     with io.StringIO(content.decode('utf-8-sig'), newline='') as handle:
         reader = csv.DictReader(handle)
@@ -3003,7 +3059,6 @@ def import_emporia_csv(
                     errors += 1
                     continue
                 observations.append({
-                    'id': _csv_identity(batch_id, row_number, header), 'batch_id': batch_id,
                     'row_number': row_number, 'channel_name': name, 'source_header': header,
                     'source_unit': source_unit, 'raw_timestamp': row.get(headers[0]) or '',
                     'raw_value': row.get(header) or '',
@@ -3013,12 +3068,6 @@ def import_emporia_csv(
                     'measurement_source': 'csv_power' if power else 'csv_energy',
                 })
 
-    source = {
-        'id': batch_id, 'sha256': digest, 'original_filename': Path(original_filename or filepath).name,
-        'device_gid': gid, 'interval': interval, 'source_timezone': zone,
-        'headers_json': json.dumps(headers, ensure_ascii=True), 'rate_cents': rate, 'content': content,
-    }
-
     conn = _connect()
     try:
         with conn:
@@ -3026,7 +3075,20 @@ def import_emporia_csv(
             clock = _utc_clock(conn)
             if clock and zone is None:
                 raise ValueError('UTC CSV import requires a declared source timezone')
+            gid, resolution = resolve_export(conn, export_identity, device_gid, require_registered_device)
+            batch_id = _csv_identity('csv_source_v2', gid, export_identity, interval, digest)
+            for observation in observations:
+                observation.update(id=_csv_identity(batch_id, observation['row_number'], observation['source_header']),
+                                   batch_id=batch_id)
+            source = {
+                'id': batch_id, 'sha256': digest,
+                'original_filename': Path(original_filename or filepath).name,
+                'device_gid': gid, 'interval': interval, 'source_timezone': zone,
+                'headers_json': json.dumps(headers, ensure_ascii=True), 'rate_cents': rate, 'content': content,
+            }
             projection = _publish_csv(conn, source, observations, clock)
+            bind_source(conn, batch_id, export_identity, gid, resolution,
+                        datetime.now(timezone.utc).isoformat(timespec='microseconds'))
             inserted = projection['imported']
             skipped += len(observations) - inserted
             if observations:
@@ -3042,6 +3104,7 @@ def import_emporia_csv(
     unit = next(iter(units)) if len(units) == 1 else 'mixed'
     return {
         **projection,
+        'device_gid': gid, 'export_identity': export_identity, 'identity_resolution': resolution,
         'imported': inserted, 'skipped': skipped, 'errors': errors,
         'unit': unit, 'interval': interval, 'interval_seconds': duration,
         'source_timezone': zone, 'ambiguous_timestamps': ambiguous,

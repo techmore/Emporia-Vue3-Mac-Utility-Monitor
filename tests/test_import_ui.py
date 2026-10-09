@@ -6,7 +6,8 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import energy
 import web
@@ -21,6 +22,8 @@ class ImportUITests(unittest.TestCase):
         database.start()
         self.addCleanup(database.stop)
         energy.ensure_table()
+        energy.get_devices_with_channels(Mock(get_devices=Mock(return_value=[SimpleNamespace(
+            device_gid='QA', manufacturer_id='', device_name='QA monitor', channels=[])])))
         self.client = web.app.test_client()
         response = self.client.get('/import')
         self.assertEqual(response.status_code, 200)
@@ -29,12 +32,12 @@ class ImportUITests(unittest.TestCase):
         self.script, = [script for script in scripts if "fetch('/api/import-csv'" in script]
         self.escape_script = re.search(r'window.escapeHTML = function\(value\) \{.*?\n\};', html, re.S).group()
 
-    def run_ui(self, responses):
+    def run_ui(self, responses, *, device='', return_state=False):
         runner = Path(__file__).resolve().parents[1] / 'scripts/test_import_ui.cjs'
         result = subprocess.run(
             [shutil.which('node'), str(runner)],
             input=json.dumps({'script': self.script, 'escapeScript': self.escape_script,
-                              'responses': responses}),
+                              'responses': responses, 'device': device}),
             text=True, capture_output=True, timeout=10, check=True,
         )
         state = json.loads(result.stdout)
@@ -42,7 +45,18 @@ class ImportUITests(unittest.TestCase):
         self.assertEqual(state['textContent'], 'Import')
         self.assertEqual(state['calls'], len(responses))
         self.assertNotIn('undefined', state['html'])
-        return state['html']
+        return state if return_state else state['html']
+
+    def test_selected_monitor_is_posted_for_every_file_and_escaped_in_result(self):
+        response = {'status': 200, 'body': {'imported': 1, 'skipped': 0, 'errors': 0,
+                                         'device_gid': '<img src=x>'}}
+        state = self.run_ui([response, response], device='QA', return_state=True)
+        for post in state['posts']:
+            self.assertIn(['device_gid', 'QA'], post)
+        self.assertIn('monitor &lt;img src=x&gt;', state['html'])
+        self.assertNotIn('<img', state['html'])
+        state = self.run_ui([response], return_state=True)
+        self.assertEqual([entry[0] for entry in state['posts'][0]], ['file'])
 
     def assert_failed(self, response, message):
         html = self.run_ui([response])

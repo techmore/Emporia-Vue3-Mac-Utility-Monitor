@@ -50,6 +50,14 @@ or the SDK's requested-start fallback. Clip inclusive end buckets and preserve
 null gaps. The offline audit script does not publish readings; see
 `docs/EMPORIA_HISTORY_CONTRACT.md` before integrating a general source ledger.
 
+`device_identity.py` resolves CSV export prefixes against immutable discovery
+claims from the poller. Resolve within the publication transaction; HTTP operator
+selection must name a registered canonical monitor. Unknown/ambiguous prefixes
+never become implicit new devices, and display names are not identity evidence.
+Keep original CSV bytes and per-source identity bindings immutable. Existing split
+history requires reviewed reconciliation, not aliases added to every read query.
+See `docs/CSV_IMPORT.md` and `tests/test_device_identity.py`.
+
 ---
 
 ## Build & Run Commands

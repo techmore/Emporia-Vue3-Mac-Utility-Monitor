@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.3.49 - Unreleased
+
+- Resolve new CSV imports to canonical cloud monitor IDs using poller discovery,
+  not filename prefixes or display names. Preserve parent/nested channels without
+  mutating SDK objects; retain immutable discovery claims and per-source bindings.
+- Add explicit discovered-monitor selection to Import. Reject unknown/ambiguous
+  auto-matches, unregistered HTTP selections and contradictions before publication.
+  Keep canonical live/CSV overlap guards active; existing split history requires
+  reviewed reconciliation rather than a silent alias or rewrite.
+- Verify actual Flask imports, scoped history, rendered submit-handler selection,
+  source immutability, collisions, idempotence, upgrade preservation and rollback.
+  Package the identity module for native and Linux/Incus/LXD source deployments.
+  Legacy reconciliation and production acceptance remain open in #140/#127/#135;
+  this draft does not change the running application or deploy a new collector.
+
 ## 2.3.48 - Unreleased
 
 - Add strict read-only completed-chart evidence validation and a private offline

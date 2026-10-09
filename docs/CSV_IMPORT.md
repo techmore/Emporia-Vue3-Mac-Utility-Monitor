@@ -35,6 +35,68 @@ This UI correction does not deduplicate overlapping resolutions or repair histor
 
 ## Historical repair
 
+### Canonical Monitor Identity (Development 2.3.49)
+
+The export filename prefix is not necessarily its cloud device ID. The verified
+`8C9E94` export prefix matches the suffix of manufacturer IDs returned for cloud
+monitor `551741`. Parent and nested SDK objects can share that same cloud ID;
+discovery merges their channels without mutating the SDK objects. Main plus 16
+branch channels remain 17 distinct channels, not two different monitors.
+
+The poller persists cloud IDs, full manufacturer IDs and observed six-hex export
+suffix claims in the database. A unique candidate allows automatic matching;
+collisions across different cloud IDs require explicit selection. Monitor names,
+existing reading values and apparent usage patterns never establish identity.
+Discovery claims remain immutable across later discovery calls. Import does not
+log in to the cloud or perform network discovery from the web server.
+
+Settings -> Import lists only discovered canonical monitors. Leave automatic
+matching selected for a known unique prefix. For an unknown or ambiguous export,
+explicitly select its correct monitor; an unregistered choice or a choice that
+contradicts the discovery candidates returns HTTP 400 with no publication. With
+no discovered monitors, allow the poller to discover devices first. Selecting a
+monitor applies to every selected file, so do not batch files for different
+monitors under one explicit choice.
+
+Trusted standalone Python callers may explicitly assert `device_gid` without a
+registry, for intentional offline imports. This is not a fallback used by HTTP
+clients. Such assertions create only an immutable per-source binding, never a
+global alias that future uploads silently inherit. HTTP imports always require
+the selected monitor to be registered. Binding records include normalized export
+identity, canonical ID, resolution method and a UTC receipt time; the untouched
+original filename/bytes retain original spelling. Publication, binding, source
+observations, journal, snapshots and capabilities commit or roll back together.
+
+New v2 batch identity includes canonical monitor, export prefix, interval and
+exact content hash. Different prefixes cannot overwrite one another's binding;
+changing the rate or temporary path does not reprice identical evidence. Original
+v1 source batches are left intact. Multiple valid sources resolving to the same
+monitor share the existing non-overlap/conflict projection rules.
+
+If noncanonical history exists under this monitor's discovered aliases (or this
+export prefix), import is blocked pending reviewed reconciliation. This prevents
+canonical publication from bypassing the coverage gate for old split history.
+It does not rewrite IDs, merge old evidence, infer unknown bounds or silently
+include aliases in reports. Unknown live bounds under the canonical ID still
+produce review warnings and retained source evidence, not duplicate totals.
+#140 remains open for reviewed legacy reconciliation and production acceptance;
+#127/#135 retain their UTC/general source-ledger scope.
+
+Disposable-instance verification:
+
+1. Run poller discovery, then open Settings -> Import. Confirm the monitor's
+   label and canonical ID appear. Import its known export prefix automatically.
+   Verify the returned monitor ID and its device-scoped history, not a new suffix
+   device. Confirm the original file hash and bytes remain unchanged.
+2. Upload an unknown prefix without selection: expect HTTP 400 and no new
+   readings, source batches, bindings or journal entries. Explicitly select the
+   correct discovered monitor and verify an operator-selected source binding.
+3. In isolated fixtures, discover two different monitors with the same suffix.
+   Automatic import must reject; explicit candidate selection must be required.
+4. On a private fixture with old suffix history, try canonical and alternate
+   prefixes. Each must request reconciliation and preserve all prior rows/IDs.
+   Never use a plausible total as permission to rewrite production history.
+
 The old startup correction divided exact-second timestamps on non-primary
 devices by 60 without knowing the source unit or interval. It is retired in
 2.3.39. Its compatibility function performs no mutation; startup no longer calls

@@ -3062,6 +3062,15 @@ IMPORT_HTML = """
       remains separate and old history is not repaired by guess.
     </p>
     <form id="import-form" enctype="multipart/form-data">
+      <label for="import-device" style="display:block; margin-bottom:0.5rem; font-weight:600;">Monitor</label>
+      <select id="import-device" name="device_gid" style="display:block; margin-bottom:1rem; max-width:100%;">
+        <option value="">Match export to a discovered monitor</option>
+        {% for device in import_devices %}
+        <option value="{{ device.canonical_gid }}">{{ device.display_name or 'Monitor' }} ({{ device.canonical_gid }})</option>
+        {% endfor %}
+      </select>
+      <p style="color:var(--text-light); font-size:0.88rem;">For unknown or ambiguous exports, explicitly select
+        the correct monitor. Monitors appear after poller discovery; existing split history requires review.</p>
       <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CSV file(s)</label>
       <input type="file" id="csv-files" name="files" multiple accept=".csv"
              style="display:block; margin-bottom:1rem; font-size:0.9rem;">
@@ -3101,6 +3110,7 @@ IMPORT_HTML = """
 document.getElementById('import-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const files = document.getElementById('csv-files').files;
+  const device = document.getElementById('import-device').value;
   if (!files.length) return;
   const btn = document.getElementById('import-btn');
   const results = document.getElementById('import-results');
@@ -3111,6 +3121,7 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
   for (const file of files) {
     const fd = new FormData();
     fd.append('file', file);
+    if (device) fd.append('device_gid', device);
     let responseReceived = false;
     try {
       const r = await fetch('/api/import-csv', { method: 'POST', body: fd });
@@ -3134,6 +3145,7 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
       results.innerHTML +=
         `<div class="import-result ${cls}">
           <strong>${escapeHTML(file.name)}</strong>: imported ${d.imported}, skipped ${d.skipped}, errors ${d.errors}
+          ${d.device_gid ? ', monitor ' + escapeHTML(d.device_gid) : ''}
           ${d.warnings ? ', review warnings ' + d.warnings : ''}
           ${d.observations_recorded != null ? ', source observations retained ' + d.observations_recorded : ''}
           ${d.superseded ? ', superseded intervals ' + d.superseded : ''}
@@ -5631,7 +5643,7 @@ def api_save_panel_display():
 @app.route("/import")
 def import_page():
     com = _common()
-    return _render(IMPORT_HTML, active_page="settings", **com)
+    return _render(IMPORT_HTML, active_page="settings", import_devices=energy.get_registered_devices(), **com)
 
 
 @app.route("/api/import-csv", methods=["POST"])
@@ -5648,7 +5660,8 @@ def api_import_csv():
         f.save(tmp.name)
         tmp_path = tmp.name
     try:
-        result = energy.import_emporia_csv(tmp_path, original_filename=f.filename)
+        result = energy.import_emporia_csv(tmp_path, device_gid=request.form.get('device_gid') or None,
+                                          original_filename=f.filename, require_registered_device=True)
     except (ValueError, csv.Error) as exc:
         return jsonify({"imported": 0, "skipped": 0, "errors": 1, "message": str(exc)}), 400
     except Exception:

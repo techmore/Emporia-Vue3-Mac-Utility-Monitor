@@ -32,7 +32,7 @@ class MeasurementEvidenceTests(unittest.TestCase):
     def upload(self, interval='1H', stamp='10/08/2026 12:00:00', unit='kWhs', value=3):
         path = self.root / f'QA-Panel-{interval}.csv'
         path.write_text(f'Time Bucket (America/New_York),QA-Main ({unit})\n{stamp},{value}\n')
-        return energy.import_emporia_csv(str(path))
+        return energy.import_emporia_csv(str(path), device_gid='QA')
 
     def evidence(self, row):
         return tuple(row[field] for field in energy.MEASUREMENT_FIELDS)

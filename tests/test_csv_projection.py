@@ -118,7 +118,7 @@ class CSVProjectionTests(unittest.TestCase):
             "Time Bucket (America/New_York),QA-Pump (kWhs)\n"
             "10/08/2026 12:00:00,3\n10/08/2026 12:30:00,3\n"
         )
-        result = energy.import_emporia_csv(str(path))
+        result = energy.import_emporia_csv(str(path), device_gid='QA')
         self.assertEqual(result["imported"], 0)
         self.assertGreater(result["warnings"], 0)
         self.assertEqual(self.rows("readings"), [])
@@ -133,7 +133,7 @@ class CSVProjectionTests(unittest.TestCase):
             "\ufeffTime Bucket (America/New_York),QA-Pump (kWhs)\n 10/08/2026 12:00:00 , 3 \n"
         ).encode("utf-8")
         path.write_bytes(original)
-        energy.import_emporia_csv(str(path))
+        energy.import_emporia_csv(str(path), device_gid='QA')
         self.assertEqual(self.rows("csv_source_batches")[0]["content"], original)
         row = self.rows("csv_source_observations")[0]
         self.assertEqual(row["raw_timestamp"], " 10/08/2026 12:00:00 ")

@@ -30,7 +30,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/EnergyMonitorApp"
 for name in .gitignore README.md CHANGELOG.md COLLECTOR_CLIENT.md LICENSE AGENTS.md VERSION build.sh release.sh \
   setup_launch.sh requirements.txt requirements.lock energy.py web.py aqara.py \
-  csv_projection.py emporia_history.py runtime_store.py panel_model.py timestamp_model.py energy_clock.py utc_migration.py climate.py extensions.py climate_collect.py sync_history.py radon.py ecosense.py ecosense_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_trends.py aqara_matter_collect.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py; do
+  csv_projection.py device_identity.py emporia_history.py runtime_store.py panel_model.py timestamp_model.py energy_clock.py utc_migration.py climate.py extensions.py climate_collect.py sync_history.py radon.py ecosense.py ecosense_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_trends.py aqara_matter_collect.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py; do
   cp "$SCRIPT_DIR/$name" "$STAGE/"
 done
 for name in setup tests scripts docs templates static; do

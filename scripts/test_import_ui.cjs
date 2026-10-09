@@ -14,10 +14,12 @@ async function run(input) {
       if (name === 'submit') submit = callback;
     }},
     'csv-files': {files},
+    'import-device': {value: input.device || ''},
     'import-btn': button,
     'import-results': results,
   };
   let calls = 0;
+  const posts = [];
   const context = {
     document: {
       getElementById: id => elements[id],
@@ -29,12 +31,16 @@ async function run(input) {
         },
       }),
     },
-    FormData: class {append() {}},
+    FormData: class {
+      constructor() {this.entries = [];}
+      append(key, value) {this.entries.push([key, value]);}
+    },
     fetch: async (url, options) => {
       if (url !== '/api/import-csv' || options.method !== 'POST') {
         throw new Error('Unexpected request');
       }
       const response = input.responses[calls++];
+      posts.push(options.body.entries);
       if (response.networkError) throw new Error(response.networkError);
       return {
         ok: response.status >= 200 && response.status < 300,
@@ -49,7 +55,7 @@ async function run(input) {
   context.window = context;
   vm.runInNewContext(input.escapeScript + '\n' + input.script, context);
   await submit({preventDefault() {}});
-  return {html: results.innerHTML, calls, ...button};
+  return {html: results.innerHTML, calls, posts, ...button};
 }
 
 run(JSON.parse(fs.readFileSync(0, 'utf8')))

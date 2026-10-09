@@ -106,7 +106,7 @@ for (const [watts, fresh, expected] of [[null,false,'—'],[0,true,'0.0'],
         stamp = self.now.replace(second=0, microsecond=0).strftime('%m/%d/%Y %H:%M:%S')
         path = self.root / 'A-Panel-1H.csv'
         path.write_text(f'Time Bucket,Panel-Main (kWhs),Panel-Pump (kWhs)\n{stamp},3,3\n')
-        energy.import_emporia_csv(str(path))
+        energy.import_emporia_csv(str(path), device_gid='A')
         self.assertIsNone(self.menu()['current_watts'])
         history = energy.get_circuit_history('Pump', 'A', self.now)
         self.assertIsNone(history['live_watts'])
