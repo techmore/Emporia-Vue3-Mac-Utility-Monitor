@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import fcntl
+import hashlib
+import io
 import json
 import logging
 import math
@@ -18,6 +20,8 @@ import pyemvue
 import requests
 from pyemvue.enums import Scale, Unit
 
+from csv_projection import identity as _csv_identity
+from csv_projection import publish_csv as _publish_csv
 from energy_clock import EnergyClock
 from runtime_store import write_private_json
 from timestamp_model import ISO_TIMESTAMP, classify_timestamp, reporting_day_bounds
@@ -599,6 +603,42 @@ def ensure_table(path: str | Path | None = None):
             ON readings(device_gid, channel_name, timestamp);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
             ON readings(device_gid, timestamp, channel_name);
+        CREATE TABLE IF NOT EXISTS csv_source_batches (
+            id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, original_filename TEXT NOT NULL,
+            device_gid TEXT NOT NULL, interval TEXT NOT NULL, source_timezone TEXT,
+            headers_json TEXT NOT NULL, rate_cents REAL NOT NULL, content BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS csv_source_observations (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT NOT NULL UNIQUE, batch_id TEXT NOT NULL, row_number INTEGER NOT NULL,
+            channel_name TEXT NOT NULL, source_header TEXT NOT NULL, source_unit TEXT NOT NULL,
+            raw_timestamp TEXT NOT NULL, raw_value TEXT NOT NULL,
+            source_local_timestamp TEXT NOT NULL, source_utc_timestamp TEXT, start_utc TEXT, end_utc TEXT,
+            usage_kwh REAL NOT NULL, cost_cents REAL NOT NULL, measurement_seconds REAL,
+            measurement_source TEXT NOT NULL,
+            CHECK ((start_utc IS NULL) = (end_utc IS NULL)),
+            FOREIGN KEY (batch_id) REFERENCES csv_source_batches(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_csv_observation_batch_channel
+            ON csv_source_observations(batch_id,channel_name,start_utc,end_utc);
+        CREATE INDEX IF NOT EXISTS idx_csv_batch_device ON csv_source_batches(device_gid);
+        CREATE TABLE IF NOT EXISTS csv_reading_projection (
+            observation_id TEXT PRIMARY KEY, reading_id INTEGER NOT NULL UNIQUE,
+            FOREIGN KEY (observation_id) REFERENCES csv_source_observations(id),
+            FOREIGN KEY (reading_id) REFERENCES readings(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS csv_projection_reading_delete AFTER DELETE ON readings
+        BEGIN
+            DELETE FROM csv_reading_projection WHERE reading_id=OLD.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS csv_batches_immutable_update BEFORE UPDATE ON csv_source_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_batches_immutable_delete BEFORE DELETE ON csv_source_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_observations_immutable_update BEFORE UPDATE ON csv_source_observations
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_observations_immutable_delete BEFORE DELETE ON csv_source_observations
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
         CREATE TABLE IF NOT EXISTS migrations (
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
@@ -2873,8 +2913,8 @@ def import_emporia_csv(
     Declared zones are validated, and ambiguous/nonexistent wall times are reported
     rather than guessed. Timestamps follow the persisted storage policy; UTC needs
     an explicit CSV source zone. Ordinary UTC activation remains guarded.
-    Measurement duration and declared source-zone evidence are persisted per reading.
-    This does not prove non-overlap with other imported resolutions (#135).
+    Retain exact source bytes/cells, then project non-overlapping verified intervals.
+    Conflicts and unmanaged/unknown history need explicit reconciliation (#135).
     """
     import csv
 
@@ -2889,8 +2929,11 @@ def import_emporia_csv(
         raise ValueError("Electricity rate must be finite and nonnegative")
     skipped = errors = ambiguous = nonexistent = 0
     capability = dict.fromkeys(('has_main', 'has_mains_a', 'has_mains_b', 'has_mains_c', 'mains_c_no_ct'), False)
-    units, durations, rows_to_insert = set(), set(), []
-    with path.open(newline='', encoding='utf-8-sig') as handle:
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    batch_id = _csv_identity('csv_source_v1', gid, interval, digest)
+    units, durations, observations = set(), set(), []
+    with io.StringIO(content.decode('utf-8-sig'), newline='') as handle:
         reader = csv.DictReader(handle)
         headers = reader.fieldnames or []
         if len(headers) < 2 or any(not isinstance(header, str) for header in headers):
@@ -2914,9 +2957,9 @@ def import_emporia_csv(
                 raise ValueError("CSV channel names must be nonempty and unique after normalization")
             if name in ('Main', 'Mains_A', 'Mains_B', 'Mains_C'):
                 capability[{'Main': 'has_main', 'Mains_A': 'has_mains_a', 'Mains_B': 'has_mains_b', 'Mains_C': 'has_mains_c'}[name]] = True
-            columns.append((header, name, power))
+            columns.append((header, name, power, match.group(1)))
 
-        for row in reader:
+        for row_number, row in enumerate(reader, start=2):
             if None in row:
                 errors += 1
                 continue
@@ -2937,13 +2980,13 @@ def import_emporia_csv(
                         continue
                     utc_stamp = resolved['utc_candidates'][0]
                 duration = _csv_interval_seconds(interval, moment, zone)
-            except ValueError:
+                end_utc = (datetime.fromisoformat(utc_stamp) + timedelta(seconds=duration)).isoformat(timespec='microseconds') if utc_stamp and duration else None
+            except (ValueError, OverflowError):
                 errors += 1
                 continue
             if duration is not None:
                 durations.add(duration)
-            timestamps = (moment.isoformat(), utc_stamp)
-            for header, name, power in columns:
+            for header, name, power, source_unit in columns:
                 value = (row.get(header) or '').strip()
                 if not value or value.lower() == 'no ct':
                     if name == 'Mains_C' and value.lower() == 'no ct':
@@ -2959,9 +3002,22 @@ def import_emporia_csv(
                 except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
-                # Keep both interpretations until policy is read under the publication lock.
-                rows_to_insert.append((timestamps, gid, None, name, kwh, cents,
-                                       duration, 'csv_power' if power else 'csv_energy', zone, None))
+                observations.append({
+                    'id': _csv_identity(batch_id, row_number, header), 'batch_id': batch_id,
+                    'row_number': row_number, 'channel_name': name, 'source_header': header,
+                    'source_unit': source_unit, 'raw_timestamp': row.get(headers[0]) or '',
+                    'raw_value': row.get(header) or '',
+                    'source_local_timestamp': moment.isoformat(), 'source_utc_timestamp': utc_stamp,
+                    'start_utc': utc_stamp if end_utc else None, 'end_utc': end_utc,
+                    'usage_kwh': kwh, 'cost_cents': cents, 'measurement_seconds': duration,
+                    'measurement_source': 'csv_power' if power else 'csv_energy',
+                })
+
+    source = {
+        'id': batch_id, 'sha256': digest, 'original_filename': Path(original_filename or filepath).name,
+        'device_gid': gid, 'interval': interval, 'source_timezone': zone,
+        'headers_json': json.dumps(headers, ensure_ascii=True), 'rate_cents': rate, 'content': content,
+    }
 
     conn = _connect()
     try:
@@ -2970,17 +3026,10 @@ def import_emporia_csv(
             clock = _utc_clock(conn)
             if clock and zone is None:
                 raise ValueError('UTC CSV import requires a declared source timezone')
-            rows_to_insert = [
-                (row[0][1] if clock else row[0][0], *row[1:]) for row in rows_to_insert
-            ]
-            inserted = conn.executemany(
-                """INSERT OR IGNORE INTO readings
-                   (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents,
-                    measurement_seconds,measurement_source,source_timezone,provider_timestamp)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""", rows_to_insert,
-            ).rowcount if rows_to_insert else 0
-            skipped += len(rows_to_insert) - inserted
-            if rows_to_insert:
+            projection = _publish_csv(conn, source, observations, clock)
+            inserted = projection['imported']
+            skipped += len(observations) - inserted
+            if observations:
                 _refresh_import_snapshot_with_conn(conn, gid)
             _save_device_capabilities_with_conn(
                 conn, device_gid=gid,
@@ -2992,6 +3041,7 @@ def import_emporia_csv(
     duration = next(iter(durations)) if len(durations) == 1 else _CSV_FIXED_INTERVAL_SECONDS.get(interval)
     unit = next(iter(units)) if len(units) == 1 else 'mixed'
     return {
+        **projection,
         'imported': inserted, 'skipped': skipped, 'errors': errors,
         'unit': unit, 'interval': interval, 'interval_seconds': duration,
         'source_timezone': zone, 'ambiguous_timestamps': ambiguous,

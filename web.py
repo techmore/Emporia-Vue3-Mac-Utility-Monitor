@@ -3056,7 +3056,10 @@ IMPORT_HTML = """
   <div class="card" style="max-width:600px;">
     <p style="margin-bottom:1rem; color:var(--text-light); font-size:0.9rem;">
       Select one or more <code>.csv</code> files exported from the Emporia app
-      (any resolution: 1MIN, 15MIN, 1H, 1DAY). Duplicate rows are skipped automatically.
+      (any resolution: 1MIN, 15MIN, 1H, 1DAY). Source files are retained privately.
+      New CSV projections use non-overlapping verified intervals. Review any
+      conflict or unknown-coverage warnings; existing live/history reconciliation
+      remains separate and old history is not repaired by guess.
     </p>
     <form id="import-form" enctype="multipart/form-data">
       <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CSV file(s)</label>
@@ -3122,13 +3125,19 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
         throw new Error(typeof message === 'string' && message ? message : `Import failed (HTTP ${r.status}).`);
       }
       if (!d || d.error != null || !['imported', 'skipped', 'errors'].every(
-          key => Number.isSafeInteger(d[key]) && d[key] >= 0)) {
+          key => Number.isSafeInteger(d[key]) && d[key] >= 0) ||
+          ['warnings', 'superseded', 'updated', 'inserted', 'deleted', 'observations_recorded'].some(
+            key => d[key] != null && (!Number.isSafeInteger(d[key]) || d[key] < 0))) {
         throw new Error('Invalid import response.');
       }
-      const cls = d.errors ? 'err' : 'ok';
+      const cls = d.errors || d.warnings ? 'err' : 'ok';
       results.innerHTML +=
         `<div class="import-result ${cls}">
           <strong>${escapeHTML(file.name)}</strong>: imported ${d.imported}, skipped ${d.skipped}, errors ${d.errors}
+          ${d.warnings ? ', review warnings ' + d.warnings : ''}
+          ${d.observations_recorded != null ? ', source observations retained ' + d.observations_recorded : ''}
+          ${d.superseded ? ', superseded intervals ' + d.superseded : ''}
+          ${d.inserted != null ? ', projection: inserted ' + d.inserted + ', updated ' + (d.updated || 0) + ', removed ' + (d.deleted || 0) : ''}
           ${d.message ? ' — ' + escapeHTML(d.message) : ''}
         </div>`;
     } catch (ex) {

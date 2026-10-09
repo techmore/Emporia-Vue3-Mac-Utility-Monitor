@@ -95,6 +95,24 @@ class ImportUITests(unittest.TestCase):
         }}, 'HTTP 500')
         self.assert_failed({'status': 404, 'body': None}, 'HTTP 404')
 
+    def test_review_warnings_and_retained_sources_are_not_clean_success(self):
+        html = self.assert_failed({'status': 200, 'body': {
+            'imported': 0, 'skipped': 60, 'errors': 0, 'warnings': 1,
+            'observations_recorded': 60, 'message': 'Source evidence retained; review conflicts.',
+        }}, 'review warnings 1')
+        self.assertIn('source observations retained 60', html)
+        for field in ('warnings', 'superseded', 'updated', 'inserted', 'deleted', 'observations_recorded'):
+            self.assert_failed({'status': 200, 'body': {
+                'imported': 1, 'skipped': 0, 'errors': 0, field: '<img src=x>',
+            }}, 'Invalid import response')
+
+    def test_reactivated_archived_projection_is_visible_even_when_upload_rows_are_skipped(self):
+        html = self.run_ui([{'status': 200, 'body': {
+            'imported': 0, 'skipped': 1, 'errors': 0, 'observations_recorded': 0,
+            'inserted': 60, 'updated': 0, 'deleted': 0,
+        }}])
+        self.assertIn('projection: inserted 60, updated 0, removed 0', html)
+
     def test_invalid_success_response_cannot_be_green(self):
         for body in (None, [], {'error': 'unexpected'},
                      {'imported': -1, 'skipped': 0, 'errors': 0},

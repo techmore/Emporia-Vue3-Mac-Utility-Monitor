@@ -55,14 +55,14 @@ class UtcWriterTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def upload(self, *, zone='America/Chicago', interval='1H', rows=None):
+    def upload(self, *, zone='America/Chicago', interval='1H', rows=None, device_gid='A'):
         path = self.root/f'Panel-{interval}.csv'
         header = f'Time Bucket ({zone})' if zone else 'Time Bucket'
         rows = rows or [('10/08/2026 12:00:00', 3)]
         path.write_text(header+',Panel-Main (kWhs)\n'+
                         ''.join(f'{stamp},{value}\n' for stamp, value in rows))
         with patch.object(energy, 'RATE_CENTS', 22.58):
-            return energy.import_emporia_csv(str(path), device_gid='A')
+            return energy.import_emporia_csv(str(path), device_gid=device_gid)
 
     def poll(self, channels=None):
         vue = Mock()
@@ -179,7 +179,9 @@ class UtcWriterTests(unittest.TestCase):
             with patch.object(energy, '_connect', return_value=poll):
                 self.poll()
             with patch.object(energy, '_connect', return_value=csv):
-                self.upload()
+                # Clock acceptance is independent of unresolved pre-ledger/live bounds.
+                # The projection tests separately require quarantine for that history.
+                self.assertEqual(self.upload(device_gid='CSV')['imported'], 1)
             with patch.object(energy, '_connect', return_value=heartbeat), \
                     patch.object(energy, 'POLLER_STATUS_FILE', str(self.root/'status.json')):
                 energy.write_poller_status(True)
@@ -287,7 +289,7 @@ class UtcWriterTests(unittest.TestCase):
     def test_legacy_poll_and_csv_keep_naive_local_storage(self):
         with patch.object(energy, '_utc_clock', return_value=None):
             self.poll()
-            self.upload()
+            self.assertEqual(self.upload(device_gid='CSV')['imported'], 1)
         self.assertTrue(all(datetime.fromisoformat(row['timestamp']).tzinfo is None for row in self.rows('readings')))
         self.assertIn('2026-10-08T12:00:00', {row['timestamp'] for row in self.rows('readings')})
 

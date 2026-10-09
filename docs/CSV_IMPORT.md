@@ -48,6 +48,70 @@ proposing replacements. Normal re-import intentionally skips conflicting rows.
 Never infer a historical unit from timestamp precision, device ID or apparent
 plausibility of the resulting number.
 
+## Source Ledger And Projection (Development 2.3.47)
+
+The collector retains exact uploaded bytes/hash/headers plus each validated cell's
+original value, source timestamp/unit, canonical source instant, verified interval
+bounds and import-time kWh/cents. Batch identity includes device, declared interval
+and file hash, not the current rate or temporary upload path. Re-uploading identical
+evidence does not reprice it. Source tables reject updates/deletes. UTC conversion
+must preserve these already-canonical bounds and original source-local evidence;
+only the projected reading timestamps follow the storage policy.
+
+`csv_projection.py` borrows the data layer's locked connection. Schema DDL remains
+in `ensure_table`. Its weighted interval selection maximizes covered elapsed time,
+then finer resolution. Full minute coverage can replace an equivalent hour; a
+partial subset cannot. Adjacent half-open intervals do not overlap. Never create
+an estimated leftover from a partially overlapping coarse bucket. Crossing
+intervals without a complete non-overlapping replacement require review.
+Coverage here means reported bucket extent, not independently verified continuous
+sensor capture. First/last export buckets may be partial measurements; the files
+alone cannot prove their capture completeness or the correctness of a full bill.
+
+Same-interval disagreements retain the first validated source value and flag
+review. An immutable sequence preserves that precedence through `VACUUM`; it
+does not depend on incidental rowids. Complete coarse/fine disagreements leave
+the prior projection unchanged;
+the arithmetic tolerance covers floating-point noise, not assumed export rounding.
+This intentionally does not claim conflicting imports are order-independent or
+that an accepted prior value has been independently confirmed correct.
+
+Only ledger-owned reading IDs can be replaced. Unmanaged CSV history with verified
+bounds blocks overlapping new projections; unrelated intervals can publish.
+Unmanaged live/compacted/legacy history without verified bounds blocks competing
+CSV projections for that channel. It is not automatically adopted, deleted or
+assigned guessed boundaries. A first legacy source with unknown zone/duration can
+retain its original readings but carries an unresolved-coverage warning; competing
+sources remain blocked. An explicit historical reconciliation tool/receipt is still
+required, as is coordination of later live writes. This is CSV-only projection
+correctness, not proof that all existing readings are non-overlapping.
+
+Source evidence, projection membership, reading changes, latest snapshots and
+capabilities commit or roll back together. Surviving reading keys reuse IDs, so
+clients receive ordinary upsert/delete events without reseeding identity.
+Replacement events delete obsolete keys, update reused keys, then insert new keys,
+so even single-event cache pages do not double-count superseded CSV coverage.
+Partially synchronized caches are not complete-history/billing acceptance.
+Pruning readings removes membership, not source evidence. A new disjoint import does not
+resurrect older sources. An explicit re-import of an archived period may restore
+its complete preferred evidence; projection counts make that change visible.
+
+`imported` counts newly activated winning intervals represented by this upload;
+`skipped` includes duplicates/suppressed input cells and unconnected CTs. The
+`observations_recorded` count describes new retained valid source cells, not totals.
+`inserted`/`updated`/`deleted` describe actual projection changes, including restored
+earlier evidence. `warnings` and grouped `quality_issues` identify review gates.
+An HTTP 200 with warnings is not a clean import. No automatic repricing occurs;
+newly selected intervals retain their own original stored price basis.
+
+The ledger includes the whole original file, even omitted/rejected cells, and is
+kept privately in the database. Reading retention does **not** bound ledger disk
+usage. Keep verified online backups and monitor storage before bulk imports; any
+future archival/garbage collection needs an explicit recoverable evidence policy.
+Raw source tables are collector-only; clients synchronize the selected readings.
+No production history, service or ordinary writable-UTC guard is changed by this
+draft. #127/#135 remain open.
+
 Development 2.3.41 persists `measurement_seconds`, `measurement_source`,
 `source_timezone` and `provider_timestamp` alongside each reading, its latest
 snapshot, change journal and downloaded cache. CSV duration comes from the declared
@@ -110,6 +174,7 @@ production activation or historical overlap repair. #127/#135 remain open.
 ```bash
 venv/bin/python3 -m unittest discover -s tests -p test_import_integrity.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_import_ui.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_csv_projection.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_measurement_evidence.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_power_consumers.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_compaction.py -v
@@ -138,3 +203,9 @@ Manual verification on a disposable local instance:
    CSV. Verify an error-colored size-limit message, never green undefined counts.
 4. In browser network tools, test a lost request. Verify an unknown-outcome warning
    and inspect recorded history before any retry. Do not simulate this on production.
+5. On a fresh private database, import a 3kWh hour and 60 minute rows of 0.05kWh
+   in both orders. Verify 3kWh total and 60 selected rows, while all 61 source
+   observations remain. Repeat with only 20 minutes: the complete hour must remain.
+6. Upload a conflicting whole-hour value or disagreeing complete finer coverage.
+   Verify review warnings, retained raw evidence and unchanged prior projection.
+   Do not approve a production replacement solely because a value seems plausible.

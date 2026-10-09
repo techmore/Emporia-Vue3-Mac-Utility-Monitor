@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.3.47 - Unreleased
+
+- Retain immutable original CSV bytes, hashes, headers, cells, source-local/UTC
+  instants, interval bounds and import-time pricing in a collector-side ledger.
+  Project only non-overlapping verified CSV intervals into readings; maximize
+  covered elapsed time before preferring finer resolution. Keep coarse energy
+  when finer coverage is incomplete; never invent a prorated remainder.
+- Preserve accepted values on conflicting sources. Quarantine crossing coverage,
+  unmanaged overlaps and unknown bounds with explicit review warnings. Publish
+  source evidence, owned projection replacements, journal and snapshots atomically;
+  preserve surviving reading IDs and sync identity. Order journal replacements so
+  even single-event cache pages never mix superseded and replacement CSV coverage.
+  An immutable source sequence preserves precedence through database maintenance.
+  Retention cleans membership without resurrecting unrelated archives; explicit
+  re-import may restore evidence.
+- Display review and projection counts in Import; distinguish retained source
+  observations from rows contributing to totals. Verify exhaustive interval
+  selection, actual import/history/cache paths, failure rollback, exact evidence
+  and private persisted-policy UTC conversion. Source archives remain private and
+  are not automatically pruned or sent to clients.
+- Historical reconciliation, subsequently collected live overlap and operational
+  UTC cutover remain unresolved. #127/#135 stay open; this draft is not deployed.
+
 ## 2.3.46 - Unreleased
 
 - Reject HTTP failures and malformed success counts in the CSV upload UI before

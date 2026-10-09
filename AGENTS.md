@@ -35,6 +35,15 @@ private JSON writes. `VERSION` is the application version source; validate bundl
 metadata with `venv/bin/python3 scripts/check_release.py`. Audit and maintenance
 priorities live in `docs/AUDIT.md` and `docs/ROADMAP.md`.
 
+`csv_projection.py` owns append-only CSV evidence and verified non-overlapping
+CSV projections using a borrowed locked connection. DDL stays in `ensure_table`.
+Never rewrite original source bytes/cells or canonical source bounds during UTC
+conversion. Replace only explicitly owned readings; unknown live/legacy bounds
+and source disagreements require review, not guessed deletion or prorating.
+Keep delete/update/insert journal order safe for single-event cache pages. See
+`docs/CSV_IMPORT.md` and `tests/test_csv_projection.py`; this is not automatic
+historical repair or proof of continuous capture.
+
 ---
 
 ## Build & Run Commands
