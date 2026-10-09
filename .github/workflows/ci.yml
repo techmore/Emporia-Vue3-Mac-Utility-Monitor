@@ -93,3 +93,14 @@ jobs:
 
       - name: Compile and package release
         run: ./release.sh
+
+      - name: Test extracted release source
+        run: |
+          umask 077
+          PYTHON="$PWD/venv/bin/python3"
+          VERSION="$(cat VERSION)"
+          QA="$(mktemp -d "$RUNNER_TEMP/energy-package-tests.XXXXXX")"
+          unzip -q "dist/Emporia-Energy-Monitor-$VERSION-macos.zip" -d "$QA"
+          cd "$QA/Emporia-Energy-Monitor-$VERSION"
+          DB_PATH="$QA/energy.db" POLLER_STATUS_FILE="$QA/status.json" \
+            "$PYTHON" -m unittest discover -s tests -v

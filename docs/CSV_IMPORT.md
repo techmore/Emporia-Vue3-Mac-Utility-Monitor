@@ -25,6 +25,14 @@ the rejected upload value. Older uploads cannot replace newer accepted snapshots
 Known validation errors return HTTP 400; unexpected publication failures return
 HTTP 500 with a generic message and details in the private server log.
 
+Development 2.3.46 checks HTTP status and nonnegative integer counts before
+showing success. Validation, upload-size and same-origin failures display their
+safe error message; non-JSON failures retain the HTTP status. Partial imports
+remain error-colored with their actual accepted/skipped/error counts. A transport
+failure cannot establish whether the server committed: check recorded history
+before retrying, especially while overlap reconciliation remains unfinished.
+This UI correction does not deduplicate overlapping resolutions or repair history.
+
 ## Historical repair
 
 The old startup correction divided exact-second timestamps on non-primary
@@ -101,6 +109,7 @@ production activation or historical overlap repair. #127/#135 remain open.
 
 ```bash
 venv/bin/python3 -m unittest discover -s tests -p test_import_integrity.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_import_ui.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_measurement_evidence.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_power_consumers.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_compaction.py -v
@@ -112,3 +121,20 @@ Tests use private databases and actual importer/startup/Flask code. They cover
 duplicate consistency, publication rollback and connection cleanup, source-zone
 folds/gaps, DST daily durations, unsupported/nonfinite input, zero/export values
 and unchanged raw energy/cost after startup. No live database or device is used.
+
+The UI tests require Node and execute the submit handler extracted from the actual
+Flask-rendered Import page. They check real 400/403/413/500 responses, partial
+imports, malformed counts/JSON, escaped filenames/messages, batch continuation
+and restored controls. The DOM/fetch harness is not a visual browser or production
+proxy acceptance test.
+
+Manual verification on a disposable local instance:
+
+1. Open Settings -> Import and select a valid Emporia CSV. Verify the returned
+   counts and that the Import button becomes usable again.
+2. Upload a CSV with one invalid value and one valid row. Verify an error-colored
+   result with one accepted row, not an all-or-nothing success claim.
+3. Set a small `MAX_UPLOAD_BYTES` on that disposable instance and upload a larger
+   CSV. Verify an error-colored size-limit message, never green undefined counts.
+4. In browser network tools, test a lost request. Verify an unknown-outcome warning
+   and inspect recorded history before any retry. Do not simulate this on production.

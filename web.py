@@ -3108,9 +3108,23 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
   for (const file of files) {
     const fd = new FormData();
     fd.append('file', file);
+    let responseReceived = false;
     try {
       const r = await fetch('/api/import-csv', { method: 'POST', body: fd });
-      const d = await r.json();
+      responseReceived = true;
+      let d;
+      try { d = await r.json(); }
+      catch (_) {
+        throw new Error(r.ok ? 'Invalid import response.' : `Import failed (HTTP ${r.status}).`);
+      }
+      if (!r.ok) {
+        const message = typeof d?.message === 'string' ? d.message : d?.error;
+        throw new Error(typeof message === 'string' && message ? message : `Import failed (HTTP ${r.status}).`);
+      }
+      if (!d || d.error != null || !['imported', 'skipped', 'errors'].every(
+          key => Number.isSafeInteger(d[key]) && d[key] >= 0)) {
+        throw new Error('Invalid import response.');
+      }
       const cls = d.errors ? 'err' : 'ok';
       results.innerHTML +=
         `<div class="import-result ${cls}">
@@ -3118,8 +3132,10 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
           ${d.message ? ' — ' + escapeHTML(d.message) : ''}
         </div>`;
     } catch (ex) {
+      const message = responseReceived ? ex.message :
+        'Request failed; import outcome unknown. Check recorded data before retrying.';
       results.innerHTML +=
-        `<div class="import-result err"><strong>${escapeHTML(file.name)}</strong>: network error — ${escapeHTML(ex)}</div>`;
+        `<div class="import-result err"><strong>${escapeHTML(file.name)}</strong>: ${escapeHTML(message)}</div>`;
     }
   }
   btn.disabled = false;

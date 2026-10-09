@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3.46 - Unreleased
+
+- Reject HTTP failures and malformed success counts in the CSV upload UI before
+  displaying a green result. Preserve safe validation/size/origin error messages,
+  HTTP status for non-JSON proxy failures, and partial-import counts. A lost
+  request reports an unknown import outcome rather than claiming rollback.
+- Execute the actual rendered submit handler against real Flask error and partial
+  import responses. Verify escaping, per-file continuation and restored controls.
+- Preserve `.gitignore` in portable source packages and require it during release
+  validation, so packaged runtime-exclusion tests and future Git checkouts retain
+  the same private-file safeguards. Run the full suite from the extracted release
+  ZIP in CI. No production deployment, historical overlap repair or UTC activation;
+  #127 and #135 remain open.
+
 ## 2.3.45 - Unreleased
 
 - Make poll receipts, latest snapshots, journal replicas, capability timestamps,
