@@ -273,7 +273,7 @@ def _history_table(conn) -> str:
 
 
 def observation_chart(rows: list[dict], now: datetime | None = None, days: int = 7) -> dict:
-    """Plot every recorded measurement at its source time without averaging."""
+    """Plot recorded samples, breaking connecting lines at gaps over three hours."""
     if isinstance(days, bool) or days not in (1, 7, 30, 365):
         raise ValueError('Invalid history window')
     now = now or datetime.now(timezone.utc)
@@ -302,7 +302,18 @@ def observation_chart(rows: list[dict], now: datetime | None = None, days: int =
         'x': 50 + 900 * (stamp - start).total_seconds() / span,
         'y': 180 - 150 * value / scale,
     } for stamp, value in samples]
-    return {'points': points, 'scale': scale, 'start': start.isoformat(), 'end': end.isoformat()}
+    segments = []
+    segment = []
+    for index, point in enumerate(points):
+        if index and samples[index][0] - samples[index - 1][0] > timedelta(hours=3):
+            if len(segment) > 1:
+                segments.append(segment)
+            segment = []
+        segment.append(point)
+    if len(segment) > 1:
+        segments.append(segment)
+    return {'points': points, 'trend_segments': segments, 'scale': scale,
+            'start': start.isoformat(), 'end': end.isoformat()}
 
 
 def hourly_chart(rows: list[dict], now: datetime | None = None, days: int = 7) -> dict:

@@ -63,6 +63,7 @@
   {% for sensor in sensors %}
   <form method="get" action="/radon" class="house-toolbar">
     <input type="hidden" name="days" value="{{ days }}">
+    <input type="hidden" name="trend" value="{{ '1' if show_trend else '0' }}">
     <input type="hidden" name="source" value="{{ sensor.source }}">
     <input type="hidden" name="sensor_id" value="{{ sensor.sensor_id }}">
     <button type="submit">{{ sensor.source }} / {{ sensor.sensor_id }}</button>
@@ -71,6 +72,7 @@
   {% endfor %}</section>
   {% endif %}
   <form method="get" action="/radon" class="house-toolbar" aria-label="Radon history window">
+    <input type="hidden" name="trend" value="{{ '1' if show_trend else '0' }}">
     <input type="hidden" name="source" value="{{ selected.source if selected else '' }}">
     <input type="hidden" name="sensor_id" value="{{ selected.sensor_id if selected else '' }}">
     {% for window, label in [(1, 'Day'), (7, 'Week'), (30, 'Month'), (365, 'Year')] %}
@@ -80,13 +82,22 @@
   {% if selected %}
   <section class="card"><h2>Last {{ days }} days · {{ selected.sensor_id if selected else '' }}</h2>
   {% if rows %}
+  <form method="get" action="/radon" class="house-toolbar" aria-label="Recorded radon trend">
+    <input type="hidden" name="days" value="{{ days }}">
+    <input type="hidden" name="source" value="{{ selected.source }}">
+    <input type="hidden" name="sensor_id" value="{{ selected.sensor_id }}">
+    <button id="radon-trend-toggle" name="trend" value="{{ '0' if show_trend else '1' }}" type="submit" aria-pressed="{{ 'true' if show_trend else 'false' }}">Recorded trend: {{ 'On' if show_trend else 'Off' }}</button>
+  </form>
   <p>Latest recorded: <strong>{{ '%.2f'|format(rows[-1].radon_bq_m3 / 37) }} pCi/L</strong> at {{ rows[-1].timestamp }}. This is not a live-status indicator.</p>
   <svg viewBox="0 0 1000 220" role="img" aria-labelledby="radon-chart-title radon-chart-desc" style="width:100%;display:block">
     <title id="radon-chart-title">Every recorded radon reading, pCi/L</title>
-    <desc id="radon-chart-desc">Each dot is one measurement at its source timestamp. No hourly or daily averaging is applied. Missing periods have no readings.</desc>
+    <desc id="radon-chart-desc">Each dot is one measurement at its source timestamp. No hourly or daily averaging is applied. {% if show_trend %}The line connects recorded samples and breaks at gaps longer than three hours; it is not a forecast or a continuous measurement.{% else %}Missing periods have no readings.{% endif %}</desc>
     <path d="M50 30V180H950" fill="none" stroke="var(--border)"/>
     <text x="50" y="20" fill="var(--text-light)">{{ '%.2f'|format(chart.scale / 37) }} pCi/L</text>
     <text x="25" y="185" fill="var(--text-light)">0</text>
+    {% if show_trend %}{% for segment in chart.trend_segments %}
+    <polyline data-radon-trend points="{% for point in segment %}{{ point.x }},{{ point.y }} {% endfor %}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-opacity="0.65" vector-effect="non-scaling-stroke"/>
+    {% endfor %}{% endif %}
     {% for point in chart.points %}
     <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3" fill="var(--accent)"><title>{{ point.timestamp }}: {{ '%.2f'|format(point.value / 37) }} pCi/L</title></circle>
     {% endfor %}
@@ -94,6 +105,7 @@
     <text x="950" y="210" text-anchor="end" fill="var(--text-light)">{{ chart.end[:16]|replace('T', ' ') }} (UTC)</text>
   </svg>
   <p class="house-caption">{{ chart.points|length }} recorded readings plotted · one dot per measurement, with no averaging. Hover a dot for its time and value. The time axis fits available history within your selected window; missing periods stay empty.</p>
+  {% if show_trend %}<p class="house-caption">Recorded trend connects measurements only; gaps longer than three hours break the line. A single sample remains a dot. No averaging, extrapolation or safety classification is applied.</p>{% endif %}
   <p>Showing the most recent {{ [rows|length, 100]|min }} samples. Readings display in pCi/L; original source values are preserved. 1 pCi/L = 37 Bq/m³. The units describe the same measurement with the same accuracy.</p>
   <div style="overflow-x:auto"><table><thead><tr><th scope="col">Measured at (UTC)</th><th scope="col">Radon (pCi/L)</th><th scope="col">Original source reading</th><th scope="col">Received at (UTC)</th></tr></thead><tbody>
   {% for row in rows[-100:]|reverse %}<tr><td>{{ row.timestamp }}</td><td>{{ '%.2f'|format(row.radon_bq_m3 / 37) }}</td><td>{{ row.measured_value }} {{ row.measured_unit }}</td><td>{{ row.received_at }}</td></tr>{% endfor %}

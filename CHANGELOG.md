@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.36 - 2026-10-08
+
+- Add an optional recorded trend line to EcoQube history, retaining every raw
+  measurement dot and source timestamp. Break the line at gaps longer than three
+  hours; isolated samples remain dots. Preserve sensor/window/toggle selection
+  without writing readings or averaging, forecasting or classifying safety.
+
 ## 2.3.35 - 2026-10-08
 
 - Give Aqara a dedicated desktop tab, Fahrenheit-first display and four-hour

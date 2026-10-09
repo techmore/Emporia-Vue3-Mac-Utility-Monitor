@@ -3,9 +3,10 @@
 The application supports a native macOS app, a native Linux collector, or a
 Linux collector inside Incus/LXD. Use one authoritative collector database.
 The Mac can be a client of either Linux option, with local cached history.
-SER8's production collector now runs in Incus on 2.3.35; its original native
+SER8's production collector runs in Incus; its original native
 installation is retained, stopped and disabled. See the verified receipt in
 INCUS_DEPLOYMENT.md and the repeatable checklist in COLLECTOR_MIGRATION.md.
+Use `/api/version` and the private deployment manifest for the active release.
 
 ## Native macOS
 

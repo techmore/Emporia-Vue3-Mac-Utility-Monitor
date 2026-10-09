@@ -200,3 +200,68 @@ class RadonTests(unittest.TestCase):
             self.assertEqual(client.get(f'/radon?days={window}').status_code, 400)
         missing = client.get('/radon?source=ecosense&sensor_id=missing&days=365')
         self.assertNotIn(b'Latest recorded: 2.5', missing.data)
+
+    def test_recorded_trend_keeps_zero_and_breaks_long_gaps(self):
+        start = self.now - timedelta(hours=8)
+        rows = [
+            {'timestamp': (start + timedelta(hours=hour)).isoformat(), 'radon_bq_m3': value}
+            for hour, value in ((0, 37), (1, 0), (5, 74), (6, 111))
+        ]
+        chart = radon.observation_chart(list(reversed(rows)), self.now, days=1)
+        self.assertEqual(len(chart['points']), 4)
+        self.assertEqual([len(segment) for segment in chart['trend_segments']], [2, 2])
+        self.assertEqual(chart['trend_segments'][0][1]['value'], 0)
+        self.assertEqual(chart['trend_segments'][0][1]['y'], 180)
+        self.assertEqual(chart['trend_segments'][1][0], chart['points'][2])
+
+    def test_recorded_trend_gap_boundary_is_explicit(self):
+        start = self.now - timedelta(hours=10)
+        rows = [
+            {'timestamp': stamp.isoformat(), 'radon_bq_m3': 37}
+            for stamp in (start, start + timedelta(hours=3),
+                          start + timedelta(hours=6, seconds=1))
+        ]
+        chart = radon.observation_chart(rows, self.now)
+        self.assertEqual(len(chart['points']), 3)
+        self.assertEqual([len(segment) for segment in chart['trend_segments']], [2])
+
+    def test_recorded_trend_empty_singleton_and_filtered_samples_have_no_line(self):
+        point = {'timestamp': self.now.isoformat(), 'radon_bq_m3': 0}
+        for rows in ([], [point]):
+            chart = radon.observation_chart(rows, self.now)
+            self.assertEqual(chart['trend_segments'], [])
+            self.assertEqual(len(chart['points']), len(rows))
+        rows = [point, {**point, 'timestamp': (self.now + timedelta(seconds=1)).isoformat()},
+                {**point, 'timestamp': (self.now - timedelta(days=8)).isoformat()}]
+        chart = radon.observation_chart(rows, self.now)
+        self.assertEqual(len(chart['points']), 1)
+        self.assertEqual(chart['trend_segments'], [])
+
+    def test_trend_toggle_is_read_only_sensor_scoped_and_preserves_raw_dots(self):
+        start = self.now - timedelta(hours=8)
+        observations = [
+            {**self.row, 'timestamp': (start + timedelta(hours=hour)).isoformat(), 'value': value}
+            for hour, value in ((0, 1), (1, 0), (5, 2), (6, 3))
+        ]
+        radon.ingest_observations([*observations, {**self.row, 'sensor_id': 'two', 'value': 999}],
+                                 self.now)
+        before = radon.get_history('ecosense', 'one', now=self.now)
+        client = web.app.test_client()
+        for days in (1, 7, 30, 365):
+            with self.subTest(days=days):
+                url = f'/radon?source=ecosense&sensor_id=one&days={days}'
+                shown = client.get(url).get_data(as_text=True)
+                hidden = client.get(url + '&trend=0').get_data(as_text=True)
+                self.assertEqual(shown.count('data-radon-trend'), 2)
+                self.assertNotIn('data-radon-trend', hidden)
+                self.assertEqual(shown.count('<circle cx='), 4)
+                self.assertEqual(hidden.count('<circle cx='), 4)
+                self.assertIn('Recorded trend: On', shown)
+                self.assertIn('Recorded trend: Off', hidden)
+                self.assertIn('name="trend" value="0"', hidden)
+                self.assertIn(f'name="days" value="{days}"', hidden)
+                self.assertIn('name="sensor_id" value="one"', hidden)
+                self.assertNotIn('999.0', shown)
+        self.assertEqual(radon.get_history('ecosense', 'one', now=self.now), before)
+        for value in ('2', 'yes', ''):
+            self.assertEqual(client.get('/radon?trend=' + value).status_code, 400)

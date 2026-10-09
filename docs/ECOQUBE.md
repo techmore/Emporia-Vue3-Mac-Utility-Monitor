@@ -12,6 +12,32 @@ available history inside the selected window, and the page states the plotted
 sample count. Regression coverage checks 20 measurements produce 20 dots in all
 four history windows; 28 targeted tests passed before deployment.
 
+Release 2.3.36 adds **Recorded trend: On/Off**, enabled by default. It connects
+adjacent recorded samples within three hours; longer gaps break the line and a
+single sample stays a dot. This is a visual connection of measurements, not a
+regression, moving average, forecast, safety classification or evidence of
+continuous coverage. Every original measurement remains plotted and stored
+unchanged. Sensor and Day/Week/Month/Year navigation preserve the toggle.
+No cloud calls are made by the chart or toggle.
+
+Manual verification: open Radon with recorded history, switch **Recorded trend**
+off and on, then change the sensor and Day/Week/Month/Year window. Dot count,
+values and source timestamps must stay unchanged, the choice must persist, and
+samples separated by more than three hours must not share a connecting segment.
+With one sample there is a dot but no line; with no samples there is no chart.
+The database and collector credentials are not changed by these GET controls.
+
+## Current production collector
+
+SER8 collection runs in the `energy-monitor` Incus instance, independent of the
+Mac. Private EcoSense credentials/status are beside the authoritative database
+under `/var/lib/energy-monitor/collector`. Inspect its actual service with
+`incus exec energy-monitor -- journalctl -u ecosense-collector` on SER8.
+Native Linux uses its selected system or user manager instead. Do not restart
+the retained native collector alongside the guest.
+See INCUS_DEPLOYMENT.md for the verified migration and `/api/version` for the
+active release. The original native setup receipt below is historical.
+
 Collection saves new timestamped observations continuously. The current cloud
 adapter only retrieves latest device values; older history has not been imported.
 EcoSense's official EcoQube product page confirms app history and data export:
