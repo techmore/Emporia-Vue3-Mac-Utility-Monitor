@@ -364,6 +364,7 @@ class HistoryCollectionTests(unittest.TestCase):
         conn = energy._connect()
         conn.close()
         database = Path(energy.DB_PATH)
+        database.chmod(0o600)
         before = database.read_bytes()
         command = [sys.executable, str(script), '--database', str(database)]
         result = subprocess.run([*command, 'status'], capture_output=True, text=True, timeout=30)
@@ -372,6 +373,18 @@ class HistoryCollectionTests(unittest.TestCase):
         self.assertEqual(database.read_bytes(), before)
         run = subprocess.run([*command, 'run'], capture_output=True, text=True, timeout=30)
         self.assertEqual(run.returncode, 1)
+        self.assertFalse((self.root / 'keys.json').exists())
+
+    def test_cli_rejects_public_database_without_changing_permissions_or_bytes(self):
+        script = Path(__file__).resolve().parents[1] / 'scripts/collect_completed_history.py'
+        database = Path(energy.DB_PATH)
+        database.chmod(0o644)
+        before = database.read_bytes()
+        result = subprocess.run([sys.executable, str(script), '--database', str(database), 'status'],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(database.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(database.read_bytes(), before)
         self.assertFalse((self.root / 'keys.json').exists())
 
     def test_cli_rejects_missing_confirmation_and_unsafe_database(self):
