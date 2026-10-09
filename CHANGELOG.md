@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.3.43 - Unreleased
+
+- Restrict compaction to compatible evidenced Emporia minute-only groups. Preserve
+  unknown/imported intervals, isolated samples, mixed channel/source identities and
+  repeated provider instants (including equivalent offsets). Keep aggregate duration
+  unknown, preserve signed energy/stored costs and an agreed source zone. Do not erase
+  colliding CSV buckets or imply complete hourly capture.
+- Protect compaction deletes, replacement inserts and journal events with a savepoint
+  while retaining caller transaction ownership. Qualify scratch-table operations with
+  `temp` so maintenance cannot drop a permanent same-named table. Use canonical hour
+  keys and elapsed retention bounds in private UTC-clock tests; ordinary UTC activation
+  remains blocked. Add rollback, collision, cache and fold-boundary regressions.
+- Development only: does not repair previously corrupted/overlapping history or
+  complete UTC writer/client coordination. #135/#127 remain open; not deployed.
+
 ## 2.3.42 - Unreleased
 
 - Derive live power only from fresh evidenced Emporia minute observations, checking

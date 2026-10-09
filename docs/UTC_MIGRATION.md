@@ -287,3 +287,12 @@ unavailable. Aligned monitored peak averages reject mixed interval/source cohort
 These consumer changes do not repair overlapping historical energy, prove complete
 panel coverage, negotiate old clients or enable UTC collection. #135/#127 remain
 open and production activation is still blocked by the coordinated cutover gates.
+
+Development 2.3.43 makes compaction reject unknown/mixed/imported observations and
+repeated provider instants rather than erasing their evidence. Replacement and
+journal publication are savepoint-protected, without committing caller work.
+Private injected-clock tests exercise canonical hour keys, distinct fall folds
+and equivalent-offset elapsed retention bounds. These are actual compactor tests
+on private fixtures with an injected clock, not a writable UTC-policy collector:
+the ordinary connection guard remains intact. Raw sum preservation and cache
+round-trips do not prove that the underlying samples have non-overlapping coverage.

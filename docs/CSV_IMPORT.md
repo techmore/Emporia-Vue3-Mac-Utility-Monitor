@@ -66,6 +66,21 @@ reconciliation and production verification. The additive
 fields still use sync protocol 2; old clients can ignore them and are not yet
 safe for the future UTC/power cutover. No production data is changed by this draft.
 
+Development 2.3.43 compacts only groups containing compatible evidenced Emporia
+minute observations. Any imported/unknown interval, differing channel identity or
+source zone, repeated provider instant, invalid value or overflow preserves the
+whole group unchanged. Equivalent offset strings identify the same provider
+instant. Isolated samples retain their original evidence. Valid aggregates retain
+signed kWh/stored cents and an agreed source zone, but duration/provider time stay
+unknown: even distinct minute observations cannot prove a continuous full hour.
+This avoids destructive coalescing; it does not deduplicate existing overlapping
+energy, repair old compaction or prove full coverage.
+
+Deletes, replacement inserts and their journal events use a savepoint, leaving
+the caller responsible for commit/rollback. A failed replacement cannot publish
+deleted history; unrelated pending edits survive. Scratch tables are explicitly
+temporary, never permanent application tables.
+
 Schema upgrades live only in `ensure_table`. An older archived UTC rehearsal
 requires schema upgrade on a separate private copy and a new verified receipt;
 adding columns changes its schema fingerprints. Never modify the sole archive.
@@ -76,6 +91,7 @@ adding columns changes its schema fingerprints. Never modify the sole archive.
 venv/bin/python3 -m unittest discover -s tests -p test_import_integrity.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_measurement_evidence.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_power_consumers.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_compaction.py -v
 venv/bin/python3 -m unittest discover -s tests -v
 ```
 

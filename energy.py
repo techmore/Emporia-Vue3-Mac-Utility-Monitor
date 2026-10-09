@@ -1588,43 +1588,106 @@ def poll_and_store(vue, device_gids):
 _last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
 
 
-def compact_minute_readings(conn, days: int) -> int:
-    """Fold minute rows older than `days` into one row per channel per hour, in place.
+def compact_minute_readings(conn, days: int, *, now: datetime | None = None) -> int:
+    """Compact only compatible evidenced minute samples, atomically within the caller.
 
-    Hourly rows reuse the readings table (timestamp = start of hour, usage and cost summed),
-    like imported 1H CSV buckets, so existing sum-based queries are unchanged. Only whole
-    hours before the cutoff are folded. Returns the number of rows removed. Caller commits.
+    Raw energy/cost sums are retained, but neither sample count nor an hour label
+    proves continuous coverage. Imports, unknown evidence and repeated provider
+    instants protect the entire group from compaction. Single samples retain their
+    original evidence. Ordinary UTC activation remains guarded by _connect().
     """
     if days <= 0:
         return 0
-    cutoff = (datetime.now() - timedelta(days=days)).replace(
-        minute=0, second=0, microsecond=0).isoformat()
-    conn.execute("DROP TABLE IF EXISTS _compact")
-    conn.execute(
-        """CREATE TEMP TABLE _compact AS
-           SELECT device_gid, MIN(channel_num) channel_num, channel_name,
-                  substr(timestamp, 1, 13) || ':00:00' ts,
-                  SUM(usage_kwh) usage_kwh, SUM(cost_cents) cost_cents, COUNT(*) n
-           FROM readings
-           WHERE timestamp < ? AND channel_name IS NOT NULL AND usage_kwh IS NOT NULL
-           GROUP BY device_gid, channel_name, substr(timestamp, 1, 13)
-           HAVING COUNT(*) > 1 OR MIN(timestamp) != substr(MIN(timestamp), 1, 13) || ':00:00'""",
-        (cutoff,),
-    )
-    removed = 0
-    if conn.execute("SELECT COUNT(*) FROM _compact").fetchone()[0]:
-        removed = conn.execute(
-            """DELETE FROM readings WHERE id IN (
-                   SELECT r.id FROM readings r JOIN _compact c
-                     ON r.device_gid = c.device_gid AND r.channel_name = c.channel_name
-                    AND substr(r.timestamp, 1, 13) = substr(c.ts, 1, 13)
-                   WHERE r.timestamp < ?)""", (cutoff,)).rowcount
+    clock = _utc_clock(conn)
+    moment = now or (datetime.now(timezone.utc) if clock else datetime.now())
+    if clock:
+        moment = clock.instant(moment)
+        cutoff = clock.hour_key(clock.stamp(moment - timedelta(days=days)))
+    else:
+        cutoff = (moment - timedelta(days=days)).replace(
+            minute=0, second=0, microsecond=0).isoformat()
+
+    def hour_key(stamp):
+        if not isinstance(stamp, str) or not ISO_TIMESTAMP.fullmatch(stamp):
+            return None
+        try:
+            if clock:
+                return clock.hour_key(stamp)
+            parsed = datetime.fromisoformat(stamp)
+            # Never strip a known offset into an unzoned legacy aggregate.
+            return parsed.replace(minute=0, second=0, microsecond=0).isoformat() if parsed.tzinfo is None else None
+        except (ValueError, OverflowError):
+            return None
+
+    def eligible(kwh, cents, seconds, source, zone, provider):
+        row = dict(usage_kwh=kwh, measurement_seconds=seconds, measurement_source=source,
+                   source_timezone=zone, provider_timestamp=provider)
+        return int(source == 'emporia_minute' and seconds == 60
+                   and _finite_measurement_number(cents) and reading_average_watts(row) is not None)
+
+    def observation_key(provider, receipt):
+        stamp = provider if provider is not None else receipt
+        if not isinstance(stamp, str) or not ISO_TIMESTAMP.fullmatch(stamp):
+            return None
+        try:
+            parsed = datetime.fromisoformat(stamp)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc)
+            return parsed.isoformat(timespec='microseconds')
+        except (ValueError, OverflowError):
+            return None
+
+    conn.create_function('energy_compact_hour', 1, hour_key, deterministic=True)
+    conn.create_function('energy_compact_eligible', 6, eligible, deterministic=True)
+    conn.create_function('energy_compact_observation', 2, observation_key, deterministic=True)
+    # RELEASE of a top-level savepoint commits; retain explicit caller ownership.
+    if not conn.in_transaction:
+        conn.execute('BEGIN')
+    conn.execute('SAVEPOINT energy_compaction')
+    try:
+        conn.execute("DROP TABLE IF EXISTS temp._compact")
         conn.execute(
-            """INSERT INTO readings (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents,
-                                  measurement_source)
-               SELECT ts, device_gid, channel_num, channel_name, usage_kwh, cost_cents, 'compacted' FROM _compact""")
-    conn.execute("DROP TABLE _compact")
-    return removed
+            """CREATE TEMP TABLE _compact AS
+               SELECT device_gid, MIN(channel_num) channel_num, channel_name,
+                      energy_compact_hour(timestamp) ts, MIN(source_timezone) source_timezone,
+                      SUM(usage_kwh) usage_kwh, SUM(cost_cents) cost_cents
+               FROM readings
+               WHERE timestamp < ? AND channel_name IS NOT NULL
+                 AND device_gid IS NOT NULL AND device_gid!=''
+                 AND energy_compact_hour(timestamp) IS NOT NULL
+               GROUP BY device_gid, channel_name, energy_compact_hour(timestamp)
+               HAVING COUNT(*)>1
+                 AND MIN(energy_compact_eligible(usage_kwh,cost_cents,measurement_seconds,
+                                               measurement_source,source_timezone,provider_timestamp))=1
+                 AND COUNT(DISTINCT COALESCE(source_timezone,''))=1
+                 AND COUNT(DISTINCT COALESCE(channel_num,''))=1
+                 AND COUNT(DISTINCT energy_compact_observation(provider_timestamp,timestamp))=COUNT(*)
+                 AND ABS(SUM(usage_kwh))<=1.7976931348623157e308
+                 AND ABS(SUM(cost_cents))<=1.7976931348623157e308""",
+            (cutoff,),
+        )
+        removed = 0
+        if conn.execute("SELECT COUNT(*) FROM temp._compact").fetchone()[0]:
+            removed = conn.execute(
+                """DELETE FROM readings WHERE id IN (
+                       SELECT r.id FROM readings r JOIN temp._compact c
+                         ON r.device_gid=c.device_gid AND r.channel_name=c.channel_name
+                        AND energy_compact_hour(r.timestamp)=c.ts
+                       WHERE r.timestamp < ?)""", (cutoff,),
+            ).rowcount
+            conn.execute(
+                """INSERT INTO readings(timestamp,device_gid,channel_num,channel_name,
+                                       usage_kwh,cost_cents,measurement_source,source_timezone)
+                   SELECT ts,device_gid,channel_num,channel_name,usage_kwh,cost_cents,
+                          'compacted',source_timezone FROM temp._compact""",
+            )
+        conn.execute("DROP TABLE temp._compact")
+        conn.execute('RELEASE energy_compaction')
+        return removed
+    except Exception:
+        conn.execute('ROLLBACK TO energy_compaction')
+        conn.execute('RELEASE energy_compaction')
+        raise
 
 
 def get_monthly_costs(months: int = 12, device_gid: str | None = None, *,
