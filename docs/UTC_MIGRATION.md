@@ -99,7 +99,9 @@ events, capability/migration metadata, cache receipt times and original reading
 journal timestamps. Ambiguous or nonexistent times in **any** of those replicas
 abort the whole copy. Original timestamps and row keys remain in evidence tables;
 all non-timestamp column fingerprints must match, including stored kWh/cents and
-collector/generation IDs. Existing journal sequences remain; reading UPDATE
+collector identity. Development 2.3.45 intentionally rotates only the energy
+stream generation in the conversion transaction and records both values in the
+receipt; unrelated stream/cache identities stay unchanged. Existing journal sequences remain; reading UPDATE
 triggers append exactly one canonical upsert per changed reading. Those appended
 events and SQLite autoincrement state are checked, not silently rebuilt.
 
@@ -311,8 +313,9 @@ format transition requires a new generation and complete private replacement.
 Reset publication compares the destination identity, generation, cursor,
 watermark, receipt and format under a write lock before replacing only energy
 cache tables. Concurrent progress causes a retry error, not lost cached updates.
-This implements client reset enforcement, not the live migration generation
-rotation coordinator; that still must be implemented before storage activation.
+At the 2.3.44 milestone this implemented client reset enforcement but not migration
+generation rotation. The private conversion engine adds rotation below; the live
+activation/cutover coordinator is still required before storage activation.
 
 The new native reader preserves canonical microseconds and bins UTC history in
 the declared reporting zone, independent of the laptop timezone. Hour labels
@@ -334,4 +337,45 @@ and coordinated-cutover requirements above are unchanged.
 ```bash
 venv/bin/python3 -m unittest discover -s tests -p test_sync_contract.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_native_history_cache.py -v
+```
+
+Development 2.3.45 makes poll, snapshot, capability, heartbeat-history, migration
+marker and retention writes use persisted clock policy. A poll captures one
+instant after the API response, reads policy under `BEGIN IMMEDIATE`, and uses
+that same instant for receipts, capability metadata, pruning and compaction.
+UTC instants retain microseconds and both fold hours. Legacy storage keeps its
+local convention. Heartbeat JSON is always offset-aware UTC; its corresponding
+legacy database event remains local, while UTC events share the file's instant.
+
+CSV parsing retains validated source-local and canonical UTC interpretations
+until publication reads the database policy under its transaction. UTC imports
+require an explicit source zone; the reporting zone is not a provenance fallback.
+Daily duration follows actual source-zone bounds. Invalid/gap/fold rows retain
+their error counts, and duplicates cannot replace accepted energy, evidence or
+snapshots. UTC snapshots reject noncanonical timestamps before mutation.
+
+The conversion engine now changes energy stream generation atomically with
+timestamp policy, even if all source timestamps were already canonical. Existing
+client caches therefore receive a reset instead of attempting a format-changing
+append. `stream_transition` records reason, previous and new generations.
+All unrelated non-time fingerprints, collector identity, original journal
+sequences and reading IDs remain verified. Generation failure rolls the entire
+conversion back; invalid source generations cannot publish an artifact.
+
+Verification includes 18 writer regressions and two migration-failure regressions.
+An actual disposable fixture is converted with the real engine, then exercised
+with real persisted-policy poll/import/heartbeat writes using handles opened
+before conversion. New writable UTC connections remain rejected. Read-only
+queries and sync see canonical rows and correct reporting-month totals; the
+original archive hash stays unchanged. This deliberate private-handle harness
+does not authorize live collection or implement an activation bypass. The real
+HTTP test now also starts with a legacy cache and verifies automatic generation
+reset/replacement while retaining its unrelated panel labels. The full suite
+passes 456 tests. Source provenance, operational activation/rollback, historical
+overlap and production/native acceptance remain cutover gates; #127/#135 stay open.
+
+```bash
+venv/bin/python3 -m unittest discover -s tests -p test_utc_writers.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_sync_contract.py -v
 ```

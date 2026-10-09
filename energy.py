@@ -131,9 +131,10 @@ def reading_live_watts(row: dict | None, *, now: datetime | None = None,
 def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
     """Write heartbeat file so Flask can monitor poller health."""
     try:
+        moment = datetime.now(timezone.utc)
         data = {
             "ok": ok,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": EnergyClock.stamp(moment),
             "error": error,
             "consecutive_errors": consecutive_errors,
         }
@@ -145,10 +146,13 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
     try:
         conn = _connect()
         with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            clock = _utc_clock(conn)
+            stored_moment = moment if clock else moment.astimezone().replace(tzinfo=None)
             conn.execute('INSERT INTO poller_health_events(timestamp,ok) VALUES (?,?)',
-                         (data['timestamp'], int(ok)))
+                         (_storage_timestamp(conn, stored_moment), int(ok)))
             conn.execute('DELETE FROM poller_health_events WHERE timestamp<?',
-                         ((datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
+                         (_storage_timestamp(conn, stored_moment-timedelta(days=DB_RETENTION_DAYS)),))
     except Exception:
         logger.exception("Could not record poller health history")
     finally:
@@ -279,6 +283,17 @@ def _query_window(conn, duration: timedelta, now: datetime | None) -> tuple:
         moment = clock.instant(moment)
     serialize = clock.stamp if clock else datetime.isoformat
     return clock, moment, serialize(moment-duration), serialize(moment)
+
+
+def _storage_timestamp(conn, moment: datetime | None = None) -> str:
+    """Follow persisted storage policy, retaining legacy host-local receipts."""
+    clock = _utc_clock(conn)
+    moment = moment or (datetime.now(timezone.utc) if clock else datetime.now())
+    if clock:
+        return clock.stamp(moment)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone().replace(tzinfo=None)
+    return moment.isoformat()
 
 
 def _chart_rows(rows, key: str, clock: EnergyClock | None) -> list[dict]:
@@ -904,7 +919,7 @@ def ensure_table(path: str | Path | None = None):
             ORDER BY timestamp, source, sensor_id""")
         conn.execute(
             "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
-            ("radon_sync_seed_v1", datetime.now().isoformat()),
+            ("radon_sync_seed_v1", _storage_timestamp(conn)),
         )
     if not conn.execute(
         "SELECT 1 FROM migrations WHERE name = 'reading_sync_seed_v1'"
@@ -917,7 +932,7 @@ def ensure_table(path: str | Path | None = None):
                    source_timezone,provider_timestamp FROM readings ORDER BY id""")
         conn.execute(
             "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
-            ("reading_sync_seed_v1", datetime.now().isoformat()),
+            ("reading_sync_seed_v1", _storage_timestamp(conn)),
         )
     conn.commit()
     # Migrate: add poles column if it doesn't exist yet (existing DBs)
@@ -1183,19 +1198,22 @@ def save_device_capabilities(
     source: str,
 ) -> None:
     conn = _connect()
-    _save_device_capabilities_with_conn(
-        conn,
-        device_gid=device_gid,
-        service_mode=service_mode,
-        has_main=has_main,
-        has_mains_a=has_mains_a,
-        has_mains_b=has_mains_b,
-        has_mains_c=has_mains_c,
-        mains_c_no_ct=mains_c_no_ct,
-        source=source,
-    )
-    conn.commit()
-    conn.close()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            _save_device_capabilities_with_conn(
+                conn,
+                device_gid=device_gid,
+                service_mode=service_mode,
+                has_main=has_main,
+                has_mains_a=has_mains_a,
+                has_mains_b=has_mains_b,
+                has_mains_c=has_mains_c,
+                mains_c_no_ct=mains_c_no_ct,
+                source=source,
+            )
+    finally:
+        conn.close()
 
 
 def _save_device_capabilities_with_conn(
@@ -1209,6 +1227,7 @@ def _save_device_capabilities_with_conn(
     has_mains_c: bool,
     mains_c_no_ct: bool,
     source: str,
+    now: datetime | None = None,
 ) -> None:
     existing = conn.execute(
         """SELECT service_mode, has_main, has_mains_a, has_mains_b,
@@ -1251,7 +1270,7 @@ def _save_device_capabilities_with_conn(
             int(has_mains_c),
             int(mains_c_no_ct),
             source,
-            datetime.now().isoformat(),
+            _storage_timestamp(conn, now),
         ),
     )
 
@@ -1270,6 +1289,9 @@ def _upsert_latest_snapshot_with_conn(
     source_timezone: str | None = None,
     provider_timestamp: str | None = None,
 ) -> None:
+    clock = _utc_clock(conn)
+    if clock:
+        clock.parse(timestamp)
     _validate_measurement_evidence(dict(
         measurement_seconds=measurement_seconds, measurement_source=measurement_source,
         source_timezone=source_timezone, provider_timestamp=provider_timestamp,
@@ -1585,7 +1607,8 @@ def poll_and_store(vue, device_gids):
                 logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
                 time.sleep(2 * attempt)
 
-        now = datetime.now().isoformat()
+        conn.execute('BEGIN IMMEDIATE')
+        _, moment, cutoff, now = _query_window(conn, timedelta(days=DB_RETENTION_DAYS), None)
 
         for gid, device in usage_dict.items():
             capability = {
@@ -1646,16 +1669,16 @@ def poll_and_store(vue, device_gids):
                 has_mains_c=capability["has_mains_c"],
                 mains_c_no_ct=False,
                 source="live_poll",
+                now=moment,
             )
 
         # Prune old rows to keep the database from growing unboundedly.
-        cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
         c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
         global _last_compaction
         compacted = 0
         if time.monotonic() - _last_compaction > 3600:
             _last_compaction = time.monotonic()
-            compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+            compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS, now=moment)
             conn.commit()
             for report in write_monthly_reports():
                 logger.info("Wrote monthly report %s", report)
@@ -2848,7 +2871,8 @@ def import_emporia_csv(
 
     Power columns require a known interval; energy columns retain their raw kWh.
     Declared zones are validated, and ambiguous/nonexistent wall times are reported
-    rather than guessed. Storage remains legacy local until coordinated UTC cutover.
+    rather than guessed. Timestamps follow the persisted storage policy; UTC needs
+    an explicit CSV source zone. Ordinary UTC activation remains guarded.
     Measurement duration and declared source-zone evidence are persisted per reading.
     This does not prove non-overlap with other imported resolutions (#135).
     """
@@ -2902,19 +2926,23 @@ def import_emporia_csv(
                 continue
             try:
                 moment = datetime.strptime(stamp, '%m/%d/%Y %H:%M:%S')
+                utc_stamp = None
                 if zone:
-                    status = classify_timestamp(moment.isoformat(), zone)['status']
+                    resolved = classify_timestamp(moment.isoformat(), zone)
+                    status = resolved['status']
                     if status != 'legacy_unique':
                         ambiguous += status == 'ambiguous'
                         nonexistent += status == 'nonexistent'
                         errors += 1
                         continue
+                    utc_stamp = resolved['utc_candidates'][0]
                 duration = _csv_interval_seconds(interval, moment, zone)
             except ValueError:
                 errors += 1
                 continue
             if duration is not None:
                 durations.add(duration)
+            timestamps = (moment.isoformat(), utc_stamp)
             for header, name, power in columns:
                 value = (row.get(header) or '').strip()
                 if not value or value.lower() == 'no ct':
@@ -2931,13 +2959,20 @@ def import_emporia_csv(
                 except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
-                rows_to_insert.append((moment.isoformat(), gid, None, name, kwh, cents,
+                # Keep both interpretations until policy is read under the publication lock.
+                rows_to_insert.append((timestamps, gid, None, name, kwh, cents,
                                        duration, 'csv_power' if power else 'csv_energy', zone, None))
 
     conn = _connect()
     try:
         with conn:
             conn.execute('BEGIN IMMEDIATE')
+            clock = _utc_clock(conn)
+            if clock and zone is None:
+                raise ValueError('UTC CSV import requires a declared source timezone')
+            rows_to_insert = [
+                (row[0][1] if clock else row[0][0], *row[1:]) for row in rows_to_insert
+            ]
             inserted = conn.executemany(
                 """INSERT OR IGNORE INTO readings
                    (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents,
@@ -2960,6 +2995,8 @@ def import_emporia_csv(
         'imported': inserted, 'skipped': skipped, 'errors': errors,
         'unit': unit, 'interval': interval, 'interval_seconds': duration,
         'source_timezone': zone, 'ambiguous_timestamps': ambiguous,
+        'timestamp_format': 'utc_v1' if clock else 'legacy_local_v1',
+        'reporting_timezone': clock.reporting_timezone if clock else None,
         'nonexistent_timestamps': nonexistent,
         'conversion_factor': duration / 3600 if unit == 'kWatts' and duration is not None else 1.0 if unit == 'kWhs' else None,
     }
@@ -2992,7 +3029,7 @@ def backfill_latest_channel_snapshot() -> dict:
     conn = _connect()
     conn.execute(
         "INSERT INTO migrations(name, applied_at) VALUES(?, ?)",
-        (migration_name, datetime.now().isoformat()),
+        (migration_name, _storage_timestamp(conn)),
     )
     conn.commit()
     conn.close()

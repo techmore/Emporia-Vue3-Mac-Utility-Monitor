@@ -25,6 +25,15 @@ from utc_migration import rehearse_utc_copy
 class SyncContractTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swift'), 'Swift runtime required')
     def test_converted_artifact_real_http_download_and_native_offline_read(self):
+        initial = energy.get_reading_changes()
+        legacy_cache = self.root/'legacy-download.db'
+        with patch.object(energy, 'DB_PATH', str(legacy_cache)):
+            energy.ensure_table()
+            energy.apply_reading_changes(initial)
+            conn = energy._connect()
+            conn.execute("INSERT INTO circuit_labels(slot,label) VALUES(1,'Preserve')")
+            conn.commit()
+            conn.close()
         archive, artifact = self.root/'archive.db', self.root/'converted.db'
         energy.backup_database(archive)
         before = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -72,6 +81,17 @@ server.serve_forever()
                 second = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(second.returncode, 0, second.stderr)
                 self.assertEqual(json.loads(second.stdout)['cursor'], state['cursor'])
+                reset = subprocess.run([*command[:-1], str(legacy_cache)], env=env,
+                                       capture_output=True, text=True, timeout=30)
+                self.assertEqual(reset.returncode, 0, reset.stderr)
+                replacement = json.loads(reset.stdout)
+                self.assertNotEqual(replacement['generation_id'], initial['generation_id'])
+                self.assertEqual(replacement['source_id'], initial['source_id'])
+                self.assertEqual(replacement['timestamp_format'], 'utc_v1')
+                conn = energy._connect(legacy_cache)
+                self.assertEqual(conn.execute('SELECT label FROM circuit_labels').fetchone()[0], 'Preserve')
+                self.assertEqual(conn.execute('SELECT COUNT(*) FROM sync_cached_readings').fetchone()[0], 0)
+                conn.close()
             finally:
                 server.terminate()
                 server.wait(timeout=10)

@@ -119,7 +119,13 @@ class UtcRehearsalTests(unittest.TestCase):
             self.assertEqual([row["usage_kwh"] for row in rows], [1.5, 2.5, 3.5, 4.5])
             self.assertEqual([row["cost_cents"] for row in rows], [30.1, 60.2, 90.3, 100.4])
             self.assertEqual(connection.execute("SELECT source_id FROM collector_identity").fetchone()[0], self.identity)
-            self.assertEqual(connection.execute("SELECT generation_id FROM reading_stream_generation").fetchone()[0], self.generation)
+            new_generation = connection.execute("SELECT generation_id FROM reading_stream_generation").fetchone()[0]
+            self.assertNotEqual(new_generation, self.generation)
+            self.assertEqual(report['stream_transition'], {
+                'reason': 'utc_timestamp_format', 'previous_generation_id': self.generation,
+                'new_generation_id': new_generation,
+            })
+            self.assertNotIn('reading_stream_generation', report['preserved_non_timestamp_fingerprints'])
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM reading_changes").fetchone()[0], 9)
             self.assertIsNone(connection.execute("SELECT timestamp FROM reading_changes WHERE operation='delete'").fetchone()[0])
             self.assertEqual(connection.execute("SELECT original_timestamp FROM utc_timestamp_evidence WHERE table_name='readings' AND row_key='[1]'").fetchone()[0], "2026-03-08T01:59:00.123456")
@@ -250,6 +256,37 @@ class UtcRehearsalTests(unittest.TestCase):
         self.assertFalse(self.destination.exists())
         self.assertEqual(self.digest(self.snapshot), self.hash)
         self.assertFalse(list(self.root.glob(".utc-rehearsal-*")))
+
+    def test_invalid_generation_cannot_publish_a_format_transition(self):
+        connection = energy._connect()
+        connection.execute("UPDATE reading_stream_generation SET generation_id='invalid'")
+        connection.commit()
+        connection.close()
+        self.refresh_snapshot()
+        with self.assertRaisesRegex(ValueError, 'generation'):
+            self.convert()
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(self.digest(self.snapshot), self.hash)
+        self.assertFalse(list(self.root.glob('.utc-rehearsal-*')))
+
+    def test_generation_rotation_failure_rolls_back_timestamps_and_policy(self):
+        connection = energy._connect()
+        before = [tuple(row) for row in connection.execute('SELECT * FROM readings ORDER BY id')]
+        def deny_generation_update(action, table, column, database, trigger):
+            return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_UPDATE and table == 'reading_stream_generation' else sqlite3.SQLITE_OK
+        connection.set_authorizer(deny_generation_update)
+        try:
+            with self.assertRaises(sqlite3.DatabaseError):
+                with connection:
+                    connection.execute('BEGIN IMMEDIATE')
+                    utc_migration._convert(connection, 'America/New_York', 'America/New_York', self.hash)
+            connection.set_authorizer(None)
+            self.assertEqual([tuple(row) for row in connection.execute('SELECT * FROM readings ORDER BY id')], before)
+            self.assertEqual(connection.execute('SELECT generation_id FROM reading_stream_generation').fetchone()[0], self.generation)
+            for table in ('utc_rehearsal', 'energy_time_policy', 'utc_timestamp_evidence'):
+                self.assertEqual(connection.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0], 0)
+        finally:
+            connection.close()
 
     def test_business_value_change_is_detected_before_publication(self):
         original = utc_migration._fingerprints

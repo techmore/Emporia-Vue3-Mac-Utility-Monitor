@@ -85,6 +85,18 @@ Schema upgrades live only in `ensure_table`. An older archived UTC rehearsal
 requires schema upgrade on a separate private copy and a new verified receipt;
 adding columns changes its schema fingerprints. Never modify the sole archive.
 
+Development 2.3.45 adds policy-aware writer/import paths without enabling live UTC
+connections. Under a UTC policy, CSV source-local times become canonical UTC using
+the declared header zone; files without a source zone are rejected, not interpreted
+in the reporting/laptop timezone. The response declares storage format and reporting
+zone. Legacy storage still retains local CSV strings. Error counts, actual daily
+durations, accepted duplicate values and source evidence remain intact. Import
+publication locks policy with readings, journal, snapshots and capabilities.
+Private UTC conversion also rotates energy stream generation so existing clients
+replace their legacy caches; collector identity and reading IDs remain preserved.
+This is verified on disposable fixtures and authenticated localhost sync, not a
+production activation or historical overlap repair. #127/#135 remain open.
+
 ## Verification
 
 ```bash
@@ -92,6 +104,7 @@ venv/bin/python3 -m unittest discover -s tests -p test_import_integrity.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_measurement_evidence.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_power_consumers.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_compaction.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_writers.py -v
 venv/bin/python3 -m unittest discover -s tests -v
 ```
 

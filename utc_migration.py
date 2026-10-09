@@ -113,6 +113,10 @@ def _convert(connection, legacy_timezone: str, reporting_timezone: str,
         "SELECT COALESCE(MAX(sequence),0) FROM reading_changes"
     ).fetchone()[0]
     sequence_before = dict(connection.execute("SELECT name,seq FROM sqlite_sequence"))
+    generation = connection.execute('SELECT generation_id FROM reading_stream_generation WHERE singleton=1').fetchone()
+    if not generation or not isinstance(generation[0], str) or not re.fullmatch(r'[0-9a-f]{32}', generation[0]):
+        raise ValueError('Invalid energy stream generation; repair source identity before rehearsal')
+    previous_generation = generation[0]
     original = _fingerprints(connection, tables, watermark)
     plan = _plan(connection, legacy_timezone)
     updated = Counter()
@@ -162,6 +166,14 @@ def _convert(connection, legacy_timezone: str, reporting_timezone: str,
     ))
     connection.execute("INSERT INTO energy_time_policy VALUES (1,'utc_v1',?,?)",
                        (reporting_timezone, legacy_timezone))
+    # Format changes must reset existing clients even if every source row was already aware.
+    connection.execute('UPDATE reading_stream_generation SET generation_id=lower(hex(randomblob(16))) WHERE singleton=1')
+    new_generation = connection.execute('SELECT generation_id FROM reading_stream_generation WHERE singleton=1').fetchone()[0]
+    if new_generation == previous_generation:
+        raise RuntimeError('UTC conversion did not reset the energy stream generation')
+    preserved = {table: value for table, value in original.items() if table != 'reading_stream_generation'}
+    if _fingerprints(connection, list(preserved), watermark) != preserved:
+        raise RuntimeError('Generation transition changed unrelated non-timestamp data')
     return {
         "purpose": "utc_rehearsal_only", "live_ready": False,
         "source_sha256": source_sha256,
@@ -169,7 +181,11 @@ def _convert(connection, legacy_timezone: str, reporting_timezone: str,
         "reporting_timezone": reporting_timezone,
         "timestamp_format": "utc_v1",
         "timestamp_evidence_rows": len(plan), "updated_rows": dict(updated),
-        "preserved_non_timestamp_fingerprints": original,
+        "preserved_non_timestamp_fingerprints": preserved,
+        "stream_transition": {
+            "reason": "utc_timestamp_format", "previous_generation_id": previous_generation,
+            "new_generation_id": new_generation,
+        },
         "original_journal_watermark": watermark,
         "canonical_upserts_appended": len(expected),
         "sqlite_sequence_verified": True,

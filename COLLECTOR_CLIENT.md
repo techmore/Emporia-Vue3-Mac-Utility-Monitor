@@ -180,6 +180,13 @@ passed private converted-artifact HTTP/download/offline-native tests, not live
 collector activation. Legacy local caches still require matching timezones;
 UTC writers/imports and the production cutover remain unfinished (#127/#135).
 
+Development 2.3.45 adds private-tested policy-aware energy writers/imports and
+atomic migration generation rotation. A converted snapshot now causes an existing
+legacy cache to download a full format-safe replacement automatically; unrelated
+sensor/panel data survives. Ordinary writable UTC connections are still rejected.
+Source provenance, live activation/rollback and overlap reconciliation remain
+unfinished; do not deploy the UTC draft merely because client reset tests pass.
+
 The code is included in the release, but the actual SER8 connection and automatic
 downloads have not been configured or verified. `sync_history.py` downloads pages to isolated cache
 tables and advances the cursor atomically with each page. It refuses collector

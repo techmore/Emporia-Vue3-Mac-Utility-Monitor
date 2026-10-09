@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.3.45 - Unreleased
+
+- Make poll receipts, latest snapshots, journal replicas, capability timestamps,
+  migration markers and retention bounds follow persisted energy clock policy.
+  Capture one poll instant and hold the publication transaction while reading
+  policy. Heartbeat files use aware UTC; legacy health rows retain local semantics.
+- Convert UTC CSV imports using their declared source zone, never the laptop or
+  reporting zone. Reject missing source zones before publication, keep gaps/folds
+  unresolved, preserve actual daily duration, and retain legacy import timestamps.
+  Validate UTC snapshot stamps and close/rollback failed capability publications.
+- Rotate the energy stream generation atomically with private UTC conversion,
+  including already-aware inputs. Record old/new generations, preserve collector
+  identity, reading IDs, original journal sequences, raw energy/cost and unrelated
+  streams. Verify automatic HTTP replacement of a real legacy cache; failed
+  generation changes roll back timestamps, evidence and policy.
+- Add 20 writer/rollback regressions, including real persisted-policy writes on a
+  disposable converted fixture and cross-host timezone subprocesses. Ordinary
+  writable UTC connections remain blocked; activation/cutover and historical
+  overlap reconciliation are unfinished. #127/#135 stay open. Not deployed.
+
 ## 2.3.44 - Unreleased
 
 - Negotiate energy sync protocol 3 with explicit timestamp/reporting-zone and
