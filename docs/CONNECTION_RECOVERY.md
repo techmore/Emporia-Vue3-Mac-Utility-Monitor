@@ -24,6 +24,11 @@ the user's private Application Support directory, independent of the checkout.
 No token or password is needed. SSH keys and known-host verification remain in
 effect. This does not publish any public listener or restart the collector.
 
+For the completed SER8 Incus deployment, the remote port is **15033**, not the
+former native dashboard's 5051. The existing tunnel and installed watchdog were
+both switched and verified. For another collector, use its verified private
+port; the installer deliberately refuses mismatched tunnel arguments.
+
 The watchdog runs every 30 seconds and on login:
 
 1. Probe the tunnel's `/api/version` with a five-second timeout, without HTTP
@@ -86,3 +91,9 @@ the recorded reading timestamp advanced from 18:43:16 to 18:44:17 local time.
 The independent Incus staging dashboard continued serving 2.3.31. This validates
 SSH transport repair, not a completed production container cutover or public
 OAuth login. Sleep and full-machine reboot recovery still require testing.
+
+The later production Incus cutover retained this watchdog and native app, updating
+only the verified tunnel's remote port to 15033. HTTP returned 2.3.35, status
+returned healthy, and cached history caught up. A container restart restored
+services and the existing Mac connection without launching another app.
+See INCUS_DEPLOYMENT.md for that separate deployment receipt.

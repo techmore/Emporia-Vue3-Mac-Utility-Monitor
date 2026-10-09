@@ -2,7 +2,8 @@
 
 ## Verified state (2026-10-08)
 
-SER8 serves release 2.3.30 on loopback port 5051. The collector continues
+SER8's Incus instance serves release 2.3.35 on guest loopback port 5051,
+reached privately through host loopback 15033. The collector continues
 independently of the Mac SSH tunnel. The energy.stoverparc.org HTTPS probe
 failed its TLS handshake, and the active Caddyfile has no route for this host.
 The Caddyfile is root-owned; the collector SSH user has no passwordless sudo.
@@ -41,4 +42,6 @@ authenticated public application, and includes settings and device controls.
 - Proxy reload does not interrupt other hosted services.
 
 Until these gates pass, retain the existing private SSH connection and cached
-history. Public deployment and automatic tunnel recovery are not yet complete.
+history. Public deployment is not complete. The private SSH tunnel watchdog
+is installed and verified; see CONNECTION_RECOVERY.md. Its transport recovery
+does not provide public authentication or establish fresh sensor measurements.

@@ -4,7 +4,7 @@ A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](http
 
 See [Deployment options](docs/DEPLOYMENT_OPTIONS.md) for native macOS, native Linux,
 and Incus/LXD installation, plus [SER8 deployment](docs/INCUS_DEPLOYMENT.md) for
-the verified container state and remaining production cutover gates.
+the verified production collector and remaining public-access gates.
 
 ![Dashboard](https://img.shields.io/badge/version-2.3.35-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -366,7 +366,10 @@ Home Assistant collector and normalized JSON import are available. See
 
 ## Collector Client
 
-See [COLLECTOR_CLIENT.md](COLLECTOR_CLIENT.md) for secure tunnel connections, persistent Mac client configuration, and history migration gates. Offline synchronization and SER8 deployment are not yet implemented.
+See [COLLECTOR_CLIENT.md](COLLECTOR_CLIENT.md) for secure tunnel connections,
+persistent Mac client configuration and offline history synchronization.
+SER8's verified production collector runs in Incus; public HTTPS/OAuth and
+full host reboot/Mac sleep acceptance remain pending.
 
 ### Panel reference photos
 

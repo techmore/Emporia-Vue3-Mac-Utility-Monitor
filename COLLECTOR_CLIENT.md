@@ -1,6 +1,23 @@
 # Always-On Collector and Mac Client
 
-## Actual SER8 Deployment — 2026-10-08
+## Current SER8 Deployment - 2026-10-08
+
+The authoritative collector has moved from the retained native services into
+the `energy-monitor` Incus instance on release 2.3.35. The Mac keeps its existing
+origin `http://127.0.0.1:15001`, Keychain credentials and offline cache; its SSH
+forward now targets SER8 loopback **15033**, which proxies to guest loopback 5051.
+The old native writers are stopped and disabled. The Matter controller/fabric
+remains on the host and is bridged privately into the guest.
+
+All 30 transferred database tables matched, new collection and cache catch-up
+were verified, and a restart of this container restored its six services.
+Public HTTPS/OAuth and full host reboot/Mac sleep acceptance remain pending.
+See [production receipt](docs/INCUS_DEPLOYMENT.md) and
+[repeat migration/rollback procedure](docs/COLLECTOR_MIGRATION.md).
+The native deployment below is retained as historical evidence, not the current
+service endpoint. Never run its preserved poller alongside the guest.
+
+## Original Native SER8 Deployment — 2026-10-08
 
 Release 2.3.26 is installed on the verified Ubuntu SER8. SSH was verified over
 Tailscale before deployment; Flask remains bound to 127.0.0.1:5051. No public
