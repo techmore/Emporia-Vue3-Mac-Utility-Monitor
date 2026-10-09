@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.3.38 - Unreleased
+## 2.3.39 - Unreleased
 
 - UTC integration in development: transactional conversion rehearsal on a new
   private copy of a verified backup. Preserve original timestamp evidence,
@@ -24,6 +24,16 @@
   lengths. Fill chart gaps along real UTC bins, not nonexistent wall hours, and
   calculate trend slope across actual calendar-day gaps. These adapters remain
   read-only rehearsal work; remaining writers/client paths still block cutover.
+- Integrate recorded context, intraday comparisons, capture history and peak-time
+  labels with the reporting zone. Keep repeated hours distinct, missing data null,
+  and partial capture bins duration-weighted. Use consistent read snapshots and
+  device-scoped circuit comparisons; do not double-count adjacent boundaries.
+- Remove duplicated dashboard sections that made circuit detail return HTTP 500;
+  retain its own chart and comparison cards. Correct polls/hour and recorded-zero
+  comparison display. A separate legacy-compatible hotfix is required for production.
+- Track measurement-interval/provenance repair in #135: hourly imported/compacted
+  energy must not be presented as minute-average watts. UTC time-label tests do
+  not establish power accuracy; this remains a release/cutover gate.
 
 ## 2.3.37 - 2026-10-08
 

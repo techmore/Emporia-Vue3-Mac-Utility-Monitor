@@ -20,7 +20,7 @@
   <p>Scenario only, not solar sizing, a production forecast or guaranteed savings. Use generation for the same last-24-hour window as the recorded Main consumption below.</p>
   {% if solar_main %}<p>Recorded Main: <strong>{{ '%.2f'|format(solar_main.total_kwh) }} kWh</strong> in the last 24 hours. Current usage rate: {{ '%.2f'|format(solar_rate_cents) }} cents/kWh.</p>
   {% else %}<p>No recorded Main consumption in this window. Missing data is not zero consumption; calculation is unavailable.</p>{% endif %}
-  <p class="card-meta">Capture context: {{ solar_dense_hours }}/24 completed hours have at least 57 distinct Main reading minutes. This excludes the current partial hour and does not prove complete imported-history coverage. Sparse readings can understate demand and overstate surplus. <a href="/log">Review capture history</a>.</p>
+  <p class="card-meta">Capture context: {{ "%g"|format(solar_dense_hours) }}/24 completed hours have at least 95% of their actual minute positions recorded. Transition intervals are weighted by duration. This excludes the current partial hour and does not prove complete imported-history coverage. Sparse readings can understate demand and overstate surplus. <a href="/log">Review capture history</a>.</p>
   <form method="get" action="/reports#solar-offset" style="display:flex;flex-wrap:wrap;gap:12px;align-items:end">
     <label>Generation in the same 24h (kWh)<br><input name="solar_generation" type="number" min="0" max="1000000" step="any" required value="{{ solar_inputs.solar_generation }}"></label>
     <label>Assumed self-consumption (%)<br><input name="solar_self_pct" type="number" min="0" max="100" step="any" required value="{{ solar_inputs.solar_self_pct }}"></label>

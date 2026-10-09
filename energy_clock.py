@@ -2,7 +2,7 @@
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from timestamp_model import ISO_TIMESTAMP, reporting_day_bounds
+from timestamp_model import ISO_TIMESTAMP, classify_timestamp, reporting_day_bounds
 
 
 class EnergyClock:
@@ -65,6 +65,22 @@ class EnergyClock:
 
     def year_key(self, value: str) -> str:
         return self.day_key(value)[:4]
+
+    def clock_hour(self, value: str) -> str:
+        return self.local(self.parse(value)).strftime("%H")
+
+    def weekday(self, value: str) -> str:
+        return self.local(self.parse(value)).strftime("%w")
+
+    def previous_wall_time(self, moment: datetime, days: int) -> tuple[datetime | None, str]:
+        """Same reporting-zone clock time on a prior date; never guess folds/gaps."""
+        if type(days) is not int or days <= 0:
+            raise ValueError("Prior-day count must be a positive integer")
+        wall = self.local(moment).replace(tzinfo=None)-timedelta(days=days)
+        resolved = classify_timestamp(wall.isoformat(), self.reporting_timezone)
+        if resolved["status"] != "legacy_unique":
+            return None, resolved["status"]
+        return self.parse(resolved["utc_candidates"][0]), "available"
 
     def minute_key(self, value: str) -> str:
         return self.parse(value).replace(second=0, microsecond=0).isoformat()

@@ -1817,7 +1817,7 @@ if (document.getElementById('hourlyChart')) {
 if (document.getElementById('todayRowChart')) {
   thinRowChart(
     'todayRowChart',
-    intradayComparison.labels,
+    intradayComparison.today_labels || intradayComparison.labels,
     intradayComparison.today,
     'oklch(35% 0.045 110)'
   );
@@ -1825,7 +1825,7 @@ if (document.getElementById('todayRowChart')) {
 if (document.getElementById('yesterdayRowChart')) {
   thinRowChart(
     'yesterdayRowChart',
-    intradayComparison.labels,
+    intradayComparison.yesterday_labels || intradayComparison.labels,
     intradayComparison.yesterday,
     'oklch(55% 0.06 210)'
   );
@@ -2433,7 +2433,7 @@ CIRCUIT_HTML = """
     <div class="card">
       <div class="card-label">Readings</div>
       <div class="card-value">{{ total.readings or 0 }}</div>
-      <div class="card-meta">{{ "%.1f"|format(60 / (poll_interval)) }} polls/hr</div>
+      <div class="card-meta">{{ "%.1f"|format(3600 / (poll_interval)) }} polls/hr</div>
     </div>
     <div class="card">
       <div class="card-label">Date Range</div>
@@ -2451,21 +2451,21 @@ CIRCUIT_HTML = """
     <div class="card">
       <div class="card-label">Yesterday same window</div>
       <div class="card-value" style="font-size:1.5rem;">
-        {% if ctx.yesterday_kwh %}{{ "%.3f"|format(ctx.yesterday_kwh) }} kWh{% else %}&mdash;{% endif %}
+        {% if ctx.yesterday_kwh is not none %}{{ "%.3f"|format(ctx.yesterday_kwh) }} kWh{% else %}&mdash;{% endif %}
       </div>
       <div class="card-meta">{{ delta_yd|safe }}</div>
     </div>
     <div class="card">
       <div class="card-label">Last week same window</div>
       <div class="card-value" style="font-size:1.5rem;">
-        {% if ctx.last_week_kwh %}{{ "%.3f"|format(ctx.last_week_kwh) }} kWh{% else %}&mdash;{% endif %}
+        {% if ctx.last_week_kwh is not none %}{{ "%.3f"|format(ctx.last_week_kwh) }} kWh{% else %}&mdash;{% endif %}
       </div>
       <div class="card-meta">{{ delta_wk|safe }}</div>
     </div>
     <div class="card">
       <div class="card-label">Last month same window</div>
       <div class="card-value" style="font-size:1.5rem;">
-        {% if ctx.last_month_kwh %}{{ "%.3f"|format(ctx.last_month_kwh) }} kWh{% else %}&mdash;{% endif %}
+        {% if ctx.last_month_kwh is not none %}{{ "%.3f"|format(ctx.last_month_kwh) }} kWh{% else %}&mdash;{% endif %}
       </div>
       <div class="card-meta">{{ delta_mo|safe }}</div>
     </div>
@@ -2475,245 +2475,6 @@ CIRCUIT_HTML = """
   <div class="chart-box">
     <h3>Usage — {{ period|capitalize }} view</h3>
     <canvas id="usageChart" height="180"></canvas>
-  </div>
-
-  <div id="operational-review" class="section">
-    <div class="section-head">
-      <h2>Operational Review</h2>
-      <span class="section-sub">Rolled up from the main dashboard for deeper review</span>
-    </div>
-    <div class="grid-4">
-      <div class="card">
-        <div class="card-label">24-Hour Summary</div>
-        <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
-        <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Cost</div>
-        <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
-        <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Biggest Load</div>
-        <div class="card-value" style="font-size:1.4rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
-        <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh ({{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total)</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Month-to-Date</div>
-        <div class="card-value">${{ "%.2f"|format((mc.this_month.total_cents or 0)/100) }}</div>
-        <div class="card-meta">{{ "%.1f"|format(mc.this_month.total_kwh or 0) }} kWh this month</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2>Action Center</h2>
-      <span class="section-sub">Safety, heavy hitters, and always-on loads</span>
-    </div>
-    <div class="grid-3">
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
-        {% for b in safety_breakers[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
-          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
-        {% for c in top_live_circuits[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
-        {% for s in standby_circuits[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-
-  <div id="load-review" class="section">
-    <div class="section-head">
-      <h2>Load Review</h2>
-      <span class="section-sub">Biggest daily load and always-on circuits moved from the dashboard and reports</span>
-    </div>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start;">
-      <div class="card">
-        <div class="card-label">Biggest 24h Load</div>
-        {% if biggest_circuit %}
-        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-top:4px;">
-          <a href="/circuit/{{ biggest_circuit.channel_name|urlencode }}" style="font-size:1.1rem; font-weight:700; color:var(--text); text-decoration:none;">{{ biggest_circuit.channel_name }}</a>
-          <span style="font-size:0.82rem; color:var(--text-light);">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh · {{ "%.0f"|format(biggest_circuit.pct or 0) }}%</span>
-        </div>
-        <div style="height:5px; background:var(--surface2); border-radius:3px; margin-top:6px;">
-          <div style="height:5px; border-radius:3px; width:{{ biggest_circuit.pct|round(1) }}%; background:{{ '#f87171' if biggest_circuit.pct > 40 else ('#fbbf24' if biggest_circuit.pct > 20 else 'var(--olive-500)') }};"></div>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic; margin-top:4px;">No 24-hour circuit data yet.</div>
-        {% endif %}
-      </div>
-      <div class="card">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-          <div class="card-label">Standby Loads</div>
-          <div style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(standby_total_w) }} W total</div>
-        </div>
-        {% for s in standby_circuits[:10] %}
-        <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
-          <span style="font-size:0.82rem;">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby loads detected</div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2>Analysis</h2>
-      <span class="section-sub">Next places to drill down</span>
-    </div>
-    <div class="grid-3">
-      <a href="/reports#recommendations" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Reports</div>
-          <div class="card-value" style="font-size:1.35rem;">Cost & Budget</div>
-          <div class="card-meta">Monthly projection, month-over-month changes, standby review, and recommendations.</div>
-        </div>
-      </a>
-      <a href="/trends" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Trends</div>
-          <div class="card-value" style="font-size:1.35rem;">Usage Patterns</div>
-          <div class="card-meta">Daily usage, hourly pattern, and trend slope.</div>
-        </div>
-      </a>
-      <a href="/circuits" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Circuits</div>
-          <div class="card-value" style="font-size:1.35rem;">Panel Detail</div>
-          <div class="card-meta">Breaker safety, slot layout, always-on loads, and circuit drilldown.</div>
-        </div>
-      </a>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2>Operational Summary</h2>
-      <span class="section-sub">Rolled up from the main dashboard for deeper review</span>
-    </div>
-    <div class="grid-4">
-      <div class="card">
-        <div class="card-label">24-Hour Summary</div>
-        <div class="card-value">{{ "%.2f"|format(total_24h.total_kwh or 0) }}<span class="unit">kWh</span></div>
-        <div class="card-meta">{{ "%.0f"|format((total_24h.total_kwh or 0) * 1000 / 24) }} W avg</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Cost</div>
-        <div class="card-value">${{ "%.2f"|format((total_24h.total_cents or 0) / 100) }}</div>
-        <div class="card-meta">at ${{ "%.4f"|format(rate) }}/kWh</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Biggest Load</div>
-        <div class="card-value" style="font-size:1.4rem;">{{ biggest_circuit.channel_name if biggest_circuit else '—' }}</div>
-        <div class="card-meta">{{ "%.2f"|format(biggest_circuit.total_kwh or 0) }} kWh ({{ "%.0f"|format(biggest_circuit.pct or 0) }}% of total)</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Month-to-Date</div>
-        <div class="card-value">${{ "%.2f"|format((mc.this_month.total_cents or 0)/100) }}</div>
-        <div class="card-meta">{{ "%.1f"|format(mc.this_month.total_kwh or 0) }} kWh this month</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2>Action Center</h2>
-      <span class="section-sub">Safety, heavy hitters, and always-on loads</span>
-    </div>
-    <div class="grid-3">
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Safety Watch</div>
-        {% for b in safety_breakers[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:600; color:var(--text);">{{ b.label }}</span>
-          <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Live Heavy Hitters</div>
-        {% for c in top_live_circuits[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
-        {% endfor %}
-      </div>
-      <div class="card">
-        <div class="card-label" style="margin-bottom:0.75rem;">Always-On Loads</div>
-        {% for s in standby_circuits[:4] %}
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
-          <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
-        </div>
-        {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2>Analysis</h2>
-      <span class="section-sub">Next places to drill down</span>
-    </div>
-    <div class="grid-3">
-      <a href="/reports#recommendations" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Reports</div>
-          <div class="card-value" style="font-size:1.35rem;">Cost & Budget</div>
-          <div class="card-meta">Monthly projection, month-over-month changes, standby review, and recommendations.</div>
-        </div>
-      </a>
-      <a href="/trends" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Trends</div>
-          <div class="card-value" style="font-size:1.35rem;">Usage Patterns</div>
-          <div class="card-meta">Daily usage, hourly pattern, and trend slope.</div>
-        </div>
-      </a>
-      <a href="/circuits" style="text-decoration:none; color:inherit;">
-        <div class="card">
-          <div class="card-label">Circuits</div>
-          <div class="card-value" style="font-size:1.35rem;">Panel Detail</div>
-          <div class="card-meta">Breaker safety, slot layout, always-on loads, and circuit drilldown.</div>
-        </div>
-      </a>
-    </div>
   </div>
 
 </div>
@@ -3065,17 +2826,17 @@ LOG_HTML = """
 <div class="page">
   <section class="card" style="margin-top:1.5rem;" aria-labelledby="capture-heading">
     <h2 id="capture-heading">Recorded Capture Quality</h2>
-    <p>Completed hours only; each mark counts distinct minutes with a recorded Main reading for the selected device. This is not process uptime. Imported or compacted data, non-minute polling, and local-clock changes can affect interpretation.</p>
+    <p>Completed hours only; each mark counts distinct minutes with a recorded Main reading for the selected device. This is not process uptime. Imported or compacted data and non-minute polling can affect interpretation. UTC reporting-zone intervals preserve repeated-hour offsets and use actual minute denominators for partial transition bins.</p>
     {% for hours, buckets in capture_history %}
     <h3>{{ '48 hours' if hours == 48 else '7 days' }}</h3>
-    <div style="display:flex;gap:2px;margin:8px 0;" role="img" aria-label="{{ hours }} completed hourly capture buckets; details below">
+    <div style="display:flex;gap:2px;margin:8px 0;" role="img" aria-label="{{ buckets|length }} capture intervals over {{ hours }} completed elapsed hours; details below">
       {% for bucket in buckets %}
-      <span style="flex:1;min-width:0;height:20px;background:{{ 'var(--green)' if bucket.state == 'dense' else 'var(--amber)' if bucket.state == 'partial' else 'var(--stone-300)' }};" title="{{ bucket.hour }}: {{ bucket.minutes }}/60 minutes ({{ bucket.coverage_pct }}%), {{ bucket.state }}"></span>
+      <span style="flex:1;min-width:0;height:20px;background:{{ 'var(--green)' if bucket.state == 'dense' else 'var(--amber)' if bucket.state == 'partial' else 'var(--stone-300)' }};" title="{{ bucket.hour }}: {{ "%.0f"|format(bucket.minutes) }}/{{ "%.0f"|format(bucket.expected_minutes|default(60)) }} minutes ({{ bucket.coverage_pct }}%), {{ bucket.state }}"></span>
       {% endfor %}
     </div>
     <details><summary>Hourly capture details · {{ hours }} hours</summary>
-      <div style="max-height:240px;overflow:auto;"><table><thead><tr><th>Hour (collector local time)</th><th>Recorded minutes</th><th>Coverage</th><th>Collector health reports / errors</th></tr></thead><tbody>
-      {% for bucket in buckets %}<tr><td>{{ bucket.hour }}</td><td>{{ bucket.minutes }}/60 · {{ bucket.state }}</td><td>{{ bucket.coverage_pct }}%</td><td>{{ bucket.health_reports }} / {{ bucket.reported_errors }}</td></tr>{% endfor %}
+      <div style="max-height:240px;overflow:auto;"><table><thead><tr><th>Hour (reporting-zone or legacy collector time)</th><th>Recorded minutes</th><th>Coverage</th><th>Collector health reports / errors</th></tr></thead><tbody>
+      {% for bucket in buckets %}<tr><td>{{ bucket.hour }}</td><td>{{ "%.0f"|format(bucket.minutes) }}/{{ "%.0f"|format(bucket.expected_minutes|default(60)) }} · {{ bucket.state }}</td><td>{{ bucket.coverage_pct }}%</td><td>{{ bucket.health_reports }} / {{ bucket.reported_errors }}</td></tr>{% endfor %}
       </tbody></table></div>
     </details>
     {% endfor %}
@@ -3159,7 +2920,7 @@ LOG_HTML = """
     </div>
     {% for e in entries %}
     <div class="log-entry">
-      <span class="log-ts">{{ e.timestamp[:19] }}</span>
+      <span class="log-ts">{{ e.local_timestamp|default(e.timestamp[:19]) }}</span>
       <span class="log-kwh">{{ "%.4f"|format(e.total_kwh or 0) }} kWh</span>
       <span class="log-cost">${{ "%.4f"|format((e.total_cents or 0)/100) }}</span>
       <span class="log-ch">{{ e.channel_count }} ch</span>
@@ -3226,7 +2987,7 @@ function applyStatus(d) {
       panel.style.display = 'block';
     }
 
-    last.textContent = d.timestamp ? (d.timestamp.slice(0,19).replace('T',' ') + ' (' + fmtAge(d.age_secs) + ')') : '—';
+    last.textContent = d.timestamp ? (d.timestamp.replace('T',' ') + ' (' + fmtAge(d.age_secs) + ')') : '—';
     errs.textContent = d.consecutive_errors ?? '—';
     errs.style.color = (d.consecutive_errors > 0) ? 'var(--red)' : 'var(--text)';
 
@@ -3948,13 +3709,13 @@ def reports_page():
         except (ValueError, OverflowError):
             solar_error = ('Enter finite nonnegative generation and rates, and a self-consumption '
                            'percentage from 0 to 100. Recorded Main consumption is required.')
-    capture = energy.get_capture_history(48, com['active_device_gid'])[-24:]
+    capture = energy.get_capture_history(24, com['active_device_gid'])
     return _render(
         REPORTS_HTML,
         monthly_costs=energy.get_monthly_costs(12),
         active_page="reports",
         solar_result=solar_result, solar_error=solar_error, solar_main=main_24h,
-        solar_dense_hours=sum(hour['state'] == 'dense' for hour in capture),
+        solar_dense_hours=sum(hour['expected_minutes']/60 for hour in capture if hour['state'] == 'dense'),
         solar_inputs={key: request.args.get(key, '') for key in
                       ('solar_generation', 'solar_self_pct', 'solar_export_rate')},
         solar_rate_cents=energy.RATE_CENTS,
@@ -4153,34 +3914,12 @@ def circuit_detail(circuit_name, period="day"):
     circuit_url  = quote(circuit_name, safe="")
     com = _common()
 
-    data = energy.get_circuit_data(circuit_name, period)
+    data = energy.get_circuit_data(circuit_name, period, com['active_device_gid'])
 
     # Per-circuit context comparison using same window as the period
     window_map = {"hour": 60, "day": 60*24, "week": 60*24*7, "month": 60*24*30}
     wmin = window_map.get(period, 60*24)
-    # Override circuit-level context (main get_now_vs_context queries Main channel)
-    # Build a simple circuit-specific context
-    from datetime import datetime, timedelta
-    _conn = energy._connect()
-    _c    = _conn.cursor()
-    _now  = datetime.now()
-    def _ckt_kwh(offset_days):
-        start = (_now - timedelta(days=offset_days, minutes=wmin)).isoformat()
-        end   = (_now - timedelta(days=offset_days)).isoformat()
-        _c.execute("SELECT SUM(usage_kwh) FROM readings WHERE channel_name=? AND timestamp BETWEEN ? AND ?",
-                   (circuit_name, start, end))
-        row = _c.fetchone()
-        return row[0] if row and row[0] is not None else None
-    ckt_ctx = {
-        "current_kwh":    _ckt_kwh(0),
-        "yesterday_kwh":  _ckt_kwh(1),
-        "last_week_kwh":  _ckt_kwh(7),
-        "last_month_kwh": _ckt_kwh(30),
-        "vs_yesterday_pct":  energy._delta_pct(_ckt_kwh(0), _ckt_kwh(1)),
-        "vs_last_week_pct":  energy._delta_pct(_ckt_kwh(0), _ckt_kwh(7)),
-        "vs_last_month_pct": energy._delta_pct(_ckt_kwh(0), _ckt_kwh(30)),
-    }
-    _conn.close()
+    ckt_ctx = energy.get_channel_context(circuit_name, wmin, com['active_device_gid'])
 
     return _render(
         CIRCUIT_HTML,

@@ -192,9 +192,29 @@ capture or an inferred usage total for missing days.
 
 These adapters are exercised only through explicit read-only maintenance
 connections to private rehearsal copies. This is not permission to launch Flask
-against a converted artifact. Capture/context/peak/intraday queries,
-writers, imports, retention/compaction and native cache/sync paths are not yet
+against a converted artifact. Writers, imports, retention/compaction and native cache/sync paths are not yet
 UTC-ready; the ordinary connection guard remains until they are coordinated.
+
+Recorded context, intraday, capture and peak-time queries now use the persisted
+reporting zone in read-only rehearsals. Context windows use one captured instant
+and a consistent database read snapshot; adjacent windows do not share a reading.
+Same-clock references on ambiguous/nonexistent prior dates stay unavailable rather
+than guessing a DST fold or normalizing a gap. Circuit detail uses device-scoped
+queries instead of mixing same-named channels across devices.
+
+Today/yesterday rows have independent actual-day labels and null missing/future
+bins. Capture bars exclude the incomplete current bin, use distinct observed
+minute positions, and retain actual elapsed denominators on clipped transition
+bins. Solar capture is duration-weighted over its requested 24-hour range, not
+the last 24 cells. These minute-position counts are sampling heuristics, not proof
+of uninterrupted collection or known measurement duration. Peak time labels use
+the reporting zone and preserve fold offsets; watt accuracy is still unresolved.
+
+Issue #135 blocks accurate power estimates: importing a 3 kWh hourly observation
+currently produces a 180,000 W minute-based estimate instead of a 3,000 W hourly
+average. Persist source/interval evidence through polling, imports, compaction,
+sync and clients; suppress power where duration is unknown. Passing UTC query
+tests cannot close this separate measurement-model problem.
 
 ## Reproduction tests
 
@@ -204,6 +224,7 @@ venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_dashboard_freshness.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_utc_calendar_queries.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_utc_duration_queries.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_live_queries.py -v
 ```
 
 Tests cover New York gaps/folds, explicit offsets, a half-hour DST transition,
@@ -240,3 +261,11 @@ subprocesses, both DST folds, spring gaps, half-hour day-end clipping, exact
 microsecond bounds, query cleanup on invalid clocks and the real Trends chart
 script's offset-bearing labels. This does not verify production HTTP/native
 operation against UTC data, and does not authorize deployment.
+
+The live-query fixture suite executes the actual dashboard, Reports, Trends,
+circuit detail, Log and menu API against explicit read-only UTC fixture adapters.
+It also exercises real concurrent WAL updates, healthy snapshot fast paths,
+future-snapshot fallback, independent banner chart labels and three host-timezone
+subprocesses. It exposed duplicated dashboard markup that made circuit detail
+return HTTP 500; the development template now retains only circuit-owned sections.
+These are fixture HTTP checks, not a live UTC collector or native-cache rehearsal.
