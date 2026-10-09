@@ -634,6 +634,42 @@ def ensure_table(path: str | Path | None = None):
         BEGIN SELECT RAISE(ABORT, 'CSV monitor binding is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS csv_binding_immutable_delete BEFORE DELETE ON csv_source_bindings
         BEGIN SELECT RAISE(ABORT, 'CSV monitor binding is immutable'); END;
+        CREATE TABLE IF NOT EXISTS csv_identity_reviews (
+            id TEXT PRIMARY KEY, action TEXT NOT NULL CHECK (action IN ('bind','revert')),
+            reversed_review TEXT, source_gid TEXT NOT NULL, canonical_gid TEXT NOT NULL,
+            snapshot_sha256 TEXT NOT NULL, plan_sha256 TEXT NOT NULL, reviewed_at_utc TEXT NOT NULL,
+            state_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS csv_identity_review_batches (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, review_id TEXT NOT NULL,
+            batch_id TEXT NOT NULL, canonical_gid TEXT NOT NULL,
+            UNIQUE (review_id,batch_id),
+            FOREIGN KEY (review_id) REFERENCES csv_identity_reviews(id),
+            FOREIGN KEY (batch_id) REFERENCES csv_source_batches(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_csv_review_batch ON csv_identity_review_batches(batch_id,sequence);
+        CREATE TABLE IF NOT EXISTS csv_identity_review_rows (
+            review_id TEXT NOT NULL, reading_id INTEGER NOT NULL, observation_id TEXT NOT NULL,
+            before_gid TEXT NOT NULL, after_gid TEXT NOT NULL, reading_sha256 TEXT NOT NULL,
+            PRIMARY KEY (review_id,reading_id),
+            FOREIGN KEY (review_id) REFERENCES csv_identity_reviews(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS csv_review_immutable_update BEFORE UPDATE ON csv_identity_reviews
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_immutable_delete BEFORE DELETE ON csv_identity_reviews
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_batch_immutable_update BEFORE UPDATE ON csv_identity_review_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_batch_immutable_delete BEFORE DELETE ON csv_identity_review_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_row_immutable_update BEFORE UPDATE ON csv_identity_review_rows
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_row_immutable_delete BEFORE DELETE ON csv_identity_review_rows
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE VIEW IF NOT EXISTS csv_effective_devices AS
+            SELECT b.id batch_id,b.device_gid source_gid,COALESCE(d.canonical_gid,b.device_gid) device_gid
+            FROM csv_source_batches b LEFT JOIN csv_identity_review_batches d ON d.sequence=(
+                SELECT MAX(sequence) FROM csv_identity_review_batches WHERE batch_id=b.id);
         CREATE TABLE IF NOT EXISTS csv_source_observations (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
             id TEXT NOT NULL UNIQUE, batch_id TEXT NOT NULL, row_number INTEGER NOT NULL,

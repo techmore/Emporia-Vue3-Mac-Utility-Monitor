@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.3.50 - Unreleased
+
+- Add reviewed offline legacy CSV identity binding and append-only reversal.
+  Audit verified private standalone backups; require exact snapshot/plan hashes
+  before publishing a new copy. Verify original bytes/cells/units/zones/bounds and
+  stored pricing; block unowned data, collisions, unknown target coverage and
+  intersecting intervals. Never guess historical units or change stored costs.
+- Preserve raw IDs/bindings and use batch-scoped effective identity decisions for
+  subsequent projection. Move only owned reading IDs, preserving energy/evidence,
+  original journals and stream identities. Keep newer/unrelated target snapshots;
+  append ordinary upserts and record immutable review/row/derived-state receipts.
+  Reversal preserves earlier reviews and rejects changed or superseded state.
+- Verify real HTTP cache resume/native history, finer re-import, private-file/drift/
+  rollback failure guards and original-export binding/reversal. UTC live guards and
+  production services remain unchanged. Source disagreements, pre-ledger adoption,
+  completed-history publication and production cutover remain #140/#135/#127 gates.
+
 ## 2.3.49 - Unreleased
 
 - Resolve new CSV imports to canonical cloud monitor IDs using poller discovery,

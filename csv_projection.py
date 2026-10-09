@@ -272,10 +272,11 @@ def publish_csv(conn, source: dict, observations: list[dict], clock) -> dict:
         raw = [
             dict(row)
             for row in conn.execute(
-            """SELECT o.*,o.sequence observation_order,b.device_gid,b.source_timezone
+            """SELECT o.*,o.sequence observation_order,? device_gid,b.source_timezone
             FROM csv_source_observations o JOIN csv_source_batches b ON b.id=o.batch_id
-            WHERE b.device_gid=? AND o.channel_name=? ORDER BY o.sequence""",
-                (source["device_gid"], channel),
+            WHERE o.batch_id IN (SELECT batch_id FROM csv_effective_devices WHERE device_gid=?)
+                AND o.channel_name=? ORDER BY o.sequence""",
+                (source["device_gid"], source["device_gid"], channel),
             )
         ]
         existing = [

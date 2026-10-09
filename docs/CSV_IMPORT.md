@@ -102,6 +102,97 @@ devices by 60 without knowing the source unit or interval. It is retired in
 2.3.39. Its compatibility function performs no mutation; startup no longer calls
 it. Previous migration markers and stored values are retained, not reinterpreted.
 
+### Reviewed Identity Copies (Development 2.3.50)
+
+`scripts/reconcile_csv_identity.py` audits a verified **standalone backup**, not
+the running database. It can then publish a new private copy with explicit approval
+of that exact plan. It never installs the copy, stops services, logs in to Emporia,
+changes prices or activates UTC. Do not point an older app at the artifact or
+deploy this draft: later live writes and historical conflicts still need #135.
+
+Prerequisites: upgrade only a disposable working copy to the reviewed schema,
+record genuine poller discovery there, then take a new verified online backup.
+Do not fabricate discovery claims or run schema initialization against the sole
+archived backup. Backups must be private regular files (0600), single-link and
+without WAL/SHM/rollback sidecars; output directories must be 0700. Existing
+targets, symlinks, FIFOs, drift and incorrect hashes fail closed. If an old schema
+upgrade changes archived row data, upgrade and inspect another copy first.
+
+Audit example (substitute independently verified IDs and hashes):
+
+```bash
+umask 077
+venv/bin/python3 scripts/reconcile_csv_identity.py \
+  --snapshot /private/identity-review/archive.db \
+  --expected-sha256 VERIFIED_SNAPSHOT_SHA256 \
+  --source-gid VERIFIED_EXPORT_ID --canonical-gid VERIFIED_CLOUD_ID \
+  > /private/identity-review/plan.json
+```
+
+The CLI isolates import-time bootstrap even when `DB_PATH` points to an existing
+installation. Exit 0 means this **candidate** is unblocked, not deployed or proven
+bill-correct; exit 2 returns blocker counts; exit 1 indicates invalid inputs or a
+failed operation. Reports and backups must stay private and outside Git.
+
+The plan requires one discovery-backed canonical candidate, not a name match or
+an ambiguous suffix guess. It verifies every retained observation against exact
+original CSV bytes, headers, cells, IDs, units, declared source timezone, interval
+bounds and original price basis. Every selected alias reading must be ledger-owned
+and match that evidence. Unowned alias readings/snapshots, invalid source evidence,
+overlapping source projections, canonical key collisions, intersecting target
+coverage or target history with unknown bounds block publication. Adjacent verified
+half-open intervals can coexist. An empty retained batch can be bound without
+inventing readings. This cannot adopt or repair pre-ledger, previously mispriced,
+divided-by-60 or otherwise unverifiable history.
+
+After reviewing all counts and prerequisites, repeat the same audit command with:
+
+```bash
+  --destination /private/identity-review/canonical.db \
+  --reviewed-plan-sha256 EXACT_PLAN_SHA256_FROM_REVIEW
+```
+
+Only `readings.device_gid` changes for approved owned IDs. kWh, stored cents,
+timestamps, interval/provider evidence, original journal rows, stream identity,
+raw batches/cells and projection membership remain unchanged. Derived snapshots
+move only verified source candidates; newer/unrelated retained target snapshots
+survive. Service-capability evidence merges without dropping stronger target data.
+The transaction appends one ordinary upsert per changed reading ID, not new IDs
+or a cache reset. Single-event cache pages retain the same total energy; device
+scopes are complete only once the cache reaches the journal watermark.
+
+Immutable review records retain the approved backup/plan hashes, row fingerprints
+and before/after derived-state receipts. Batch-scoped decisions are append-only;
+`csv_effective_devices` selects their latest decision without editing the original
+batch/device binding. Subsequent imports use that effective scope and the same
+existing conflict/coverage rules. This is not a global alias on every read query.
+
+To review reversal, use the applied copy's verified `artifact_sha256` and its
+`review_id`; omit monitor IDs:
+
+```bash
+venv/bin/python3 scripts/reconcile_csv_identity.py \
+  --snapshot /private/identity-review/canonical.db \
+  --expected-sha256 VERIFIED_APPLIED_ARTIFACT_SHA256 \
+  --rollback-review-id ORIGINAL_BIND_REVIEW_ID
+```
+
+Approve that reversal plan separately and publish to another new private path.
+Reversal appends new decisions/upserts; it preserves the first review and original
+source evidence, and restores original reading IDs/values and derived-state rows.
+Changed/pruned/reprojected readings, superseded decisions or newer derived state
+invalidate automatic reversal. Obtain a new reviewed reconciliation instead of
+discarding newer data. Reconcile identity **before** UTC conversion; a subsequent
+UTC conversion remains guarded and cannot be silently undone by this tool.
+
+Private fixture verification covers apply/revert, failure injection and cleanup,
+real authenticated loopback downloads/cache resume, native offline history and
+finer imports after binding. All five original files were also checked through a
+private legacy-ledger apply/reversal: 460,350 source observations validated and
+66,114 selected readings moved and reversed with original kWh/cents/IDs intact.
+This evidence is not current SER8 acceptance. General live/source reconciliation,
+completed capture, operational cutover and whole-bill correctness remain open.
+
 This prevents further guessed corrections; it does not prove old history is
 correct or repair a prior divide-by-60. Preserve a verified online backup and
 original exports before any reconciliation. Match original device, timestamp,

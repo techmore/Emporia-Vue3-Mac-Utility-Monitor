@@ -62,7 +62,7 @@ def resolve_export(conn, export_identity: str, selected, require_registered: boo
     # A different export prefix must not hide old split history for this monitor.
     if aliases:
         placeholders = ','.join('?' for _ in aliases)
-        for table in ('readings', 'csv_source_batches'):
+        for table in ('readings', 'csv_effective_devices'):
             if conn.execute(f'SELECT 1 FROM {table} WHERE upper(device_gid) IN ({placeholders}) LIMIT 1',
                             tuple(aliases)).fetchone():
                 raise ValueError('Existing split monitor history requires reviewed reconciliation before import')

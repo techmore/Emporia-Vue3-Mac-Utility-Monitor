@@ -58,6 +58,16 @@ Keep original CSV bytes and per-source identity bindings immutable. Existing spl
 history requires reviewed reconciliation, not aliases added to every read query.
 See `docs/CSV_IMPORT.md` and `tests/test_device_identity.py`.
 
+`identity_reconciliation.py` and `scripts/reconcile_csv_identity.py` audit/apply/revert
+only verified offline copies. `verified_snapshot.py` handles private immutable
+snapshot copying/publication. Require exact snapshot/plan approval, original cell
+validation and collision/coverage checks; never adopt unknown live/legacy history.
+Review/batch/row evidence is append-only. `csv_effective_devices` supplies reviewed
+batch scope to the CSV publisher without rewriting raw IDs or original bindings.
+Preserve reading values/IDs, journal prefixes, stream identities and newer target
+snapshots; reversed changes append ordinary upserts. Reconcile before guarded UTC
+conversion. These tools do not install/deploy artifacts or repair source conflicts.
+
 ---
 
 ## Build & Run Commands
@@ -68,7 +78,7 @@ See `docs/CSV_IMPORT.md` and `tests/test_device_identity.py`.
 # Install dependencies into the existing virtualenv
 venv/bin/pip install -r requirements.txt
 
-# Syntax-check both Python files (no test suite yet)
+# Syntax-check the core Python files
 venv/bin/python3 -m py_compile energy.py web.py
 
 # Run the poller (continuous, unbuffered output)
@@ -139,7 +149,7 @@ venv/bin/ruff check energy.py web.py
 venv/bin/ruff check --fix energy.py web.py    # auto-fix safe issues
 ```
 
-No `pyproject.toml` or `ruff.toml` config file exists; Ruff runs with defaults.
+Ruff configuration lives in `pyproject.toml`; use its selected rules and exclusions.
 
 ---
 
