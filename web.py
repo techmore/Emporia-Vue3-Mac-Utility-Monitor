@@ -142,7 +142,7 @@ BASE_CSS = """
 .kasa-actions { display:flex; gap:8px; margin:12px 0; }
 .power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px; }
 .power-heatmap th { font-size: 0.7rem; padding: 3px; }
-.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); min-width: 140px; text-align: left; }
+.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); color: var(--olive-50); min-width: 140px; text-align: left; }
 .power-heatmap .heat-cell { padding: 0; height: 20px; min-width: 8px; border-radius: 2px; }
 .heat-missing { background: var(--stone-200); opacity: 0.15; }
 .heat-1 { background: var(--olive-900); }
@@ -2742,16 +2742,18 @@ TRENDS_HTML = """
     <h2>Weekly Power Heatmap</h2>
     <p class="card-meta">Last seven complete days · hourly recorded kWh · brighter means more energy.
       Blank cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
-      Sample counts do not prove coverage; imports may represent longer intervals.</p>
+      Sample counts do not prove coverage; imports may represent longer intervals.
+      {% if heatmap.reporting_timezone %}Calendar: {{ heatmap.reporting_timezone }}.
+      Repeated hours retain their offsets; transition-day column counts follow elapsed time.{% endif %}</p>
     {% if heatmap.circuits %}
     <div style="overflow-x:auto;">
       <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
-        <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
-        <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ hour[-2:] if hour[-2:] in ['00','06','12','18'] else '' }}</th>{% endfor %}</tr></thead>
+        <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.day_columns %}<th colspan="{{ day.columns }}" scope="colgroup">{{ day.label }}</th>{% endfor %}</tr>
+        <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ heatmap.hour_labels[loop.index0] }}</th>{% endfor %}</tr></thead>
         <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
         {% for cell in circuit.cells %}<td class="heat-cell {{ 'heat-' ~ cell.level if cell else 'heat-missing' }}"
           tabindex="0" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
-          title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }}{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
+          title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }} · {{ heatmap.hour_minutes[loop.index0]|int }} minutes{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
       </table>
     </div>
     {% else %}<p>No circuit history recorded in this window.</p>{% endif %}
@@ -2761,6 +2763,7 @@ TRENDS_HTML = """
     <h2>Typical Week &amp; Cost Forecast</h2>
     <p class="card-meta">Last 28 complete days · Monday–Sunday. Each predicted hour needs at least
       two matching weekdays with 57 or more distinct recorded minutes. Hourly imports alone cannot qualify.
+      Ambiguous repeated hours and partial transition-hour bins do not establish weekly repetitions.
       This is a repeat-pattern baseline, not a weather-adjusted forecast. Missing hours remain unknown.</p>
     {% if pattern.circuits %}
     <div style="overflow-x:auto;">

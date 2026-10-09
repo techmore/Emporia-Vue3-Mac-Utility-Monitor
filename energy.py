@@ -9,14 +9,16 @@ import stat
 import tempfile
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pyemvue
 import requests
 from pyemvue.enums import Scale, Unit
 
+from energy_clock import EnergyClock
 from runtime_store import write_private_json
+from timestamp_model import classify_timestamp
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
@@ -130,6 +132,16 @@ def _connect(path: str | Path | None = None, *,
         if marked and conn.execute("SELECT 1 FROM utc_rehearsal LIMIT 1").fetchone():
             if not allow_utc_rehearsal or not read_only:
                 raise RuntimeError("UTC rehearsal database is not a supported live collector")
+        policy_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='energy_time_policy'"
+        ).fetchone()
+        policy = conn.execute("SELECT timestamp_format,reporting_timezone FROM energy_time_policy").fetchone() if policy_table else None
+        if policy:
+            if policy[0] != "utc_v1":
+                raise RuntimeError("Unsupported energy timestamp policy")
+            EnergyClock(policy[1])
+            if not allow_utc_rehearsal or not read_only:
+                raise RuntimeError("UTC energy policy is not ready for live collection")
         if read_only:
             conn.execute("PRAGMA query_only=ON")
         else:
@@ -140,6 +152,28 @@ def _connect(path: str | Path | None = None, *,
         conn.close()
         raise
     return conn
+
+
+def _utc_clock(conn) -> EnergyClock | None:
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name IN ('energy_time_policy','utc_rehearsal')"
+    )}
+    policy = conn.execute("SELECT * FROM energy_time_policy").fetchone() if "energy_time_policy" in tables else None
+    marker = conn.execute("SELECT * FROM utc_rehearsal").fetchone() if "utc_rehearsal" in tables else None
+    if not policy:
+        if marker:
+            raise RuntimeError("UTC artifact lacks reporting policy; create a new rehearsal")
+        return None
+    if (policy["timestamp_format"] != "utc_v1" or
+            (marker and (policy["reporting_timezone"] != marker["reporting_timezone"] or
+                         policy["legacy_timezone"] != marker["legacy_timezone"]))):
+        raise RuntimeError("Inconsistent energy timestamp policy")
+    clock = EnergyClock(policy["reporting_timezone"])
+    for name, function in (("energy_day", clock.day_key), ("energy_month", clock.month_key),
+                           ("energy_minute", clock.minute_key), ("energy_hour", clock.hour_key)):
+        conn.create_function(name, 1, function, deterministic=True)
+    return clock
 
 
 def backup_database(destination: str | Path) -> dict:
@@ -181,18 +215,25 @@ def backup_database(destination: str | Path) -> dict:
         Path(str(temporary) + "-shm").unlink(missing_ok=True)
 
 
-def get_today_circuit_totals(device_gid: str | None = None, period: str = "day") -> list[dict]:
-    """Recorded totals for local calendar day, Monday-based week, or month to date."""
+def get_today_circuit_totals(device_gid: str | None = None, period: str = "day", *,
+                             now: datetime | None = None) -> list[dict]:
+    """Recorded totals for reporting day, Monday-based week, or month to date."""
     if period not in {"day", "week", "month"}:
         raise ValueError("Invalid cost period")
-    now = datetime.now()
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if period == "week":
-        start -= timedelta(days=start.weekday())
-    elif period == "month":
-        start = start.replace(day=1)
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        now = now or (datetime.now(timezone.utc) if clock else datetime.now())
+        if clock:
+            start = clock.period_start(now, period)
+            since, until = clock.stamp(start), clock.stamp(now)
+        else:
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if period == "week":
+                start -= timedelta(days=start.weekday())
+            elif period == "month":
+                start = start.replace(day=1)
+            since, until = start.isoformat(), now.isoformat()
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
@@ -203,7 +244,7 @@ def get_today_circuit_totals(device_gid: str | None = None, period: str = "day")
                 FROM readings WHERE device_gid = ? AND timestamp >= ? AND timestamp <= ?
                   AND channel_name NOT IN ({placeholders})
                 GROUP BY channel_name ORDER BY total_kwh DESC""",
-            (gid, start.isoformat(), now.isoformat(), *META_CHANNELS),
+            (gid, since, until, *META_CHANNELS),
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
@@ -214,24 +255,33 @@ def get_circuit_week_comparison(
     device_gid: str | None = None, *, end: datetime | None = None,
 ) -> list[dict]:
     """Compare complete seven-day windows, withholding changes for sparse capture."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
-    middle = boundary - timedelta(days=7)
-    start = boundary - timedelta(days=14)
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        if clock:
+            start, boundary = clock.complete_days(end or datetime.now(timezone.utc), 14)
+            middle = clock.day_bounds(clock.local(boundary).date()-timedelta(days=7))[0]
+            minute_expression = "energy_minute(timestamp)"
+            bounds = tuple(clock.stamp(moment) for moment in (start, middle, boundary))
+        else:
+            boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+            middle = boundary-timedelta(days=7)
+            start = boundary-timedelta(days=14)
+            minute_expression = "strftime('%Y-%m-%dT%H:%M', timestamp)"
+            bounds = tuple(moment.isoformat() for moment in (start, middle, boundary))
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
         rows = conn.execute(
-            """SELECT channel_name,
+            f"""SELECT channel_name,
                       CASE WHEN timestamp >= ? THEN 'current' ELSE 'previous' END AS period,
                       SUM(usage_kwh) AS kwh,
-                      COUNT(DISTINCT strftime('%Y-%m-%dT%H:%M', timestamp)) AS minutes
+                      COUNT(DISTINCT {minute_expression}) AS minutes
                FROM readings
                WHERE device_gid = ? AND timestamp >= ? AND timestamp < ?
                  AND usage_kwh IS NOT NULL AND usage_kwh >= 0
                GROUP BY channel_name, period""",
-            (middle.isoformat(), gid, start.isoformat(), boundary.isoformat()),
+            (bounds[1], gid, bounds[0], bounds[2]),
         ).fetchall()
     finally:
         conn.close()
@@ -242,12 +292,13 @@ def get_circuit_week_comparison(
             continue
         channels.setdefault(name, {})[row["period"]] = dict(row)
     result = []
-    expected_minutes = 7 * 24 * 60
+    current_expected = (boundary-middle).total_seconds()/60
+    previous_expected = (middle-start).total_seconds()/60
     for name, periods in channels.items():
         current = periods.get("current", {})
         previous = periods.get("previous", {})
-        current_coverage = current.get("minutes", 0) / expected_minutes
-        previous_coverage = previous.get("minutes", 0) / expected_minutes
+        current_coverage = current.get("minutes", 0) / current_expected
+        previous_coverage = previous.get("minutes", 0) / previous_expected
         comparable = min(current_coverage, previous_coverage) >= 0.95
         # Even similar totals can be misleading if one week has materially more gaps.
         comparable = comparable and abs(current_coverage - previous_coverage) <= 0.01
@@ -261,28 +312,46 @@ def get_circuit_week_comparison(
             "previous_coverage_pct": previous_coverage * 100,
             "change_pct": ((new / old - 1) * 100) if comparable and old > 0 else None,
             "comparable": comparable,
-            "start": start.isoformat(),
-            "middle": middle.isoformat(),
-            "end": boundary.isoformat(),
+            "start": bounds[0], "middle": bounds[1], "end": bounds[2],
+            "current_expected_minutes": current_expected,
+            "previous_expected_minutes": previous_expected,
         })
     return sorted(result, key=lambda row: row["current_kwh"], reverse=True)
 
 
 def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Recorded circuit energy in hourly buckets; absent hours are never zero-filled."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
-    start = boundary - timedelta(days=7)
-    hours = [(start + timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        if clock:
+            grid = clock.hour_grid(end or datetime.now(timezone.utc))
+            keys = [row["key"] for row in grid["bins"]]
+            hours = [row["hour"] for row in grid["bins"]]
+            ticks = [row["tick"] for row in grid["bins"]]
+            intervals = [row["minutes"] for row in grid["bins"]]
+            groups = grid["day_columns"]
+            since, until = grid["start"], grid["end"]
+            hour_expression = "energy_hour(timestamp)"
+        else:
+            boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+            start = boundary-timedelta(days=7)
+            hours = [(start+timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
+            keys = hours
+            intervals = [60]*len(hours)
+            ticks = [hour[-2:] if hour[-2:] in {"00", "06", "12", "18"} else "" for hour in hours]
+            groups = [{"label": (start+timedelta(days=i)).strftime('%a %m/%d'), "columns": 24}
+                      for i in range(7)]
+            since, until = start.isoformat(), boundary.isoformat()
+            hour_expression = "strftime('%Y-%m-%dT%H', timestamp)"
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         rows = conn.execute(
-            """SELECT channel_name, strftime('%Y-%m-%dT%H', timestamp) hour,
+            f"""SELECT channel_name, {hour_expression} hour,
                       SUM(usage_kwh) kwh, COUNT(*) samples
                FROM readings WHERE device_gid = ? AND timestamp >= ? AND timestamp < ?
                  AND usage_kwh >= 0
                GROUP BY channel_name, hour""",
-            (gid, start.isoformat(), boundary.isoformat()),
+            (gid, since, until),
         ).fetchall() if gid else []
     finally:
         conn.close()
@@ -295,30 +364,44 @@ def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = N
                   default=0) or 1
     return {
         'hours': hours,
-        'days': [(start + timedelta(days=i)).strftime('%a %m/%d') for i in range(7)],
-        'start': start.isoformat(), 'end': boundary.isoformat(),
+        'days': [group['label'] for group in groups], 'day_columns': groups,
+        'hour_labels': ticks, 'hour_minutes': intervals,
+        'reporting_timezone': clock.reporting_timezone if clock else None,
+        'start': since, 'end': until,
         'circuits': [{'name': name, 'cells': [
             ({**cells[hour], 'level': min(5, int(cells[hour]['kwh'] / maximum * 5) + 1)}
-             if hour in cells else None) for hour in hours
+             if hour in cells else None) for hour in keys
         ]} for name, cells in sorted(channels.items())],
     }
 
 
-def _weekly_pattern(rows: list[dict]) -> dict:
+def _weekly_pattern(rows: list[dict], reporting_timezone: str | None = None) -> dict:
     """Compare repeated well-sampled hours, without filling gaps or summing circuits as mains."""
     patterns = {}
+    clock = EnergyClock(reporting_timezone) if reporting_timezone else None
     for row in rows:
         name = row['channel_name']
         if not name or name in META_CHANNELS - {'Main'}:
             continue
-        cells = patterns.setdefault(name, [[] for _ in range(168)])
+        cells = patterns.setdefault(name, [{} for _ in range(168)])
         if 57 <= row['minutes'] <= 60 and row.get('samples', row['minutes']) == row['minutes']:
             moment = datetime.fromisoformat(row['hour'])
-            cells[moment.weekday() * 24 + moment.hour].append(row['kwh'])
+            if clock:
+                moment = clock.local(moment)
+                # Repeated-hour folds are not two independent weekly repetitions.
+                # Skip ambiguous/partial wall hours rather than forecasting them.
+                if moment.minute or classify_timestamp(
+                    moment.replace(tzinfo=None).isoformat(), reporting_timezone,
+                )["status"] != "legacy_unique":
+                    continue
+            day = moment.date()
+            observations = cells[moment.weekday()*24+moment.hour]
+            observations[day] = row['kwh'] if day not in observations else None
     results = []
     for name, values in sorted(patterns.items()):
         cells = []
-        for samples in values:
+        for observations in values:
+            samples = [value for value in observations.values() if value is not None]
             cells.append({'kwh': sum(samples) / len(samples), 'low': min(samples),
                           'high': max(samples), 'weeks': len(samples)}
                          if len(samples) >= 2 else None)
@@ -333,23 +416,32 @@ def _weekly_pattern(rows: list[dict]) -> dict:
 
 def get_weekly_power_pattern(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Four-week same-weekday/hour baseline, requiring two >=95%-sampled repetitions."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        if clock:
+            start, boundary = clock.complete_days(end or datetime.now(timezone.utc), 28)
+            since, until = clock.stamp(start), clock.stamp(boundary)
+            hour_expression, minute_expression = "energy_hour(timestamp)", "energy_minute(timestamp)"
+        else:
+            boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+            since, until = (boundary-timedelta(days=28)).isoformat(), boundary.isoformat()
+            hour_expression = "strftime('%Y-%m-%dT%H:00:00',timestamp)"
+            minute_expression = "strftime('%Y-%m-%dT%H:%M',timestamp)"
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         rows = conn.execute(
-            """SELECT channel_name, strftime('%Y-%m-%dT%H:00:00',timestamp) hour,
+            f"""SELECT channel_name, {hour_expression} hour,
                       SUM(usage_kwh) kwh,
                       COUNT(*) samples,
-                      COUNT(DISTINCT strftime('%Y-%m-%dT%H:%M',timestamp)) minutes
+                      COUNT(DISTINCT {minute_expression}) minutes
                FROM readings WHERE device_gid=? AND timestamp>=? AND timestamp<?
                  AND usage_kwh>=0 GROUP BY channel_name,hour""",
-            (gid, (boundary-timedelta(days=28)).isoformat(), boundary.isoformat()),
+            (gid, since, until),
         ).fetchall() if gid else []
     finally:
         conn.close()
-    return {**_weekly_pattern([dict(row) for row in rows]),
-            'start': (boundary-timedelta(days=28)).isoformat(), 'end': boundary.isoformat()}
+    return {**_weekly_pattern([dict(row) for row in rows], clock.reporting_timezone if clock else None),
+            'start': since, 'end': until}
 
 
 def ensure_table(path: str | Path | None = None):
@@ -396,6 +488,12 @@ def ensure_table(path: str | Path | None = None):
             utc_timestamp TEXT NOT NULL,
             interpretation TEXT NOT NULL,
             PRIMARY KEY (table_name, row_key, column_name)
+        );
+        CREATE TABLE IF NOT EXISTS energy_time_policy (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            timestamp_format TEXT NOT NULL,
+            reporting_timezone TEXT NOT NULL,
+            legacy_timezone TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS poller_health_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1356,7 +1454,8 @@ def compact_minute_readings(conn, days: int) -> int:
     return removed
 
 
-def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[dict]:
+def get_monthly_costs(months: int = 12, device_gid: str | None = None, *,
+                      now: datetime | None = None) -> list[dict]:
     """Per-month whole-home and per-circuit recorded energy and cost, newest first.
 
     Totals come from Main (so circuits are not double counted). `days_recorded` counts
@@ -1368,19 +1467,24 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
-        first = datetime.now().replace(day=1)
+        clock = _utc_clock(conn)
+        now = now or (datetime.now(timezone.utc) if clock else datetime.now())
+        first = (clock.local(now) if clock else now).date().replace(day=1)
         for _ in range(max(1, months) - 1):
             first = (first - timedelta(days=1)).replace(day=1)
-        since = first.strftime("%Y-%m-01")
+        since = clock.stamp(clock.day_bounds(first)[0]) if clock else first.isoformat()
+        until = clock.stamp(now) if clock else now.isoformat()
+        month_expression = "energy_month(timestamp)" if clock else "substr(timestamp, 1, 7)"
+        day_expression = "energy_day(timestamp)" if clock else "substr(timestamp, 1, 10)"
         rows = conn.execute(
-            """SELECT substr(timestamp, 1, 7) month, channel_name,
+            f"""SELECT {month_expression} month, channel_name,
                       SUM(usage_kwh) kwh, SUM(cost_cents) cents,
-                      COUNT(DISTINCT substr(timestamp, 1, 10)) days
+                      COUNT(DISTINCT {day_expression}) days
                FROM readings
-               WHERE device_gid = ? AND timestamp >= ? AND channel_name IS NOT NULL
+               WHERE device_gid = ? AND timestamp >= ? AND timestamp <= ? AND channel_name IS NOT NULL
                  AND channel_name NOT IN ('Mains_A', 'Mains_B', 'Mains_C')
                GROUP BY month, channel_name""",
-            (gid, since),
+            (gid, since, until),
         ).fetchall()
     finally:
         conn.close()
@@ -1402,12 +1506,18 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
     return result
 
 
-def write_monthly_reports(directory: str | None = None) -> list[str]:
+def write_monthly_reports(directory: str | None = None, *, now: datetime | None = None) -> list[str]:
     """Write a Markdown cost report for each completed month that has none yet."""
     directory = directory or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "reports")
-    current = datetime.now().strftime("%Y-%m")
+    conn = _connect()
+    try:
+        clock = _utc_clock(conn)
+        now = now or (datetime.now(timezone.utc) if clock else datetime.now())
+        current = (clock.local(now) if clock else now).strftime("%Y-%m")
+    finally:
+        conn.close()
     written = []
-    for month in get_monthly_costs(12):
+    for month in get_monthly_costs(12, now=now):
         path = os.path.join(directory, f"energy-{month['month']}.md")
         if month["month"] >= current or os.path.exists(path) or month["total_cents"] is None:
             continue

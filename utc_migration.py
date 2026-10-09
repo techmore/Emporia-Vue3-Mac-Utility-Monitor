@@ -91,11 +91,12 @@ def _convert(connection, legacy_timezone: str, reporting_timezone: str,
              source_sha256: str) -> dict:
     """Convert all energy timestamp replicas in a single already-owned copy."""
     if (connection.execute("SELECT 1 FROM utc_rehearsal").fetchone() or
+            connection.execute("SELECT 1 FROM energy_time_policy").fetchone() or
             connection.execute("SELECT 1 FROM utc_timestamp_evidence LIMIT 1").fetchone()):
         raise ValueError("Source is already a rehearsal artifact")
     tables = [row[0] for row in connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN "
-        "('sqlite_sequence','utc_rehearsal','utc_timestamp_evidence') ORDER BY name"
+        "('sqlite_sequence','utc_rehearsal','utc_timestamp_evidence','energy_time_policy') ORDER BY name"
     )]
     watermark = connection.execute(
         "SELECT COALESCE(MAX(sequence),0) FROM reading_changes"
@@ -148,11 +149,14 @@ def _convert(connection, legacy_timezone: str, reporting_timezone: str,
         source_sha256, legacy_timezone, reporting_timezone,
         datetime.now(timezone.utc).isoformat(timespec="microseconds"),
     ))
+    connection.execute("INSERT INTO energy_time_policy VALUES (1,'utc_v1',?,?)",
+                       (reporting_timezone, legacy_timezone))
     return {
         "purpose": "utc_rehearsal_only", "live_ready": False,
         "source_sha256": source_sha256,
         "legacy_timezone_assumption": legacy_timezone,
         "reporting_timezone": reporting_timezone,
+        "timestamp_format": "utc_v1",
         "timestamp_evidence_rows": len(plan), "updated_rows": dict(updated),
         "preserved_non_timestamp_fingerprints": original,
         "original_journal_watermark": watermark,

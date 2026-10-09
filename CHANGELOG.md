@@ -11,6 +11,13 @@
 - Preserve timezone offsets and microseconds in dashboard/native-menu freshness
   and poller readiness checks. Reject malformed and excessively future-dated
   timestamps; retain legacy local interpretation until storage cutover.
+- Persist the rehearsal's explicit UTC/reporting-zone policy and integrate it into
+  circuit calendar totals, monthly stored costs, week comparisons, heatmaps and
+  repeated-week baselines. Render actual transition-day column counts and retain
+  fold offsets; do not count duplicate/fold observations as independent weeks.
+  Live activation remains blocked pending the remaining coordinated UTC paths.
+- Restore readable light text on the heatmap's dark sticky circuit labels while
+  preserving the olive/stone theme and contained horizontal scrolling.
 
 ## 2.3.37 - 2026-10-08
 

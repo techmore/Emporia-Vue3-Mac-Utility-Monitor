@@ -1,7 +1,7 @@
 # UTC migration - issue #127
 
 Status: preflight tooling in production; transactional rehearsal and readiness
-compatibility in development. Production still uses legacy naive/local energy
+compatibility and initial calendar integration in development. Production still uses legacy naive/local energy
 timestamps. Do not convert live data or change the collector timezone yet.
 This is not a completed UTC migration, and a clean preflight does not authorize one.
 
@@ -110,7 +110,12 @@ switching journal mode. Inspection requires
 `energy._connect(path, allow_utc_rehearsal=True, read_only=True)`, which cannot write
 or change its file hash. Older app versions do not recognize this marker; never
 point them at the artifact. No collectors, credentials, settings or services are
-changed by the rehearsal.
+changed by the rehearsal. New artifacts persist `energy_time_policy` with
+`timestamp_format=utc_v1`, an explicit reporting timezone and the declared legacy
+timezone assumption. Unknown formats fail closed. Neither the rehearsal marker
+nor this policy permits ordinary app connections or writes, even if one marker
+is missing. An old artifact without the policy remains available for raw
+read-only inspection but cannot run the new calendar queries; make a new copy.
 
 The October 8 private rehearsal converted all 100,237 readings and their energy
 timestamp replicas, retaining 201,918 original timestamp evidence entries. All 30
@@ -148,7 +153,30 @@ cannot make the poller or menu appear live. The status label clamps permitted
 small future skew to zero instead of displaying negative minutes. This changes
 no stored timestamps: naive values retain current host-local interpretation,
 which must still be replaced by persisted source/reporting timezone policy during
-cutover. Calendar totals, retention and native cache queries are not UTC-ready.
+cutover.
+
+The initial UTC calendar adapters now use this database policy in circuit
+day/week/month-to-date totals, monthly recorded costs/report closure, completed-week comparisons,
+the seven-day heatmap and repeated-week baselines. Range bounds are canonical UTC;
+calendar grouping uses the persisted zone, not SQLite's UTC `strftime` or the
+host clock. Stored cents and device boundaries remain intact; future readings
+are excluded from month-to-date totals. Expected weekly capture minutes reflect
+actual elapsed DST time rather than a constant 10,080 minutes.
+
+Heatmap bins step along actual UTC instants within each reporting day. New York
+transition days render 23/25 columns; both fall folds retain their local offsets.
+Half-hour transitions retain a clipped final interval with its actual duration;
+missing bins remain missing and recorded zero stays zero. Forecast baselines
+require distinct calendar-day repetitions; ambiguous fold hours and partial
+transition-hour bins cannot invent independent weeks. The original 168-slot
+typical-week model remains a normal-week template, not a claim that every actual
+week lasts 168 hours.
+
+These adapters are exercised only through explicit read-only maintenance
+connections to private rehearsal copies. This is not permission to launch Flask
+against a converted artifact. The rest of the reporting/duration queries,
+writers, imports, retention/compaction and native cache/sync paths are not yet
+UTC-ready; the ordinary connection guard remains until they are coordinated.
 
 ## Reproduction tests
 
@@ -156,6 +184,7 @@ cutover. Calendar totals, retention and native cache queries are not UTC-ready.
 python3 -m unittest discover -s tests -p test_timestamp_model.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_dashboard_freshness.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_calendar_queries.py -v
 ```
 
 Tests cover New York gaps/folds, explicit offsets, a half-hour DST transition,
@@ -164,3 +193,19 @@ empty exports, bounded examples and redacted errors. Preflight CLI runs under
 different host timezones create no database or input changes. Rehearsal tests
 cover private atomic publication, source drift, nonregular input, schema-reseed
 rejection, data fingerprints, journal updates, read-only inspection and rollback.
+Calendar tests execute the real adapters on converted fixtures, assert rendered
+heatmap column/cell/offset semantics, verify exact now/month boundaries and costs,
+test full spring/fall capture weeks, forbid duplicate/fold forecast repetitions,
+exercise half-/quarter-hour zones and repeat reads under three real host timezones.
+
+The next private rehearsal of the same 100,237-reading archive exercised the
+actual calendar adapters, not just timestamp grouping in an inspection script.
+Independent pointwise aggregation matched twelve device-scoped day/week/month,
+monthly-cost, heatmap and week-capture comparisons across two device IDs, plus
+all seventeen repeated-week profiles. Source and artifact hashes stayed unchanged.
+The maximum measured query times on that guest were 0.034 s for circuit calendar
+totals, 0.452 s for twelve-month costs, 0.253 s for heatmaps and 0.185 s for week
+comparisons. These are this snapshot's observations, not a performance guarantee
+or proof that the remaining app queries support UTC. Browser fixture checks
+verified 23/25 columns, explicit fold labels, contained 390px scrolling, and
+readable sticky circuit labels. No production source, data or services changed.

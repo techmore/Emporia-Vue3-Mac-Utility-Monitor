@@ -68,7 +68,7 @@ jobs:
         run: venv/bin/python3 scripts/check_release.py
 
       - name: Syntax check
-        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py radon.py ecosense.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_trends.py aqara_matter_collect.py
+        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py timestamp_model.py energy_clock.py utc_migration.py climate.py climate_collect.py extensions.py radon.py ecosense.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_trends.py aqara_matter_collect.py
 
       - name: Run unit tests
         run: venv/bin/python3 -m unittest discover -s tests -v

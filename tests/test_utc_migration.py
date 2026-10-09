@@ -70,12 +70,17 @@ class UtcRehearsalTests(unittest.TestCase):
         self.assertEqual(self.digest(self.destination), report["artifact_sha256"])
         self.assertTrue(report["source_unchanged"])
         self.assertFalse(report["live_ready"])
+        self.assertEqual(report["timestamp_format"], "utc_v1")
         self.assertEqual(report["canonical_upserts_appended"], 4)
         self.assertEqual(self.destination.stat().st_mode & 0o777, 0o600)
         self.assertFalse(Path(str(self.destination)+"-wal").exists())
         connection = energy._connect(self.destination, allow_utc_rehearsal=True, read_only=True)
         try:
             rows = [dict(row) for row in connection.execute("SELECT * FROM readings ORDER BY id")]
+            self.assertEqual(dict(connection.execute("SELECT * FROM energy_time_policy").fetchone()), {
+                "singleton": 1, "timestamp_format": "utc_v1",
+                "reporting_timezone": "America/New_York", "legacy_timezone": "America/New_York",
+            })
             self.assertEqual([row["id"] for row in rows], [1, 2, 3, 4])
             self.assertEqual([row["timestamp"] for row in rows], [
                 "2026-03-08T06:59:00.123456+00:00", "2026-03-08T07:00:00.000000+00:00",
