@@ -3,6 +3,9 @@
 The application supports a native macOS app, a native Linux collector, or a
 Linux collector inside Incus/LXD. Use one authoritative collector database.
 The Mac can be a client of either Linux option, with local cached history.
+SER8's production collector now runs in Incus on 2.3.35; its original native
+installation is retained, stopped and disabled. See the verified receipt in
+INCUS_DEPLOYMENT.md and the repeatable checklist in COLLECTOR_MIGRATION.md.
 
 ## Native macOS
 
@@ -74,7 +77,8 @@ data migration, and verification. Aqara Matter additionally requires the existin
 commissioned Matter controller on guest-local port 5580; that controller and its
 fabric are not provisioned by this script. Kasa requires LAN reachability, and
 Mitsubishi remains disabled until configured. Follow INCUS_DEPLOYMENT.md before
-moving the actual SER8 collector state.
+moving existing collector state. Do not repeat the completed SER8 transfer or
+enable its retained native collectors while the guest is active.
 
 ## Create an isolated Incus instance
 
