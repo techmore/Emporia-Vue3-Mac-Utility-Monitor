@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.42 - 2026-10-09
+
+- Choose strongly separated initial history colors rather than hashing two
+  HVAC units into similar blue hues. Add distinct dashed trace patterns so
+  exact overlaps reveal underlying series; legend selection still isolates units.
+
 ## 2.3.41 - 2026-10-09
 
 - Add Kasa and Mitsubishi comparison histories for 4 hours, 24 hours, 7, 14 and
