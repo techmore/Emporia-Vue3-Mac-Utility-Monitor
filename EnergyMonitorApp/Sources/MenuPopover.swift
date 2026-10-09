@@ -151,13 +151,114 @@ struct DownloadedHistoryReader {
         }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        formatter.isLenient = false
+        let utcFormatter = DateFormatter()
+        utcFormatter.locale = formatter.locale
+        utcFormatter.calendar = formatter.calendar
+        utcFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        utcFormatter.dateFormat = formatter.dateFormat
+        utcFormatter.isLenient = false
+        guard let pattern = try? NSRegularExpression(pattern:
+            #"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})?$"#) else { return nil }
+        func parseStamp(_ stamp: String) -> Date? {
+            let range = NSRange(stamp.startIndex..<stamp.endIndex, in: stamp)
+            guard let match = pattern.firstMatch(in: stamp, range: range) else { return nil }
+            func part(_ index: Int) -> String? {
+                guard let range = Range(match.range(at: index), in: stamp) else { return nil }
+                return String(stamp[range])
+            }
+            guard let wall = part(1) else { return nil }
+            let offset = part(3)
+            let base = offset == nil ? formatter : utcFormatter
+            guard let date = base.date(from: wall), base.string(from: date) == wall else { return nil }
+            let fraction = part(2).flatMap { Double("0." + $0) } ?? 0
+            var seconds = 0.0
+            if let offset = offset, offset != "Z" {
+                guard let hours = Int(offset.dropFirst().prefix(2)), hours < 24,
+                      let minutes = Int(offset.suffix(2)), minutes < 60 else { return nil }
+                seconds = Double(hours * 3600 + minutes * 60) * (offset.hasPrefix("-") ? -1 : 1)
+            }
+            return date.addingTimeInterval(fraction - seconds)
+        }
+        func utcStamp(_ date: Date) -> String? {
+            let value = (date.timeIntervalSince1970 * 1_000_000).rounded()
+            guard value.isFinite, value > Double(Int64.min), value < Double(Int64.max) else { return nil }
+            let total = Int64(value)
+            var seconds = total / 1_000_000, fraction = total % 1_000_000
+            if fraction < 0 { seconds -= 1; fraction += 1_000_000 }
+            return utcFormatter.string(from: Date(timeIntervalSince1970: Double(seconds)))
+                + String(format: ".%06lld+00:00", fraction)
+        }
+        guard let policyTable = query("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_cache_format'") else { return nil }
+        var policy: [String: String]?
+        if !policyTable.isEmpty {
+            guard let rows = query("SELECT timestamp_format,reporting_timezone,measurement_model FROM sync_cache_format WHERE singleton=1") else { return nil }
+            policy = rows.first
+        }
+        if let policy = policy {
+            guard ["interval_v1", "interval_v2"].contains(policy["measurement_model"] ?? ""),
+                  ["utc_v1", "legacy_local_v1"].contains(policy["timestamp_format"] ?? "") else { return nil }
+            if policy["timestamp_format"] == "legacy_local_v1" && policy["reporting_timezone"] != nil { return nil }
+        }
+        let utc = policy?["timestamp_format"] == "utc_v1"
+        let table = utc ? "sync_cached_utc_readings" : "sync_cached_readings"
         guard let state = query("SELECT source_id, synchronized_at, cursor, high_watermark FROM sync_cache_state WHERE singleton=1")?.first,
               state["source_id"] == source,
               state["cursor"] == state["high_watermark"],
-              let synced = state["synchronized_at"],
-              let syncedAt = formatter.date(from: String(synced.prefix(19))),
-              let latest = query("SELECT MAX(timestamp) AS timestamp FROM sync_cached_readings WHERE device_gid=? AND channel_name=?", [device, channel])?.first?["timestamp"] else { return nil }
+              let synced = state["synchronized_at"], let syncedAt = parseStamp(synced) else { return nil }
+        if utc {
+            guard let zone = policy?["reporting_timezone"], let timezone = TimeZone(identifier: zone),
+                  let end = utcStamp(now), let parsedSync = parseStamp(synced), utcStamp(parsedSync) == synced,
+                  let latest = query("SELECT MAX(timestamp) AS timestamp FROM \(table) WHERE device_gid=? AND channel_name=? AND timestamp<?", [device, channel, end])?.first?["timestamp"] else { return nil }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timezone
+            let labels = DateFormatter()
+            labels.locale = formatter.locale
+            labels.calendar = calendar
+            labels.timeZone = timezone
+            var windows: [CircuitWindow] = []
+            for days in [1, 7, 30] {
+                let startDate = now.addingTimeInterval(-Double(days) * 86400)
+                guard let start = utcStamp(startDate),
+                      let totals = query("SELECT SUM(usage_kwh) AS kwh, SUM(cost_cents) AS cents, COUNT(*) AS readings FROM \(table) WHERE device_gid=? AND channel_name=? AND timestamp>=? AND timestamp<?", [device, channel, start, end])?.first,
+                      let rows = query("SELECT timestamp, usage_kwh FROM \(table) WHERE device_gid=? AND channel_name=? AND timestamp>=? AND timestamp<? ORDER BY timestamp", [device, channel, start, end]) else { return nil }
+                func bucketStart(_ date: Date) -> Date {
+                    let day = calendar.startOfDay(for: date)
+                    return days == 1 ? day.addingTimeInterval(floor(date.timeIntervalSince(day) / 3600) * 3600) : day
+                }
+                var grouped: [String: Double] = [:]
+                for row in rows {
+                    guard let stamp = row["timestamp"], let date = parseStamp(stamp), utcStamp(date) == stamp,
+                          let key = utcStamp(bucketStart(date)) else { return nil }
+                    if let raw = row["usage_kwh"] {
+                        guard let kwh = Double(raw), kwh.isFinite else { return nil }
+                        let sum = (grouped[key] ?? 0) + kwh
+                        guard sum.isFinite else { return nil }
+                        grouped[key] = sum
+                    }
+                }
+                labels.dateFormat = days == 1 ? "yyyy-MM-dd HH:mm ZZZZZ" : "yyyy-MM-dd"
+                var cursor = bucketStart(startDate), series: [CircuitBucket] = []
+                while cursor < now {
+                    guard let key = utcStamp(cursor),
+                          let boundary = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: cursor)) else { return nil }
+                    series.append(CircuitBucket(period: labels.string(from: cursor), totalKwh: grouped[key]))
+                    let next = days == 1 ? min(cursor.addingTimeInterval(3600), boundary) : boundary
+                    guard next > cursor else { return nil }
+                    cursor = next
+                }
+                let totalKwh = totals["kwh"].flatMap(Double.init), totalCents = totals["cents"].flatMap(Double.init)
+                guard (totals["kwh"] == nil || totalKwh?.isFinite == true),
+                      (totals["cents"] == nil || totalCents?.isFinite == true) else { return nil }
+                windows.append(CircuitWindow(days: days, totalKwh: totalKwh,
+                    totalCents: totalCents, changePct: nil,
+                    readings: Int(totals["readings"] ?? "0") ?? 0, series: series))
+            }
+            return (CircuitHistory(lastReading: latest, windows: windows), syncedAt)
+        }
+        guard let latest = query("SELECT MAX(timestamp) AS timestamp FROM sync_cached_readings WHERE device_gid=? AND channel_name=?", [device, channel])?.first?["timestamp"] else { return nil }
         let end = formatter.string(from: now)
         var windows: [CircuitWindow] = []
         for days in [1, 7, 30] {
@@ -406,9 +507,9 @@ struct MonitorPopover: View {
     private var overview: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Circle().fill(monitor.online ? Theme.green : Theme.red)
+                Circle().fill(monitor.online ? (monitor.summary?.currentWatts != nil ? Theme.green : Theme.amber) : Theme.red)
                     .frame(width: 6, height: 6)
-                    .accessibilityLabel(monitor.online ? "Live readings" : "Not live")
+                    .accessibilityLabel(monitor.online ? (monitor.summary?.currentWatts != nil ? "Live minute-average power" : "Power unavailable") : "Not live")
                 Text(monitor.summary?.panelLabel ?? "Service Panel")
                     .font(.caption.weight(.medium)).lineLimit(1)
                 Spacer(minLength: 4)
@@ -506,7 +607,7 @@ struct MonitorPopover: View {
         }
         .buttonStyle(.plain)
         .disabled(!active)
-        .accessibilityLabel(active ? "Slot \(slot.slot), \(slot.displayName), \(peak ? "top usage, " : "")\(watts.map { String(format: "%.0f watts", $0) } ?? "offline"), view circuit history" : "Slot \(slot.slot), empty")
+        .accessibilityLabel(active ? "Slot \(slot.slot), \(slot.displayName), \(peak ? "top usage, " : "")\(watts.map { String(format: "%.0f watts", $0) } ?? "power unavailable"), view circuit history" : "Slot \(slot.slot), empty")
     }
 
     private func circuitView(_ circuit: MenuCircuit) -> some View {

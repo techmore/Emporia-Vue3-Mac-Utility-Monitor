@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import fcntl
+import hashlib
+import io
 import json
 import logging
 import math
@@ -10,7 +12,8 @@ import stat
 import tempfile
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from copy import copy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,8 +21,15 @@ import pyemvue
 import requests
 from pyemvue.enums import Scale, Unit
 
+import history_collection
+from completed_history import capture_chart, publish_chart, record_channel_names, record_channels
+from completed_history import resolve_chart_scope as _resolve_chart_scope
+from csv_projection import identity as _csv_identity
+from csv_projection import publish_csv as _publish_csv
+from device_identity import bind_source, canonical_id, record_discovery, resolve_export
+from energy_clock import EnergyClock
 from runtime_store import write_private_json
-from timestamp_model import classify_timestamp, reporting_day_bounds
+from timestamp_model import ISO_TIMESTAMP, classify_timestamp, reporting_day_bounds
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "60"))
@@ -35,13 +45,105 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MEASUREMENT_FIELDS = (
+    'measurement_seconds', 'measurement_source', 'source_timezone', 'provider_timestamp',
+)
+
+
+def _finite_measurement_number(value) -> bool:
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _validate_measurement_evidence(row: dict) -> None:
+    seconds, source = row.get('measurement_seconds'), row.get('measurement_source')
+    if source not in (None, 'emporia_minute', 'emporia_chart', 'csv_energy', 'csv_power', 'compacted'):
+        raise ValueError('Invalid measurement source')
+    if seconds is not None:
+        if (not _finite_measurement_number(seconds)
+                or seconds <= 0 or source in (None, 'compacted')):
+            raise ValueError('Invalid measurement duration evidence')
+        if source in ('emporia_minute', 'emporia_chart') and seconds != 60:
+            raise ValueError('Emporia minute observations require a 60-second duration')
+    zone = row.get('source_timezone')
+    if zone is not None:
+        if not isinstance(zone, str):
+            raise ValueError('Invalid measurement source timezone')
+        try:
+            ZoneInfo(zone)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError('Invalid measurement source timezone') from exc
+    stamp = row.get('provider_timestamp')
+    if stamp is not None:
+        if not isinstance(stamp, str):
+            raise ValueError('Invalid provider timestamp')
+        try:
+            moment = datetime.fromisoformat(stamp)
+        except ValueError as exc:
+            raise ValueError('Invalid provider timestamp') from exc
+        if moment.tzinfo is None:
+            raise ValueError('Provider timestamp must carry an explicit offset')
+
+
+def reading_average_watts(row: dict) -> float | None:
+    """Average over the evidenced measurement interval, never an instantaneous load."""
+    try:
+        _validate_measurement_evidence(row)
+    except ValueError:
+        return None
+    seconds, kwh = row.get('measurement_seconds'), row.get('usage_kwh')
+    if seconds is None or not _finite_measurement_number(kwh):
+        return None
+    watts = kwh * (3_600_000 / seconds)
+    return watts if math.isfinite(watts) else None
+
+
+def reading_live_watts(row: dict | None, *, now: datetime | None = None,
+                       max_age_seconds: int = 180) -> float | None:
+    """Recent provider minute average; an import is historical, never a live sample.
+
+    Until coordinated UTC cutover, naive receipts retain host-local interpretation.
+    A supplied provider instant must also be fresh; receipt time cannot hide stale API data.
+    """
+    if not isinstance(row, dict) or row.get('measurement_source') != 'emporia_minute':
+        return None
+    if row.get('measurement_seconds') != 60:
+        return None
+    watts = reading_average_watts(row)
+    if watts is None:
+        return None
+    stamps = [row.get('timestamp')]
+    if row.get('provider_timestamp') is not None:
+        stamps.append(row['provider_timestamp'])
+    for stamp in stamps:
+        if not isinstance(stamp, str) or not ISO_TIMESTAMP.fullmatch(stamp):
+            return None
+        try:
+            moment = datetime.fromisoformat(stamp)
+            reference = now or datetime.now(moment.tzinfo)
+            if moment.tzinfo is None:
+                reference = reference.astimezone().replace(tzinfo=None) if reference.tzinfo else reference
+            else:
+                reference = reference.astimezone(timezone.utc)
+            age = (reference - moment).total_seconds()
+        except (ValueError, OverflowError):
+            return None
+        if not -60 <= age < max_age_seconds:
+            return None
+    return watts
+
 
 def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
     """Write heartbeat file so Flask can monitor poller health."""
     try:
+        moment = datetime.now(timezone.utc)
         data = {
             "ok": ok,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": EnergyClock.stamp(moment),
             "error": error,
             "consecutive_errors": consecutive_errors,
         }
@@ -53,10 +155,13 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
     try:
         conn = _connect()
         with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            clock = _utc_clock(conn)
+            stored_moment = moment if clock else moment.astimezone().replace(tzinfo=None)
             conn.execute('INSERT INTO poller_health_events(timestamp,ok) VALUES (?,?)',
-                         (data['timestamp'], int(ok)))
+                         (_storage_timestamp(conn, stored_moment), int(ok)))
             conn.execute('DELETE FROM poller_health_events WHERE timestamp<?',
-                         ((datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
+                         (_storage_timestamp(conn, stored_moment-timedelta(days=DB_RETENTION_DAYS)),))
     except Exception:
         logger.exception("Could not record poller health history")
     finally:
@@ -114,13 +219,100 @@ def _write_json_file(path: str | Path, data: dict) -> None:
     write_private_json(path, data)
 
 
-def _connect(path: str | Path | None = None) -> sqlite3.Connection:
-    """Open a WAL-mode SQLite connection with row_factory set."""
-    conn = sqlite3.connect(str(path) if path is not None else DB_PATH, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.row_factory = sqlite3.Row
+def _connect(path: str | Path | None = None, *,
+             allow_utc_rehearsal: bool = False, read_only: bool = False) -> sqlite3.Connection:
+    """Open WAL storage, or explicit read-only maintenance, with row_factory set."""
+    if type(allow_utc_rehearsal) is not bool or type(read_only) is not bool:
+        raise ValueError("Connection maintenance flags must be booleans")
+    target = str(path) if path is not None else DB_PATH
+    if read_only:
+        target = Path(target).expanduser().absolute().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(target, timeout=30, uri=read_only)
+    # Until every writer, query and client understands UTC, a converted rehearsal
+    # copy must not become a live collector or be interpreted as legacy local data.
+    try:
+        marked = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='utc_rehearsal'"
+        ).fetchone()
+        if marked and conn.execute("SELECT 1 FROM utc_rehearsal LIMIT 1").fetchone():
+            if not allow_utc_rehearsal or not read_only:
+                raise RuntimeError("UTC rehearsal database is not a supported live collector")
+        policy_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='energy_time_policy'"
+        ).fetchone()
+        policy = conn.execute("SELECT timestamp_format,reporting_timezone FROM energy_time_policy").fetchone() if policy_table else None
+        if policy:
+            if policy[0] != "utc_v1":
+                raise RuntimeError("Unsupported energy timestamp policy")
+            EnergyClock(policy[1])
+            if not allow_utc_rehearsal or not read_only:
+                raise RuntimeError("UTC energy policy is not ready for live collection")
+        if read_only:
+            conn.execute("PRAGMA query_only=ON")
+        else:
+            conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.row_factory = sqlite3.Row
+    except Exception:
+        conn.close()
+        raise
     return conn
+
+
+def _utc_clock(conn) -> EnergyClock | None:
+    tables = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name IN ('energy_time_policy','utc_rehearsal')"
+    )}
+    policy = conn.execute("SELECT * FROM energy_time_policy").fetchone() if "energy_time_policy" in tables else None
+    marker = conn.execute("SELECT * FROM utc_rehearsal").fetchone() if "utc_rehearsal" in tables else None
+    if not policy:
+        if marker:
+            raise RuntimeError("UTC artifact lacks reporting policy; create a new rehearsal")
+        return None
+    if (policy["timestamp_format"] != "utc_v1" or
+            (marker and (policy["reporting_timezone"] != marker["reporting_timezone"] or
+                         policy["legacy_timezone"] != marker["legacy_timezone"]))):
+        raise RuntimeError("Inconsistent energy timestamp policy")
+    clock = EnergyClock(policy["reporting_timezone"])
+    for name, function in (("energy_day", clock.day_key), ("energy_month", clock.month_key),
+                           ("energy_year", clock.year_key),
+                           ("energy_clock_hour", clock.clock_hour),
+                           ("energy_weekday", clock.weekday),
+                           ("energy_minute", clock.minute_key), ("energy_hour", clock.hour_key)):
+        conn.create_function(name, 1, function, deterministic=True)
+    return clock
+
+
+def _query_window(conn, duration: timedelta, now: datetime | None) -> tuple:
+    """Use elapsed-time windows; reporting-calendar grouping is separate."""
+    clock = _utc_clock(conn)
+    moment = now or (datetime.now(timezone.utc) if clock else datetime.now())
+    if clock:
+        moment = clock.instant(moment)
+    serialize = clock.stamp if clock else datetime.isoformat
+    return clock, moment, serialize(moment-duration), serialize(moment)
+
+
+def _storage_timestamp(conn, moment: datetime | None = None) -> str:
+    """Follow persisted storage policy, retaining legacy host-local receipts."""
+    clock = _utc_clock(conn)
+    moment = moment or (datetime.now(timezone.utc) if clock else datetime.now())
+    if clock:
+        return clock.stamp(moment)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone().replace(tzinfo=None)
+    return moment.isoformat()
+
+
+def _chart_rows(rows, key: str, clock: EnergyClock | None) -> list[dict]:
+    result = [dict(row) for row in rows]
+    if clock and key in ("hour", "period"):
+        for row in result:
+            row["bucket_utc"] = row[key]
+            row["reporting_timezone"] = clock.reporting_timezone
+            row[key] = clock.local(clock.parse(row[key])).isoformat(timespec="minutes")
+    return result
 
 
 def backup_database(destination: str | Path) -> dict:
@@ -162,18 +354,25 @@ def backup_database(destination: str | Path) -> dict:
         Path(str(temporary) + "-shm").unlink(missing_ok=True)
 
 
-def get_today_circuit_totals(device_gid: str | None = None, period: str = "day") -> list[dict]:
-    """Recorded totals for local calendar day, Monday-based week, or month to date."""
+def get_today_circuit_totals(device_gid: str | None = None, period: str = "day", *,
+                             now: datetime | None = None) -> list[dict]:
+    """Recorded totals for reporting day, Monday-based week, or month to date."""
     if period not in {"day", "week", "month"}:
         raise ValueError("Invalid cost period")
-    now = datetime.now()
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if period == "week":
-        start -= timedelta(days=start.weekday())
-    elif period == "month":
-        start = start.replace(day=1)
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        now = now or (datetime.now(timezone.utc) if clock else datetime.now())
+        if clock:
+            start = clock.period_start(now, period)
+            since, until = clock.stamp(start), clock.stamp(now)
+        else:
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if period == "week":
+                start -= timedelta(days=start.weekday())
+            elif period == "month":
+                start = start.replace(day=1)
+            since, until = start.isoformat(), now.isoformat()
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
@@ -184,7 +383,7 @@ def get_today_circuit_totals(device_gid: str | None = None, period: str = "day")
                 FROM readings WHERE device_gid = ? AND timestamp >= ? AND timestamp <= ?
                   AND channel_name NOT IN ({placeholders})
                 GROUP BY channel_name ORDER BY total_kwh DESC""",
-            (gid, start.isoformat(), now.isoformat(), *META_CHANNELS),
+            (gid, since, until, *META_CHANNELS),
         ).fetchall()
         return [dict(row) for row in rows]
     finally:
@@ -195,24 +394,33 @@ def get_circuit_week_comparison(
     device_gid: str | None = None, *, end: datetime | None = None,
 ) -> list[dict]:
     """Compare complete seven-day windows, withholding changes for sparse capture."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
-    middle = boundary - timedelta(days=7)
-    start = boundary - timedelta(days=14)
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        if clock:
+            start, boundary = clock.complete_days(end or datetime.now(timezone.utc), 14)
+            middle = clock.day_bounds(clock.local(boundary).date()-timedelta(days=7))[0]
+            minute_expression = "energy_minute(timestamp)"
+            bounds = tuple(clock.stamp(moment) for moment in (start, middle, boundary))
+        else:
+            boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+            middle = boundary-timedelta(days=7)
+            start = boundary-timedelta(days=14)
+            minute_expression = "strftime('%Y-%m-%dT%H:%M', timestamp)"
+            bounds = tuple(moment.isoformat() for moment in (start, middle, boundary))
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
         rows = conn.execute(
-            """SELECT channel_name,
+            f"""SELECT channel_name,
                       CASE WHEN timestamp >= ? THEN 'current' ELSE 'previous' END AS period,
                       SUM(usage_kwh) AS kwh,
-                      COUNT(DISTINCT strftime('%Y-%m-%dT%H:%M', timestamp)) AS minutes
+                      COUNT(DISTINCT {minute_expression}) AS minutes
                FROM readings
                WHERE device_gid = ? AND timestamp >= ? AND timestamp < ?
                  AND usage_kwh IS NOT NULL AND usage_kwh >= 0
                GROUP BY channel_name, period""",
-            (middle.isoformat(), gid, start.isoformat(), boundary.isoformat()),
+            (bounds[1], gid, bounds[0], bounds[2]),
         ).fetchall()
     finally:
         conn.close()
@@ -223,12 +431,13 @@ def get_circuit_week_comparison(
             continue
         channels.setdefault(name, {})[row["period"]] = dict(row)
     result = []
-    expected_minutes = 7 * 24 * 60
+    current_expected = (boundary-middle).total_seconds()/60
+    previous_expected = (middle-start).total_seconds()/60
     for name, periods in channels.items():
         current = periods.get("current", {})
         previous = periods.get("previous", {})
-        current_coverage = current.get("minutes", 0) / expected_minutes
-        previous_coverage = previous.get("minutes", 0) / expected_minutes
+        current_coverage = current.get("minutes", 0) / current_expected
+        previous_coverage = previous.get("minutes", 0) / previous_expected
         comparable = min(current_coverage, previous_coverage) >= 0.95
         # Even similar totals can be misleading if one week has materially more gaps.
         comparable = comparable and abs(current_coverage - previous_coverage) <= 0.01
@@ -242,28 +451,46 @@ def get_circuit_week_comparison(
             "previous_coverage_pct": previous_coverage * 100,
             "change_pct": ((new / old - 1) * 100) if comparable and old > 0 else None,
             "comparable": comparable,
-            "start": start.isoformat(),
-            "middle": middle.isoformat(),
-            "end": boundary.isoformat(),
+            "start": bounds[0], "middle": bounds[1], "end": bounds[2],
+            "current_expected_minutes": current_expected,
+            "previous_expected_minutes": previous_expected,
         })
     return sorted(result, key=lambda row: row["current_kwh"], reverse=True)
 
 
 def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Recorded circuit energy in hourly buckets; absent hours are never zero-filled."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
-    start = boundary - timedelta(days=7)
-    hours = [(start + timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        if clock:
+            grid = clock.hour_grid(end or datetime.now(timezone.utc))
+            keys = [row["key"] for row in grid["bins"]]
+            hours = [row["hour"] for row in grid["bins"]]
+            ticks = [row["tick"] for row in grid["bins"]]
+            intervals = [row["minutes"] for row in grid["bins"]]
+            groups = grid["day_columns"]
+            since, until = grid["start"], grid["end"]
+            hour_expression = "energy_hour(timestamp)"
+        else:
+            boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+            start = boundary-timedelta(days=7)
+            hours = [(start+timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
+            keys = hours
+            intervals = [60]*len(hours)
+            ticks = [hour[-2:] if hour[-2:] in {"00", "06", "12", "18"} else "" for hour in hours]
+            groups = [{"label": (start+timedelta(days=i)).strftime('%a %m/%d'), "columns": 24}
+                      for i in range(7)]
+            since, until = start.isoformat(), boundary.isoformat()
+            hour_expression = "strftime('%Y-%m-%dT%H', timestamp)"
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         rows = conn.execute(
-            """SELECT channel_name, strftime('%Y-%m-%dT%H', timestamp) hour,
+            f"""SELECT channel_name, {hour_expression} hour,
                       SUM(usage_kwh) kwh, COUNT(*) samples
                FROM readings WHERE device_gid = ? AND timestamp >= ? AND timestamp < ?
                  AND usage_kwh >= 0
                GROUP BY channel_name, hour""",
-            (gid, start.isoformat(), boundary.isoformat()),
+            (gid, since, until),
         ).fetchall() if gid else []
     finally:
         conn.close()
@@ -276,30 +503,44 @@ def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = N
                   default=0) or 1
     return {
         'hours': hours,
-        'days': [(start + timedelta(days=i)).strftime('%a %m/%d') for i in range(7)],
-        'start': start.isoformat(), 'end': boundary.isoformat(),
+        'days': [group['label'] for group in groups], 'day_columns': groups,
+        'hour_labels': ticks, 'hour_minutes': intervals,
+        'reporting_timezone': clock.reporting_timezone if clock else None,
+        'start': since, 'end': until,
         'circuits': [{'name': name, 'cells': [
             ({**cells[hour], 'level': min(5, int(cells[hour]['kwh'] / maximum * 5) + 1)}
-             if hour in cells else None) for hour in hours
+             if hour in cells else None) for hour in keys
         ]} for name, cells in sorted(channels.items())],
     }
 
 
-def _weekly_pattern(rows: list[dict]) -> dict:
+def _weekly_pattern(rows: list[dict], reporting_timezone: str | None = None) -> dict:
     """Compare repeated well-sampled hours, without filling gaps or summing circuits as mains."""
     patterns = {}
+    clock = EnergyClock(reporting_timezone) if reporting_timezone else None
     for row in rows:
         name = row['channel_name']
         if not name or name in META_CHANNELS - {'Main'}:
             continue
-        cells = patterns.setdefault(name, [[] for _ in range(168)])
+        cells = patterns.setdefault(name, [{} for _ in range(168)])
         if 57 <= row['minutes'] <= 60 and row.get('samples', row['minutes']) == row['minutes']:
             moment = datetime.fromisoformat(row['hour'])
-            cells[moment.weekday() * 24 + moment.hour].append(row['kwh'])
+            if clock:
+                moment = clock.local(moment)
+                # Repeated-hour folds are not two independent weekly repetitions.
+                # Skip ambiguous/partial wall hours rather than forecasting them.
+                if moment.minute or classify_timestamp(
+                    moment.replace(tzinfo=None).isoformat(), reporting_timezone,
+                )["status"] != "legacy_unique":
+                    continue
+            day = moment.date()
+            observations = cells[moment.weekday()*24+moment.hour]
+            observations[day] = row['kwh'] if day not in observations else None
     results = []
     for name, values in sorted(patterns.items()):
         cells = []
-        for samples in values:
+        for observations in values:
+            samples = [value for value in observations.values() if value is not None]
             cells.append({'kwh': sum(samples) / len(samples), 'low': min(samples),
                           'high': max(samples), 'weeks': len(samples)}
                          if len(samples) >= 2 else None)
@@ -314,28 +555,37 @@ def _weekly_pattern(rows: list[dict]) -> dict:
 
 def get_weekly_power_pattern(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Four-week same-weekday/hour baseline, requiring two >=95%-sampled repetitions."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
     conn = _connect()
     try:
+        clock = _utc_clock(conn)
+        if clock:
+            start, boundary = clock.complete_days(end or datetime.now(timezone.utc), 28)
+            since, until = clock.stamp(start), clock.stamp(boundary)
+            hour_expression, minute_expression = "energy_hour(timestamp)", "energy_minute(timestamp)"
+        else:
+            boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+            since, until = (boundary-timedelta(days=28)).isoformat(), boundary.isoformat()
+            hour_expression = "strftime('%Y-%m-%dT%H:00:00',timestamp)"
+            minute_expression = "strftime('%Y-%m-%dT%H:%M',timestamp)"
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         rows = conn.execute(
-            """SELECT channel_name, strftime('%Y-%m-%dT%H:00:00',timestamp) hour,
+            f"""SELECT channel_name, {hour_expression} hour,
                       SUM(usage_kwh) kwh,
                       COUNT(*) samples,
-                      COUNT(DISTINCT strftime('%Y-%m-%dT%H:%M',timestamp)) minutes
+                      COUNT(DISTINCT {minute_expression}) minutes
                FROM readings WHERE device_gid=? AND timestamp>=? AND timestamp<?
                  AND usage_kwh>=0 GROUP BY channel_name,hour""",
-            (gid, (boundary-timedelta(days=28)).isoformat(), boundary.isoformat()),
+            (gid, since, until),
         ).fetchall() if gid else []
     finally:
         conn.close()
-    return {**_weekly_pattern([dict(row) for row in rows]),
-            'start': (boundary-timedelta(days=28)).isoformat(), 'end': boundary.isoformat()}
+    return {**_weekly_pattern([dict(row) for row in rows], clock.reporting_timezone if clock else None),
+            'start': since, 'end': until}
 
 
-def ensure_table():
+def ensure_table(path: str | Path | None = None):
     """Create the readings table and indexes if they don't exist yet."""
-    conn = _connect()
+    conn = _connect(path)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -358,9 +608,249 @@ def ensure_table():
             ON readings(device_gid, channel_name, timestamp);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
             ON readings(device_gid, timestamp, channel_name);
+        CREATE TABLE IF NOT EXISTS csv_source_batches (
+            id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, original_filename TEXT NOT NULL,
+            device_gid TEXT NOT NULL, interval TEXT NOT NULL, source_timezone TEXT,
+            headers_json TEXT NOT NULL, rate_cents REAL NOT NULL, content BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS device_identities (
+            canonical_gid TEXT PRIMARY KEY, display_name TEXT NOT NULL, first_seen_utc TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS device_identity_aliases (
+            kind TEXT NOT NULL CHECK (kind IN ('cloud_gid','manufacturer_id','export_suffix')),
+            alias TEXT NOT NULL, canonical_gid TEXT NOT NULL, first_seen_utc TEXT NOT NULL,
+            PRIMARY KEY (kind,alias,canonical_gid),
+            FOREIGN KEY (canonical_gid) REFERENCES device_identities(canonical_gid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_alias ON device_identity_aliases(alias);
+        CREATE TRIGGER IF NOT EXISTS device_alias_immutable_update BEFORE UPDATE ON device_identity_aliases
+        BEGIN SELECT RAISE(ABORT, 'Device discovery claim is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS device_alias_immutable_delete BEFORE DELETE ON device_identity_aliases
+        BEGIN SELECT RAISE(ABORT, 'Device discovery claim is immutable'); END;
+        CREATE TABLE IF NOT EXISTS csv_source_bindings (
+            batch_id TEXT PRIMARY KEY, export_identity TEXT NOT NULL, canonical_gid TEXT NOT NULL,
+            resolution TEXT NOT NULL CHECK (resolution IN ('discovery_alias','operator_selected')),
+            bound_at_utc TEXT NOT NULL,
+            FOREIGN KEY (batch_id) REFERENCES csv_source_batches(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS csv_binding_immutable_update BEFORE UPDATE ON csv_source_bindings
+        BEGIN SELECT RAISE(ABORT, 'CSV monitor binding is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_binding_immutable_delete BEFORE DELETE ON csv_source_bindings
+        BEGIN SELECT RAISE(ABORT, 'CSV monitor binding is immutable'); END;
+        CREATE TABLE IF NOT EXISTS csv_identity_reviews (
+            id TEXT PRIMARY KEY, action TEXT NOT NULL CHECK (action IN ('bind','revert')),
+            reversed_review TEXT, source_gid TEXT NOT NULL, canonical_gid TEXT NOT NULL,
+            snapshot_sha256 TEXT NOT NULL, plan_sha256 TEXT NOT NULL, reviewed_at_utc TEXT NOT NULL,
+            state_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS csv_identity_review_batches (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, review_id TEXT NOT NULL,
+            batch_id TEXT NOT NULL, canonical_gid TEXT NOT NULL,
+            UNIQUE (review_id,batch_id),
+            FOREIGN KEY (review_id) REFERENCES csv_identity_reviews(id),
+            FOREIGN KEY (batch_id) REFERENCES csv_source_batches(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_csv_review_batch ON csv_identity_review_batches(batch_id,sequence);
+        CREATE TABLE IF NOT EXISTS csv_identity_review_rows (
+            review_id TEXT NOT NULL, reading_id INTEGER NOT NULL, observation_id TEXT NOT NULL,
+            before_gid TEXT NOT NULL, after_gid TEXT NOT NULL, reading_sha256 TEXT NOT NULL,
+            PRIMARY KEY (review_id,reading_id),
+            FOREIGN KEY (review_id) REFERENCES csv_identity_reviews(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS csv_review_immutable_update BEFORE UPDATE ON csv_identity_reviews
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_immutable_delete BEFORE DELETE ON csv_identity_reviews
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_batch_immutable_update BEFORE UPDATE ON csv_identity_review_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_batch_immutable_delete BEFORE DELETE ON csv_identity_review_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_row_immutable_update BEFORE UPDATE ON csv_identity_review_rows
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_review_row_immutable_delete BEFORE DELETE ON csv_identity_review_rows
+        BEGIN SELECT RAISE(ABORT, 'CSV identity review is immutable'); END;
+        CREATE VIEW IF NOT EXISTS csv_effective_devices AS
+            SELECT b.id batch_id,b.device_gid source_gid,COALESCE(d.canonical_gid,b.device_gid) device_gid
+            FROM csv_source_batches b LEFT JOIN csv_identity_review_batches d ON d.sequence=(
+                SELECT MAX(sequence) FROM csv_identity_review_batches WHERE batch_id=b.id);
+        CREATE TABLE IF NOT EXISTS csv_source_observations (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT NOT NULL UNIQUE, batch_id TEXT NOT NULL, row_number INTEGER NOT NULL,
+            channel_name TEXT NOT NULL, source_header TEXT NOT NULL, source_unit TEXT NOT NULL,
+            raw_timestamp TEXT NOT NULL, raw_value TEXT NOT NULL,
+            source_local_timestamp TEXT NOT NULL, source_utc_timestamp TEXT, start_utc TEXT, end_utc TEXT,
+            usage_kwh REAL NOT NULL, cost_cents REAL NOT NULL, measurement_seconds REAL,
+            measurement_source TEXT NOT NULL,
+            CHECK ((start_utc IS NULL) = (end_utc IS NULL)),
+            FOREIGN KEY (batch_id) REFERENCES csv_source_batches(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_csv_observation_batch_channel
+            ON csv_source_observations(batch_id,channel_name,start_utc,end_utc);
+        CREATE INDEX IF NOT EXISTS idx_csv_batch_device ON csv_source_batches(device_gid);
+        CREATE TABLE IF NOT EXISTS csv_reading_projection (
+            observation_id TEXT PRIMARY KEY, reading_id INTEGER NOT NULL UNIQUE,
+            FOREIGN KEY (observation_id) REFERENCES csv_source_observations(id),
+            FOREIGN KEY (reading_id) REFERENCES readings(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS csv_projection_reading_delete AFTER DELETE ON readings
+        BEGIN
+            DELETE FROM csv_reading_projection WHERE reading_id=OLD.id;
+        END;
+        CREATE TRIGGER IF NOT EXISTS csv_batches_immutable_update BEFORE UPDATE ON csv_source_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_batches_immutable_delete BEFORE DELETE ON csv_source_batches
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_observations_immutable_update BEFORE UPDATE ON csv_source_observations
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS csv_observations_immutable_delete BEFORE DELETE ON csv_source_observations
+        BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TABLE IF NOT EXISTS energy_channel_claims (
+            device_gid TEXT NOT NULL, channel_num TEXT NOT NULL, channel_name TEXT NOT NULL,
+            first_seen_utc TEXT NOT NULL, PRIMARY KEY (device_gid,channel_num,channel_name),
+            FOREIGN KEY (device_gid) REFERENCES device_identities(canonical_gid)
+        );
+        CREATE TRIGGER IF NOT EXISTS energy_channel_claim_update BEFORE UPDATE ON energy_channel_claims
+        BEGIN SELECT RAISE(ABORT, 'Channel discovery claim is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_channel_claim_delete BEFORE DELETE ON energy_channel_claims
+        BEGIN SELECT RAISE(ABORT, 'Channel discovery claim is immutable'); END;
+        CREATE TABLE IF NOT EXISTS energy_source_order (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
+            source_id TEXT NOT NULL, UNIQUE (kind,source_id)
+        );
+        CREATE TRIGGER IF NOT EXISTS energy_source_order_update BEFORE UPDATE ON energy_source_order
+        BEGIN SELECT RAISE(ABORT, 'Energy source order is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_order_delete BEFORE DELETE ON energy_source_order
+        BEGIN SELECT RAISE(ABORT, 'Energy source order is immutable'); END;
+        INSERT OR IGNORE INTO energy_source_order(kind,source_id)
+            SELECT 'csv',b.id FROM csv_source_batches b LEFT JOIN csv_source_observations o ON o.batch_id=b.id
+            WHERE NOT EXISTS (SELECT 1 FROM energy_source_order WHERE kind='csv' AND source_id=b.id)
+            GROUP BY b.id ORDER BY MIN(o.sequence),b.id;
+        CREATE TABLE IF NOT EXISTS energy_source_batches (
+            id TEXT PRIMARY KEY, kind TEXT NOT NULL, sha256 TEXT NOT NULL, content BLOB NOT NULL,
+            request_json TEXT NOT NULL, received_at_utc TEXT NOT NULL, device_gid TEXT NOT NULL,
+            channel_num TEXT NOT NULL, channel_name TEXT NOT NULL, source_timezone TEXT NOT NULL,
+            rate_cents REAL NOT NULL, settling_seconds INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_energy_source_device_channel ON energy_source_batches(device_gid,channel_name);
+        CREATE TABLE IF NOT EXISTS energy_source_observations (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, batch_id TEXT NOT NULL,
+            source_index INTEGER NOT NULL, channel_num TEXT NOT NULL, channel_name TEXT NOT NULL,
+            source_local_timestamp TEXT, source_utc_timestamp TEXT NOT NULL,
+            start_utc TEXT NOT NULL, end_utc TEXT NOT NULL, usage_kwh REAL NOT NULL,
+            cost_cents REAL NOT NULL, measurement_seconds REAL NOT NULL,
+            measurement_source TEXT NOT NULL, provider_timestamp TEXT NOT NULL,
+            UNIQUE (batch_id,source_index), FOREIGN KEY (batch_id) REFERENCES energy_source_batches(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_energy_source_observation ON energy_source_observations(batch_id,channel_name,start_utc,end_utc);
+        CREATE TABLE IF NOT EXISTS energy_reading_projection (
+            observation_id TEXT PRIMARY KEY, reading_id INTEGER NOT NULL UNIQUE,
+            FOREIGN KEY (observation_id) REFERENCES energy_source_observations(id),
+            FOREIGN KEY (reading_id) REFERENCES readings(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS energy_projection_reading_delete AFTER DELETE ON readings
+        BEGIN DELETE FROM energy_reading_projection WHERE reading_id=OLD.id; END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_batch_update BEFORE UPDATE ON energy_source_batches
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_batch_delete BEFORE DELETE ON energy_source_batches
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_observation_update BEFORE UPDATE ON energy_source_observations
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_observation_delete BEFORE DELETE ON energy_source_observations
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TABLE IF NOT EXISTS energy_history_limits (
+            singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+            requests_hour INTEGER NOT NULL CHECK (requests_hour>0),
+            requests_day INTEGER NOT NULL CHECK (requests_day>=requests_hour)
+        );
+        CREATE TABLE IF NOT EXISTS energy_history_channels (
+            device_gid TEXT NOT NULL, channel_num TEXT NOT NULL, channel_name TEXT NOT NULL,
+            start_utc TEXT NOT NULL, storage_format TEXT NOT NULL, storage_timezone TEXT NOT NULL,
+            window_minutes INTEGER NOT NULL, settling_seconds INTEGER NOT NULL, retry_seconds INTEGER NOT NULL,
+            scan_cursor_utc TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+            configured_at_utc TEXT NOT NULL, last_attempt_utc TEXT,
+            reservation_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(device_gid,channel_num),
+            FOREIGN KEY(device_gid,channel_num,channel_name)
+                REFERENCES energy_channel_claims(device_gid,channel_num,channel_name)
+        );
+        CREATE TABLE IF NOT EXISTS energy_history_jobs (
+            id TEXT PRIMARY KEY, device_gid TEXT NOT NULL, channel_num TEXT NOT NULL,
+            start_utc TEXT NOT NULL, end_utc TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending','error','gap','review','complete')),
+            attempts INTEGER NOT NULL, next_attempt_utc TEXT NOT NULL,
+            lease_id TEXT, lease_until_utc TEXT, source_id TEXT, result_json TEXT,
+            UNIQUE(device_gid,channel_num,start_utc),
+            FOREIGN KEY(device_gid,channel_num) REFERENCES energy_history_channels(device_gid,channel_num),
+            FOREIGN KEY(source_id) REFERENCES energy_source_batches(id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_history_channel_lease
+            ON energy_history_jobs(device_gid,channel_num) WHERE lease_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_history_due ON energy_history_jobs(device_gid,channel_num,status,next_attempt_utc);
+        CREATE INDEX IF NOT EXISTS idx_history_recent ON energy_history_jobs(device_gid,channel_num,status,end_utc,next_attempt_utc);
+        CREATE TRIGGER IF NOT EXISTS history_job_scope_update BEFORE UPDATE ON energy_history_jobs
+        WHEN NEW.id!=OLD.id OR NEW.device_gid!=OLD.device_gid OR NEW.channel_num!=OLD.channel_num
+            OR NEW.start_utc!=OLD.start_utc OR NEW.end_utc!=OLD.end_utc OR NEW.attempts<OLD.attempts
+        BEGIN SELECT RAISE(ABORT, 'History job scope is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_job_delete BEFORE DELETE ON energy_history_jobs
+        BEGIN SELECT RAISE(ABORT, 'History job evidence is retained'); END;
+        CREATE TABLE IF NOT EXISTS energy_history_attempts (
+            token TEXT PRIMARY KEY, job_id TEXT NOT NULL, started_at_utc TEXT NOT NULL,
+            request_weight INTEGER NOT NULL CHECK (request_weight>0),
+            FOREIGN KEY(job_id) REFERENCES energy_history_jobs(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_history_budget ON energy_history_attempts(started_at_utc);
+        CREATE TABLE IF NOT EXISTS energy_history_attempt_results (
+            token TEXT PRIMARY KEY, finished_at_utc TEXT NOT NULL, source_id TEXT, result_json TEXT NOT NULL,
+            FOREIGN KEY(token) REFERENCES energy_history_attempts(token),
+            FOREIGN KEY(source_id) REFERENCES energy_source_batches(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS history_config_immutable BEFORE UPDATE ON energy_history_channels
+        WHEN NEW.device_gid!=OLD.device_gid OR NEW.channel_num!=OLD.channel_num OR NEW.channel_name!=OLD.channel_name
+            OR NEW.start_utc!=OLD.start_utc OR NEW.storage_format!=OLD.storage_format
+            OR NEW.storage_timezone!=OLD.storage_timezone OR NEW.window_minutes!=OLD.window_minutes
+            OR NEW.settling_seconds!=OLD.settling_seconds OR NEW.retry_seconds!=OLD.retry_seconds
+            OR NEW.configured_at_utc!=OLD.configured_at_utc OR NEW.scan_cursor_utc<OLD.scan_cursor_utc
+            OR NEW.reservation_count<OLD.reservation_count
+        BEGIN SELECT RAISE(ABORT, 'Collection configuration is immutable; review cutover'); END;
+        CREATE TRIGGER IF NOT EXISTS history_channel_delete BEFORE DELETE ON energy_history_channels
+        BEGIN SELECT RAISE(ABORT, 'Collection scope is sticky; pause instead'); END;
+        CREATE TRIGGER IF NOT EXISTS history_limit_update BEFORE UPDATE ON energy_history_limits
+        BEGIN SELECT RAISE(ABORT, 'History request budgets require review'); END;
+        CREATE TRIGGER IF NOT EXISTS history_limit_delete BEFORE DELETE ON energy_history_limits
+        BEGIN SELECT RAISE(ABORT, 'History request budgets require review'); END;
+        CREATE TRIGGER IF NOT EXISTS history_attempt_update BEFORE UPDATE ON energy_history_attempts
+        BEGIN SELECT RAISE(ABORT, 'History attempts are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_attempt_delete BEFORE DELETE ON energy_history_attempts
+        BEGIN SELECT RAISE(ABORT, 'History attempts are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_result_update BEFORE UPDATE ON energy_history_attempt_results
+        BEGIN SELECT RAISE(ABORT, 'History attempt results are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_result_delete BEFORE DELETE ON energy_history_attempt_results
+        BEGIN SELECT RAISE(ABORT, 'History attempt results are immutable'); END;
         CREATE TABLE IF NOT EXISTS migrations (
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS utc_rehearsal (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            source_sha256 TEXT NOT NULL,
+            legacy_timezone TEXT NOT NULL,
+            reporting_timezone TEXT NOT NULL,
+            converted_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS utc_timestamp_evidence (
+            table_name TEXT NOT NULL,
+            row_key TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            original_timestamp TEXT NOT NULL,
+            utc_timestamp TEXT NOT NULL,
+            interpretation TEXT NOT NULL,
+            PRIMARY KEY (table_name, row_key, column_name)
+        );
+        CREATE TABLE IF NOT EXISTS energy_time_policy (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            timestamp_format TEXT NOT NULL,
+            reporting_timezone TEXT NOT NULL,
+            legacy_timezone TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS poller_health_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -552,6 +1042,24 @@ def ensure_table():
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             generation_id TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS sync_cache_format (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            timestamp_format TEXT NOT NULL,
+            reporting_timezone TEXT,
+            measurement_model TEXT NOT NULL
+        );
+        -- Older native readers cannot accidentally interpret these as local wall times.
+        CREATE TABLE IF NOT EXISTS sync_cached_utc_readings (
+            reading_id INTEGER PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            device_gid TEXT NOT NULL,
+            channel_num INTEGER,
+            channel_name TEXT,
+            usage_kwh REAL,
+            cost_cents REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_cached_utc_device_channel_timestamp
+            ON sync_cached_utc_readings(device_gid, channel_name, timestamp);
         CREATE TABLE IF NOT EXISTS reading_stream_generation (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             generation_id TEXT NOT NULL
@@ -610,8 +1118,24 @@ def ensure_table():
             poles       INTEGER DEFAULT 1   -- 1 = single-pole (120V), 2 = double-pole (240V)
         );
     """)
-    # Seed pre-existing history once, atomically with its migration marker.
+    # Add evidence without inferring duration/source for pre-existing rows.
     conn.execute("BEGIN IMMEDIATE")
+    for table in ('readings', 'latest_channel_snapshot', 'reading_changes',
+                  'sync_cached_readings', 'sync_cached_utc_readings'):
+        columns = {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
+        for field in MEASUREMENT_FIELDS:
+            if field not in columns:
+                kind = 'REAL' if field == 'measurement_seconds' else 'TEXT'
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN {field} {kind}')
+    # Replace old triggers in the same transaction so new journal events retain evidence.
+    fields = 'timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents,' + ','.join(MEASUREMENT_FIELDS)
+    values = ','.join('NEW.' + field for field in fields.split(','))
+    for operation in ('insert', 'update'):
+        conn.execute(f'DROP TRIGGER IF EXISTS readings_sync_{operation}')
+        conn.execute(f"""CREATE TRIGGER readings_sync_{operation} AFTER {operation.upper()} ON readings
+            BEGIN INSERT INTO reading_changes(operation,reading_id,{fields})
+            VALUES ('upsert',NEW.id,{values}); END""")
+    # Seed pre-existing history once, atomically with its migration marker.
     if not conn.execute(
         "SELECT 1 FROM migrations WHERE name = 'radon_sync_seed_v1'"
     ).fetchone():
@@ -622,18 +1146,20 @@ def ensure_table():
             ORDER BY timestamp, source, sensor_id""")
         conn.execute(
             "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
-            ("radon_sync_seed_v1", datetime.now().isoformat()),
+            ("radon_sync_seed_v1", _storage_timestamp(conn)),
         )
     if not conn.execute(
         "SELECT 1 FROM migrations WHERE name = 'reading_sync_seed_v1'"
     ).fetchone():
         conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
-            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+            measurement_seconds,measurement_source,source_timezone,provider_timestamp)
             SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
-                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+                   usage_kwh, cost_cents,measurement_seconds,measurement_source,
+                   source_timezone,provider_timestamp FROM readings ORDER BY id""")
         conn.execute(
             "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
-            ("reading_sync_seed_v1", datetime.now().isoformat()),
+            ("reading_sync_seed_v1", _storage_timestamp(conn)),
         )
     conn.commit()
     # Migrate: add poles column if it doesn't exist yet (existing DBs)
@@ -646,15 +1172,38 @@ def ensure_table():
     conn.close()
 
 
-def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
+class SyncUpgradeRequired(ValueError):
+    """Refuse incompatible history before any journal page can mutate a cache."""
+
+    def __init__(self, message: str, measurement_model: str | None = None):
+        super().__init__(message)
+        self.measurement_model = measurement_model
+
+
+def get_reading_changes(after: int = 0, limit: int = 500, *, protocol_version: int = 2,
+                        measurement_model: str | None = None) -> dict:
     """Return a bounded page and collector identity from one consistent read transaction."""
     if isinstance(after, bool) or not isinstance(after, int) or after < 0:
         raise ValueError("after must be a nonnegative integer")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
         raise ValueError("limit must be between 1 and 1000")
+    if type(protocol_version) is not int or protocol_version not in (2, 3):
+        raise ValueError('Unsupported sync protocol')
+    if measurement_model not in (None, 'interval_v1', 'interval_v2'):
+        raise ValueError('Unsupported measurement model')
+    if protocol_version < 3 and measurement_model is not None:
+        raise ValueError('Measurement model negotiation requires protocol 3')
     conn = _connect()
     try:
         conn.execute("BEGIN")
+        clock = _utc_clock(conn)
+        if clock and protocol_version < 3:
+            raise SyncUpgradeRequired('UTC history requires an upgraded client')
+        # Immutable source order keeps this gate sticky through pruning/checkpoints.
+        # Check inside the journal's read snapshot, not just the requested page.
+        if (conn.execute("SELECT 1 FROM energy_source_order WHERE kind='emporia_chart_v1' LIMIT 1").fetchone()
+                and measurement_model != 'interval_v2'):
+            raise SyncUpgradeRequired('Chart history requires an upgraded client', 'interval_v2')
         source_id = conn.execute("SELECT source_id FROM collector_identity").fetchone()[0]
         generation_id = conn.execute("SELECT generation_id FROM reading_stream_generation").fetchone()[0]
         watermark = conn.execute(
@@ -667,12 +1216,19 @@ def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
             "ORDER BY sequence LIMIT ?", (after, watermark, limit),
         ).fetchall()]
         next_cursor = rows[-1]["sequence"] if rows else after
-        return {
-            "protocol_version": 2, "source_id": source_id, "generation_id": generation_id, "changes": rows,
+        result = {
+            "protocol_version": protocol_version, "source_id": source_id, "generation_id": generation_id, "changes": rows,
             "after_cursor": after,
             "next_cursor": next_cursor, "high_watermark": watermark,
             "has_more": next_cursor < watermark,
         }
+        if protocol_version == 3:
+            result['time_policy'] = {
+                'timestamp_format': 'utc_v1' if clock else 'legacy_local_v1',
+                'reporting_timezone': clock.reporting_timezone if clock else None,
+                'measurement_model': measurement_model or 'interval_v1',
+            }
+        return result
     finally:
         conn.close()
 
@@ -683,16 +1239,48 @@ def get_sync_cache_status() -> dict:
         row = conn.execute("""SELECT s.*, g.generation_id FROM sync_cache_state s
             LEFT JOIN sync_cache_generation g ON g.singleton=s.singleton
             WHERE s.singleton=1""").fetchone()
-        return dict(row) if row else {"source_id": None, "cursor": 0,
-                                     "high_watermark": 0, "synchronized_at": None, "generation_id": None}
+        state = dict(row) if row else {"source_id": None, "cursor": 0,
+                                      "high_watermark": 0, "synchronized_at": None, "generation_id": None}
+        policy = conn.execute('SELECT timestamp_format,reporting_timezone,measurement_model FROM sync_cache_format WHERE singleton=1').fetchone()
+        if policy:
+            state.update(dict(policy))
+        return state
     finally:
         conn.close()
 
 
+def _reading_sync_policy(page: dict) -> dict | None:
+    version = page.get('protocol_version')
+    if type(version) is not int or version not in (2, 3):
+        raise ValueError('Unsupported sync protocol')
+    policy = page.get('time_policy')
+    if version == 2:
+        if policy is not None:
+            raise ValueError('Protocol 2 cannot declare a new timestamp format')
+        return None
+    if not isinstance(policy, dict) or set(policy) != {'timestamp_format', 'reporting_timezone', 'measurement_model'}:
+        raise ValueError('Missing or unsupported sync format contract')
+    if policy['measurement_model'] not in ('interval_v1', 'interval_v2'):
+        raise ValueError('Unsupported measurement model')
+    if policy['timestamp_format'] == 'utc_v1':
+        if not isinstance(policy['reporting_timezone'], str):
+            raise ValueError('UTC sync requires a reporting timezone')
+        try:
+            EnergyClock(policy['reporting_timezone'])
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError('Invalid sync reporting timezone') from exc
+    elif policy['timestamp_format'] != 'legacy_local_v1' or policy['reporting_timezone'] is not None:
+        raise ValueError('Unsupported sync timestamp policy')
+    return dict(policy)
+
+
 def apply_reading_changes(page: dict) -> dict:
     """Apply a validated collector page and its cursor atomically to the isolated cache."""
-    if not isinstance(page, dict) or page.get("protocol_version") != 2:
+    if not isinstance(page, dict):
         raise ValueError("Unsupported sync protocol")
+    policy = _reading_sync_policy(page)
+    clock = EnergyClock(policy['reporting_timezone']) if policy and policy['timestamp_format'] == 'utc_v1' else None
+    cache_table = 'sync_cached_utc_readings' if clock else 'sync_cached_readings'
     source_id = page.get("source_id")
     if not isinstance(source_id, str) or len(source_id) != 32:
         raise ValueError("Invalid collector identity")
@@ -719,14 +1307,21 @@ def apply_reading_changes(page: dict) -> dict:
             raise ValueError("Invalid reading identity")
         if row.get("operation") not in {"upsert", "delete"}:
             raise ValueError("Invalid change operation")
+        if row.get('measurement_source') == 'emporia_chart' and (
+                not policy or policy['measurement_model'] != 'interval_v2'):
+            raise ValueError('Chart history requires the interval_v2 contract')
         if row["operation"] == "upsert":
             if not isinstance(row.get("timestamp"), str) or not isinstance(row.get("device_gid"), str):
                 raise ValueError("Invalid reading timestamp or device")
-            datetime.fromisoformat(row["timestamp"])
+            if clock:
+                clock.parse(row['timestamp'])
+            else:
+                datetime.fromisoformat(row["timestamp"])
             for key in ("usage_kwh", "cost_cents"):
                 value = row.get(key)
                 if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
                     raise ValueError("Invalid reading measurement")
+            _validate_measurement_evidence(row)
             if row.get("channel_name") is not None and not isinstance(row["channel_name"], str):
                 raise ValueError("Invalid channel name")
             if row.get("channel_num") is not None and type(row["channel_num"]) not in (int, str):
@@ -745,20 +1340,40 @@ def apply_reading_changes(page: dict) -> dict:
             raise ValueError("Stream generation changed; a fresh cache snapshot is required")
         if after != (state["cursor"] if state else 0):
             raise ValueError("Sync cursor changed; reload cache state and retry")
+        cached_policy = conn.execute('SELECT timestamp_format,reporting_timezone,measurement_model FROM sync_cache_format WHERE singleton=1').fetchone()
+        if cached_policy and dict(cached_policy) != policy:
+            # The only same-generation transition is additive chart support.
+            upgraded = dict(cached_policy)
+            if upgraded['measurement_model'] != 'interval_v1':
+                raise ValueError('Sync format changed; a new generation and cache snapshot are required')
+            upgraded['measurement_model'] = 'interval_v2'
+            if upgraded != policy:
+                raise ValueError('Sync format changed; a new generation and cache snapshot are required')
+        if state and not cached_policy and clock:
+            raise ValueError('UTC format requires a new cache snapshot, not a legacy-cache append')
+        if not state and (conn.execute('SELECT 1 FROM sync_cached_readings LIMIT 1').fetchone()
+                          or conn.execute('SELECT 1 FROM sync_cached_utc_readings LIMIT 1').fetchone()):
+            raise ValueError('Cache rows lack source/cursor identity; use a fresh cache snapshot')
         for row in changes:
             if row["operation"] == "delete":
-                conn.execute("DELETE FROM sync_cached_readings WHERE reading_id=?", (row["reading_id"],))
+                conn.execute(f"DELETE FROM {cache_table} WHERE reading_id=?", (row["reading_id"],))
             else:
-                conn.execute("""INSERT INTO sync_cached_readings(reading_id, timestamp,
-                    device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                conn.execute(f"""INSERT INTO {cache_table}(reading_id, timestamp,
+                    device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+                    measurement_seconds,measurement_source,source_timezone,provider_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(reading_id) DO UPDATE SET timestamp=excluded.timestamp,
                     device_gid=excluded.device_gid, channel_num=excluded.channel_num,
                     channel_name=excluded.channel_name, usage_kwh=excluded.usage_kwh,
-                    cost_cents=excluded.cost_cents""",
+                    cost_cents=excluded.cost_cents,
+                    measurement_seconds=excluded.measurement_seconds,
+                    measurement_source=excluded.measurement_source,
+                    source_timezone=excluded.source_timezone,
+                    provider_timestamp=excluded.provider_timestamp""",
                     tuple(row.get(key) for key in ("reading_id", "timestamp", "device_gid",
-                                                  "channel_num", "channel_name", "usage_kwh", "cost_cents")))
-        synchronized_at = datetime.now().isoformat() if not page["has_more"] else (
+                                                  "channel_num", "channel_name", "usage_kwh", "cost_cents",
+                                                  *MEASUREMENT_FIELDS)))
+        synchronized_at = (EnergyClock.stamp(datetime.now(timezone.utc)) if policy else datetime.now().isoformat()) if not page["has_more"] else (
             state["synchronized_at"] if state else None
         )
         conn.execute("""INSERT INTO sync_cache_state VALUES (1, ?, ?, ?, ?)
@@ -768,6 +1383,11 @@ def apply_reading_changes(page: dict) -> dict:
             (source_id, next_cursor, watermark, synchronized_at))
         conn.execute("""INSERT INTO sync_cache_generation VALUES (1, ?)
             ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id""", (generation_id,))
+        if policy:
+            conn.execute('''INSERT INTO sync_cache_format VALUES (1,?,?,?)
+                         ON CONFLICT(singleton) DO UPDATE SET timestamp_format=excluded.timestamp_format,
+                         reporting_timezone=excluded.reporting_timezone,measurement_model=excluded.measurement_model''',
+                         tuple(policy[key] for key in ('timestamp_format', 'reporting_timezone', 'measurement_model')))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -791,9 +1411,11 @@ def compact_reading_journal(max_entries: int = 1_000_000) -> bool:
         conn.execute("DELETE FROM reading_changes")
         conn.execute("DELETE FROM sqlite_sequence WHERE name='reading_changes'")
         conn.execute("""INSERT INTO reading_changes(operation, reading_id, timestamp,
-            device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+            device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+            measurement_seconds,measurement_source,source_timezone,provider_timestamp)
             SELECT 'upsert', id, timestamp, device_gid, channel_num, channel_name,
-                   usage_kwh, cost_cents FROM readings ORDER BY id""")
+                   usage_kwh, cost_cents,measurement_seconds,measurement_source,
+                   source_timezone,provider_timestamp FROM readings ORDER BY id""")
         conn.execute("UPDATE reading_stream_generation SET generation_id=lower(hex(randomblob(16)))")
         conn.commit()
         return True
@@ -826,19 +1448,22 @@ def save_device_capabilities(
     source: str,
 ) -> None:
     conn = _connect()
-    _save_device_capabilities_with_conn(
-        conn,
-        device_gid=device_gid,
-        service_mode=service_mode,
-        has_main=has_main,
-        has_mains_a=has_mains_a,
-        has_mains_b=has_mains_b,
-        has_mains_c=has_mains_c,
-        mains_c_no_ct=mains_c_no_ct,
-        source=source,
-    )
-    conn.commit()
-    conn.close()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            _save_device_capabilities_with_conn(
+                conn,
+                device_gid=device_gid,
+                service_mode=service_mode,
+                has_main=has_main,
+                has_mains_a=has_mains_a,
+                has_mains_b=has_mains_b,
+                has_mains_c=has_mains_c,
+                mains_c_no_ct=mains_c_no_ct,
+                source=source,
+            )
+    finally:
+        conn.close()
 
 
 def _save_device_capabilities_with_conn(
@@ -852,6 +1477,7 @@ def _save_device_capabilities_with_conn(
     has_mains_c: bool,
     mains_c_no_ct: bool,
     source: str,
+    now: datetime | None = None,
 ) -> None:
     existing = conn.execute(
         """SELECT service_mode, has_main, has_mains_a, has_mains_b,
@@ -894,7 +1520,7 @@ def _save_device_capabilities_with_conn(
             int(has_mains_c),
             int(mains_c_no_ct),
             source,
-            datetime.now().isoformat(),
+            _storage_timestamp(conn, now),
         ),
     )
 
@@ -908,18 +1534,35 @@ def _upsert_latest_snapshot_with_conn(
     usage_kwh: float,
     cost_cents: float,
     timestamp: str,
+    measurement_seconds: float | None = None,
+    measurement_source: str | None = None,
+    source_timezone: str | None = None,
+    provider_timestamp: str | None = None,
 ) -> None:
+    clock = _utc_clock(conn)
+    if clock:
+        clock.parse(timestamp)
+    _validate_measurement_evidence(dict(
+        measurement_seconds=measurement_seconds, measurement_source=measurement_source,
+        source_timezone=source_timezone, provider_timestamp=provider_timestamp,
+    ))
     conn.execute(
         """INSERT INTO latest_channel_snapshot(
-               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
-           ) VALUES (?, ?, ?, ?, ?, ?)
+               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+               measurement_seconds,measurement_source,source_timezone,provider_timestamp
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(device_gid, channel_name) DO UPDATE SET
                channel_num=excluded.channel_num,
                usage_kwh=excluded.usage_kwh,
                cost_cents=excluded.cost_cents,
-               timestamp=excluded.timestamp
+               timestamp=excluded.timestamp,
+               measurement_seconds=excluded.measurement_seconds,
+               measurement_source=excluded.measurement_source,
+               source_timezone=excluded.source_timezone,
+               provider_timestamp=excluded.provider_timestamp
            WHERE excluded.timestamp >= latest_channel_snapshot.timestamp""",
-        (str(device_gid), channel_name, None if channel_num is None else str(channel_num), usage_kwh, cost_cents, timestamp),
+        (str(device_gid), channel_name, None if channel_num is None else str(channel_num), usage_kwh, cost_cents, timestamp,
+         measurement_seconds,measurement_source,source_timezone,provider_timestamp),
     )
 
 
@@ -927,9 +1570,11 @@ def rebuild_latest_channel_snapshot() -> int:
     conn = _connect()
     c = conn.cursor()
     rows = c.execute(
-        """SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
+        """SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
            FROM (
                SELECT device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                      measurement_seconds,measurement_source,source_timezone,provider_timestamp,
                       ROW_NUMBER() OVER (
                           PARTITION BY device_gid, channel_name
                           ORDER BY timestamp DESC, id DESC
@@ -941,8 +1586,9 @@ def rebuild_latest_channel_snapshot() -> int:
     c.execute("DELETE FROM latest_channel_snapshot")
     c.executemany(
         """INSERT INTO latest_channel_snapshot(
-               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp
-           ) VALUES (?, ?, ?, ?, ?, ?)""",
+               device_gid, channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+               measurement_seconds,measurement_source,source_timezone,provider_timestamp
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         [
             (
                 row["device_gid"],
@@ -951,6 +1597,7 @@ def rebuild_latest_channel_snapshot() -> int:
                 row["usage_kwh"],
                 row["cost_cents"],
                 row["timestamp"],
+                *(row[field] for field in MEASUREMENT_FIELDS),
             )
             for row in rows
         ],
@@ -1057,15 +1704,21 @@ def _resolve_device_gid(c: sqlite3.Cursor, device_gid: str | None = None) -> str
     preferred_gid = _load_settings().get("primary_device_gid")
     if preferred_gid and preferred_gid != _GHOST_DEVICE:
         row = c.execute(
-            "SELECT 1 FROM readings WHERE device_gid = ? LIMIT 1",
-            (preferred_gid,),
+            """SELECT 1 FROM readings WHERE device_gid=?
+            UNION ALL SELECT 1 FROM latest_channel_snapshot s JOIN energy_history_channels h
+              ON h.device_gid=s.device_gid AND h.channel_name=s.channel_name
+              WHERE s.device_gid=? LIMIT 1""",
+            (preferred_gid, preferred_gid),
         ).fetchone()
         if row:
             return preferred_gid
 
     row = c.execute(
         """SELECT device_gid
-           FROM readings
+           FROM (SELECT device_gid,timestamp FROM readings
+                 UNION ALL SELECT s.device_gid,s.timestamp FROM latest_channel_snapshot s
+                 JOIN energy_history_channels h
+                   ON h.device_gid=s.device_gid AND h.channel_name=s.channel_name)
            WHERE device_gid != ?
            GROUP BY device_gid
            ORDER BY MAX(timestamp) DESC
@@ -1168,16 +1821,46 @@ def login_vue():
 
 
 def get_devices_with_channels(vue):
-    devices = vue.get_devices()
+    devices = list(vue.get_devices())
     device_gids = []
     device_info = {}
+    seen_channels = {}
     for device in devices:
+        canonical_id(device.device_gid)
         if device.device_gid not in device_gids:
             device_gids.append(device.device_gid)
-            device_info[device.device_gid] = device
-        else:
-            device_info[device.device_gid].channels += device.channels
+            device_info[device.device_gid] = copy(device)
+            device_info[device.device_gid].channels = []
+            seen_channels[device.device_gid] = set()
+        target = device_info[device.device_gid]
+        for attr in ('device_name', 'time_zone'):
+            if not getattr(target, attr, '') and getattr(device, attr, ''):
+                setattr(target, attr, getattr(device, attr))
+        for channel in device.channels:
+            key = str(channel.channel_num)
+            if key not in seen_channels[device.device_gid]:
+                target.channels.append(channel)
+                seen_channels[device.device_gid].add(key)
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            received = datetime.now(timezone.utc).isoformat(timespec='microseconds')
+            record_discovery(conn, devices, received)
+            record_channels(conn, device_info.values(), _normalize_channel_name, received)
+    finally:
+        conn.close()
     return device_gids, device_info
+
+
+def get_registered_devices() -> list[dict]:
+    """Canonical cloud monitors learned by the poller, never inferred from readings."""
+    conn = _connect()
+    try:
+        return [dict(row) for row in conn.execute(
+            'SELECT canonical_gid,display_name FROM device_identities ORDER BY display_name,canonical_gid')]
+    finally:
+        conn.close()
 
 
 def _normalize_channel_name(name: str | None) -> str | None:
@@ -1191,137 +1874,219 @@ def poll_and_store(vue, device_gids):
     global RATE_CENTS
     RATE_CENTS = _read_rate_cents()
     conn = _connect()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    usage_dict = None
-    for attempt in range(1, 4):
-        try:
-            usage_dict = vue.get_device_list_usage(
-                deviceGids=device_gids,
-                instant=None,
-                scale=Scale.MINUTE.value,
-                unit=Unit.KWH.value,
-            )
-            break
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            if attempt == 3:
-                conn.close()
-                raise
-            logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
-            time.sleep(2 * attempt)
+        usage_dict = None
+        for attempt in range(1, 4):
+            try:
+                usage_dict = vue.get_device_list_usage(
+                    deviceGids=device_gids,
+                    instant=None,
+                    scale=Scale.MINUTE.value,
+                    unit=Unit.KWH.value,
+                )
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                if attempt == 3:
+                    raise
+                logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
+                time.sleep(2 * attempt)
 
-    now = datetime.now().isoformat()
+        conn.execute('BEGIN IMMEDIATE')
+        _, moment, cutoff, now = _query_window(conn, timedelta(days=DB_RETENTION_DAYS), None)
 
-    for gid, device in usage_dict.items():
-        capability = {
-            "has_main": False,
-            "has_mains_a": False,
-            "has_mains_b": False,
-            "has_mains_c": False,
-        }
-        for channelnum, channel in device.channels.items():
-            if channel.usage is None:
-                continue
-            channel_name = _normalize_channel_name(channel.name)
-            if channel_name == "Main":
-                capability["has_main"] = True
-            elif channel_name == "Mains_A":
-                capability["has_mains_a"] = True
-            elif channel_name == "Mains_B":
-                capability["has_mains_b"] = True
-            elif channel_name == "Mains_C":
-                capability["has_mains_c"] = True
+        for gid, device in usage_dict.items():
+            record_channel_names(conn, gid, device.channels.items(), _normalize_channel_name,
+                                 datetime.now(timezone.utc).isoformat(timespec='microseconds'))
+            capability = {
+                "has_main": False,
+                "has_mains_a": False,
+                "has_mains_b": False,
+                "has_mains_c": False,
+            }
+            for channelnum, channel in device.channels.items():
+                if channel.usage is None:
+                    continue
+                channel_name = _normalize_channel_name(channel.name)
+                if channel_name == "Main":
+                    capability["has_main"] = True
+                elif channel_name == "Mains_A":
+                    capability["has_mains_a"] = True
+                elif channel_name == "Mains_B":
+                    capability["has_mains_b"] = True
+                elif channel_name == "Mains_C":
+                    capability["has_mains_c"] = True
 
-            cost = channel.usage * RATE_CENTS
+                cost = channel.usage * RATE_CENTS
+                if (type(channel.usage) not in (int, float) or not math.isfinite(channel.usage)
+                        or not math.isfinite(cost)):
+                    raise ValueError('Emporia returned nonfinite energy or cost')
+                # SDK timestamp is provider observation time, not a proven interval boundary.
+                provider_moment = getattr(channel, 'timestamp', None)
+                provider_stamp = None
+                if isinstance(provider_moment, datetime) and provider_moment.tzinfo is not None:
+                    provider_stamp = provider_moment.astimezone(timezone.utc).isoformat()
 
-            c.execute(
-                """INSERT INTO readings
-                   (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (now, gid, channelnum, channel_name, channel.usage, cost),
-            )
-            _upsert_latest_snapshot_with_conn(
+                if not history_collection.owns_live_channel(conn, gid, channelnum, channel_name):
+                    c.execute(
+                        """INSERT INTO readings
+                           (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+                            measurement_seconds,measurement_source,source_timezone,provider_timestamp)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (now, gid, channelnum, channel_name, channel.usage, cost,
+                         60, 'emporia_minute', None, provider_stamp),
+                    )
+                _upsert_latest_snapshot_with_conn(
+                    conn,
+                    device_gid=str(gid),
+                    channel_name=channel_name,
+                    channel_num=channelnum,
+                    usage_kwh=channel.usage,
+                    cost_cents=cost,
+                    timestamp=now,
+                    measurement_seconds=60, measurement_source='emporia_minute',
+                    source_timezone=None, provider_timestamp=provider_stamp,
+                )
+            _save_device_capabilities_with_conn(
                 conn,
                 device_gid=str(gid),
-                channel_name=channel_name,
-                channel_num=channelnum,
-                usage_kwh=channel.usage,
-                cost_cents=cost,
-                timestamp=now,
+                service_mode=_classify_service_mode(**capability),
+                has_main=capability["has_main"],
+                has_mains_a=capability["has_mains_a"],
+                has_mains_b=capability["has_mains_b"],
+                has_mains_c=capability["has_mains_c"],
+                mains_c_no_ct=False,
+                source="live_poll",
+                now=moment,
             )
-        _save_device_capabilities_with_conn(
-            conn,
-            device_gid=str(gid),
-            service_mode=_classify_service_mode(**capability),
-            has_main=capability["has_main"],
-            has_mains_a=capability["has_mains_a"],
-            has_mains_b=capability["has_mains_b"],
-            has_mains_c=capability["has_mains_c"],
-            mains_c_no_ct=False,
-            source="live_poll",
-        )
 
-    # Prune old rows to keep the database from growing unboundedly.
-    cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
-    c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
-    global _last_compaction
-    compacted = 0
-    if time.monotonic() - _last_compaction > 3600:
-        _last_compaction = time.monotonic()
-        compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+        # Prune old rows to keep the database from growing unboundedly.
+        c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
+        global _last_compaction
+        compacted = 0
+        if time.monotonic() - _last_compaction > 3600:
+            _last_compaction = time.monotonic()
+            compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS, now=moment)
+            conn.commit()
+            for report in write_monthly_reports():
+                logger.info("Wrote monthly report %s", report)
+        if compacted:
+            logger.info("Compacted %s minute rows into hourly rows", compacted)
+
         conn.commit()
-        for report in write_monthly_reports():
-            logger.info("Wrote monthly report %s", report)
-    if compacted:
-        logger.info("Compacted %s minute rows into hourly rows", compacted)
-
-    conn.commit()
-    conn.close()
-    logger.info("[%s] Recorded readings", now)
+        logger.info("[%s] Recorded readings", now)
+    finally:
+        conn.close()
 
 
 _last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
 
 
-def compact_minute_readings(conn, days: int) -> int:
-    """Fold minute rows older than `days` into one row per channel per hour, in place.
+def compact_minute_readings(conn, days: int, *, now: datetime | None = None) -> int:
+    """Compact only compatible evidenced minute samples, atomically within the caller.
 
-    Hourly rows reuse the readings table (timestamp = start of hour, usage and cost summed),
-    like imported 1H CSV buckets, so existing sum-based queries are unchanged. Only whole
-    hours before the cutoff are folded. Returns the number of rows removed. Caller commits.
+    Raw energy/cost sums are retained, but neither sample count nor an hour label
+    proves continuous coverage. Imports, unknown evidence and repeated provider
+    instants protect the entire group from compaction. Single samples retain their
+    original evidence. Ordinary UTC activation remains guarded by _connect().
     """
     if days <= 0:
         return 0
-    cutoff = (datetime.now() - timedelta(days=days)).replace(
-        minute=0, second=0, microsecond=0).isoformat()
-    conn.execute("DROP TABLE IF EXISTS _compact")
-    conn.execute(
-        """CREATE TEMP TABLE _compact AS
-           SELECT device_gid, MIN(channel_num) channel_num, channel_name,
-                  substr(timestamp, 1, 13) || ':00:00' ts,
-                  SUM(usage_kwh) usage_kwh, SUM(cost_cents) cost_cents, COUNT(*) n
-           FROM readings
-           WHERE timestamp < ? AND channel_name IS NOT NULL AND usage_kwh IS NOT NULL
-           GROUP BY device_gid, channel_name, substr(timestamp, 1, 13)
-           HAVING COUNT(*) > 1 OR MIN(timestamp) != substr(MIN(timestamp), 1, 13) || ':00:00'""",
-        (cutoff,),
-    )
-    removed = 0
-    if conn.execute("SELECT COUNT(*) FROM _compact").fetchone()[0]:
-        removed = conn.execute(
-            """DELETE FROM readings WHERE id IN (
-                   SELECT r.id FROM readings r JOIN _compact c
-                     ON r.device_gid = c.device_gid AND r.channel_name = c.channel_name
-                    AND substr(r.timestamp, 1, 13) = substr(c.ts, 1, 13)
-                   WHERE r.timestamp < ?)""", (cutoff,)).rowcount
+    clock = _utc_clock(conn)
+    moment = now or (datetime.now(timezone.utc) if clock else datetime.now())
+    if clock:
+        moment = clock.instant(moment)
+        cutoff = clock.hour_key(clock.stamp(moment - timedelta(days=days)))
+    else:
+        cutoff = (moment - timedelta(days=days)).replace(
+            minute=0, second=0, microsecond=0).isoformat()
+
+    def hour_key(stamp):
+        if not isinstance(stamp, str) or not ISO_TIMESTAMP.fullmatch(stamp):
+            return None
+        try:
+            if clock:
+                return clock.hour_key(stamp)
+            parsed = datetime.fromisoformat(stamp)
+            # Never strip a known offset into an unzoned legacy aggregate.
+            return parsed.replace(minute=0, second=0, microsecond=0).isoformat() if parsed.tzinfo is None else None
+        except (ValueError, OverflowError):
+            return None
+
+    def eligible(kwh, cents, seconds, source, zone, provider):
+        row = dict(usage_kwh=kwh, measurement_seconds=seconds, measurement_source=source,
+                   source_timezone=zone, provider_timestamp=provider)
+        return int(source == 'emporia_minute' and seconds == 60
+                   and _finite_measurement_number(cents) and reading_average_watts(row) is not None)
+
+    def observation_key(provider, receipt):
+        stamp = provider if provider is not None else receipt
+        if not isinstance(stamp, str) or not ISO_TIMESTAMP.fullmatch(stamp):
+            return None
+        try:
+            parsed = datetime.fromisoformat(stamp)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc)
+            return parsed.isoformat(timespec='microseconds')
+        except (ValueError, OverflowError):
+            return None
+
+    conn.create_function('energy_compact_hour', 1, hour_key, deterministic=True)
+    conn.create_function('energy_compact_eligible', 6, eligible, deterministic=True)
+    conn.create_function('energy_compact_observation', 2, observation_key, deterministic=True)
+    # RELEASE of a top-level savepoint commits; retain explicit caller ownership.
+    if not conn.in_transaction:
+        conn.execute('BEGIN')
+    conn.execute('SAVEPOINT energy_compaction')
+    try:
+        conn.execute("DROP TABLE IF EXISTS temp._compact")
         conn.execute(
-            """INSERT INTO readings (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-               SELECT ts, device_gid, channel_num, channel_name, usage_kwh, cost_cents FROM _compact""")
-    conn.execute("DROP TABLE _compact")
-    return removed
+            """CREATE TEMP TABLE _compact AS
+               SELECT device_gid, MIN(channel_num) channel_num, channel_name,
+                      energy_compact_hour(timestamp) ts, MIN(source_timezone) source_timezone,
+                      SUM(usage_kwh) usage_kwh, SUM(cost_cents) cost_cents
+               FROM readings
+               WHERE timestamp < ? AND channel_name IS NOT NULL
+                 AND device_gid IS NOT NULL AND device_gid!=''
+                 AND energy_compact_hour(timestamp) IS NOT NULL
+               GROUP BY device_gid, channel_name, energy_compact_hour(timestamp)
+               HAVING COUNT(*)>1
+                 AND MIN(energy_compact_eligible(usage_kwh,cost_cents,measurement_seconds,
+                                               measurement_source,source_timezone,provider_timestamp))=1
+                 AND COUNT(DISTINCT COALESCE(source_timezone,''))=1
+                 AND COUNT(DISTINCT COALESCE(channel_num,''))=1
+                 AND COUNT(DISTINCT energy_compact_observation(provider_timestamp,timestamp))=COUNT(*)
+                 AND ABS(SUM(usage_kwh))<=1.7976931348623157e308
+                 AND ABS(SUM(cost_cents))<=1.7976931348623157e308""",
+            (cutoff,),
+        )
+        removed = 0
+        if conn.execute("SELECT COUNT(*) FROM temp._compact").fetchone()[0]:
+            removed = conn.execute(
+                """DELETE FROM readings WHERE id IN (
+                       SELECT r.id FROM readings r JOIN temp._compact c
+                         ON r.device_gid=c.device_gid AND r.channel_name=c.channel_name
+                        AND energy_compact_hour(r.timestamp)=c.ts
+                       WHERE r.timestamp < ?)""", (cutoff,),
+            ).rowcount
+            conn.execute(
+                """INSERT INTO readings(timestamp,device_gid,channel_num,channel_name,
+                                       usage_kwh,cost_cents,measurement_source,source_timezone)
+                   SELECT ts,device_gid,channel_num,channel_name,usage_kwh,cost_cents,
+                          'compacted',source_timezone FROM temp._compact""",
+            )
+        conn.execute("DROP TABLE temp._compact")
+        conn.execute('RELEASE energy_compaction')
+        return removed
+    except Exception:
+        conn.execute('ROLLBACK TO energy_compaction')
+        conn.execute('RELEASE energy_compaction')
+        raise
 
 
-def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[dict]:
+def get_monthly_costs(months: int = 12, device_gid: str | None = None, *,
+                      now: datetime | None = None) -> list[dict]:
     """Per-month whole-home and per-circuit recorded energy and cost, newest first.
 
     Totals come from Main (so circuits are not double counted). `days_recorded` counts
@@ -1333,19 +2098,24 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
-        first = datetime.now().replace(day=1)
+        clock = _utc_clock(conn)
+        now = now or (datetime.now(timezone.utc) if clock else datetime.now())
+        first = (clock.local(now) if clock else now).date().replace(day=1)
         for _ in range(max(1, months) - 1):
             first = (first - timedelta(days=1)).replace(day=1)
-        since = first.strftime("%Y-%m-01")
+        since = clock.stamp(clock.day_bounds(first)[0]) if clock else first.isoformat()
+        until = clock.stamp(now) if clock else now.isoformat()
+        month_expression = "energy_month(timestamp)" if clock else "substr(timestamp, 1, 7)"
+        day_expression = "energy_day(timestamp)" if clock else "substr(timestamp, 1, 10)"
         rows = conn.execute(
-            """SELECT substr(timestamp, 1, 7) month, channel_name,
+            f"""SELECT {month_expression} month, channel_name,
                       SUM(usage_kwh) kwh, SUM(cost_cents) cents,
-                      COUNT(DISTINCT substr(timestamp, 1, 10)) days
+                      COUNT(DISTINCT {day_expression}) days
                FROM readings
-               WHERE device_gid = ? AND timestamp >= ? AND channel_name IS NOT NULL
+               WHERE device_gid = ? AND timestamp >= ? AND timestamp <= ? AND channel_name IS NOT NULL
                  AND channel_name NOT IN ('Mains_A', 'Mains_B', 'Mains_C')
                GROUP BY month, channel_name""",
-            (gid, since),
+            (gid, since, until),
         ).fetchall()
     finally:
         conn.close()
@@ -1367,12 +2137,18 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
     return result
 
 
-def write_monthly_reports(directory: str | None = None) -> list[str]:
+def write_monthly_reports(directory: str | None = None, *, now: datetime | None = None) -> list[str]:
     """Write a Markdown cost report for each completed month that has none yet."""
     directory = directory or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "reports")
-    current = datetime.now().strftime("%Y-%m")
+    conn = _connect()
+    try:
+        clock = _utc_clock(conn)
+        now = now or (datetime.now(timezone.utc) if clock else datetime.now())
+        current = (clock.local(now) if clock else now).strftime("%Y-%m")
+    finally:
+        conn.close()
     written = []
-    for month in get_monthly_costs(12):
+    for month in get_monthly_costs(12, now=now):
         path = os.path.join(directory, f"energy-{month['month']}.md")
         if month["month"] >= current or os.path.exists(path) or month["total_cents"] is None:
             continue
@@ -1519,6 +2295,13 @@ def _run_continuous():
             last_ok = finished
             consecutive_errors = 0
             write_poller_status(True, consecutive_errors=0)
+            if os.environ.get('EMPORIA_COMPLETED_HISTORY') == '1':
+                try:
+                    report = run_completed_collection(vue)
+                    if report['attempted']:
+                        logger.info('Completed-history acquisition: %s', report['outcomes'])
+                except Exception as exc:
+                    logger.warning('Completed-history scheduling failed: %s', type(exc).__name__)
         except Exception as e:
             consecutive_errors += 1
             err_str = f"{type(e).__name__}: {e}"
@@ -1550,155 +2333,167 @@ def _run_continuous():
         time.sleep(POLL_INTERVAL)
 
 
-def get_main_total(hours: int = 24, device_gid: str | None = None) -> dict | None:
+def get_main_total(hours: int = 24, device_gid: str | None = None, *,
+                   now: datetime | None = None) -> dict | None:
     """
     Return the Main channel total kWh and cost_cents for the last `hours` hours
     from the primary real device (551741).  Used for authoritative whole-house
     totals without double-counting individual circuits.
     """
     conn = _connect()
-    c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
+    try:
+        c = conn.cursor()
+        _, _, since, until = _query_window(conn, timedelta(hours=hours), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return None
+        c.execute(
+            """SELECT SUM(usage_kwh) as total_kwh, SUM(cost_cents) as total_cents,
+                      COUNT(*) as readings
+               FROM readings
+               WHERE channel_name = 'Main'
+                 AND device_gid = ?
+                 AND timestamp >= ? AND timestamp <= ?""",
+            (resolved_gid, since, until),
+        )
+        row = c.fetchone()
+        if row and row["total_kwh"] is not None:
+            return {"total_kwh": row["total_kwh"], "total_cents": row["total_cents"],
+                    "readings": row["readings"], "channel_name": "Main"}
         return None
-    c.execute(
-        """SELECT SUM(usage_kwh) as total_kwh, SUM(cost_cents) as total_cents,
-                  COUNT(*) as readings
-           FROM readings
-           WHERE channel_name = 'Main'
-             AND device_gid = ?
-             AND timestamp >= ?""",
-        (resolved_gid, since),
-    )
-    row = c.fetchone()
-    conn.close()
-    if row and row["total_kwh"] is not None:
-        return {"total_kwh": row["total_kwh"], "total_cents": row["total_cents"],
-                "readings": row["readings"], "channel_name": "Main"}
-    return None
-
-
-def get_summary(hours=24, device_gid: str | None = None):
-    conn = _connect()
-    c = conn.cursor()
-
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+    finally:
         conn.close()
-        return []
 
-    # Exclude the ghost device (device 81134 always reports 0 W, pollutes sums)
-    meta_placeholders = ",".join("?" for _ in META_CHANNELS)
-    c.execute(
-        f"""SELECT channel_name,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents,
-        COUNT(*) as readings
-        FROM readings
-        WHERE timestamp >= ?
-          AND device_gid = ?
-          AND channel_name NOT IN ({meta_placeholders})
-        GROUP BY channel_name
-        ORDER BY total_kwh DESC""",
-        (since, resolved_gid, *META_CHANNELS),
-    )
 
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
+def get_summary(hours=24, device_gid: str | None = None, *,
+                    now: datetime | None = None) -> list[dict]:
+    conn = _connect()
+    try:
+        c = conn.cursor()
+
+        _, _, since, until = _query_window(conn, timedelta(hours=hours), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
+
+        # Exclude the ghost device (device 81134 always reports 0 W, pollutes sums)
+        meta_placeholders = ",".join("?" for _ in META_CHANNELS)
+        c.execute(
+            f"""SELECT channel_name,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents,
+            COUNT(*) as readings
+            FROM readings
+            WHERE timestamp >= ? AND timestamp <= ?
+              AND device_gid = ?
+              AND channel_name NOT IN ({meta_placeholders})
+            GROUP BY channel_name
+            ORDER BY total_kwh DESC""",
+            (since, until, resolved_gid, *META_CHANNELS),
+        )
+
+        results = c.fetchall()
+        return [dict(row) for row in results]
+    finally:
+        conn.close()
 
 
 def get_channel_totals(
-    channel_names: list[str], hours: int = 24, device_gid: str | None = None
+    channel_names: list[str], hours: int = 24, device_gid: str | None = None, *,
+    now: datetime | None = None,
 ) -> list[dict]:
     if not channel_names:
         return []
 
     conn = _connect()
-    c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return []
+    try:
+        c = conn.cursor()
+        _, _, since, until = _query_window(conn, timedelta(hours=hours), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
 
-    placeholders = ",".join("?" for _ in channel_names)
-    c.execute(
-        f"""SELECT channel_name,
-                   SUM(usage_kwh) as total_kwh,
-                   SUM(cost_cents) as total_cents,
-                   COUNT(*) as readings
+        placeholders = ",".join("?" for _ in channel_names)
+        c.execute(
+            f"""SELECT channel_name,
+                       SUM(usage_kwh) as total_kwh,
+                       SUM(cost_cents) as total_cents,
+                       COUNT(*) as readings
+                FROM readings
+                WHERE timestamp >= ? AND timestamp <= ?
+                  AND device_gid = ?
+                  AND channel_name IN ({placeholders})
+                GROUP BY channel_name""",
+            (since, until, resolved_gid, *channel_names),
+        )
+        results = c.fetchall()
+        return [dict(row) for row in results]
+    finally:
+        conn.close()
+
+
+def get_hourly_data(days=7, device_gid: str | None = None, *,
+                    now: datetime | None = None) -> list[dict]:
+    conn = _connect()
+    try:
+        c = conn.cursor()
+
+        clock, _, since, until = _query_window(conn, timedelta(days=days), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
+
+        grouping = "energy_hour(timestamp)" if clock else "strftime('%Y-%m-%d %H:00', timestamp)"
+        c.execute(
+            f"""SELECT
+            {grouping} as hour,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents
             FROM readings
-            WHERE timestamp >= ?
+            WHERE timestamp >= ? AND timestamp <= ?
+              AND channel_name = 'Main'
               AND device_gid = ?
-              AND channel_name IN ({placeholders})
-            GROUP BY channel_name""",
-        (since, resolved_gid, *channel_names),
-    )
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
+            GROUP BY hour
+            ORDER BY hour""",
+            (since, until, resolved_gid),
+        )
 
-
-def get_hourly_data(days=7, device_gid: str | None = None):
-    conn = _connect()
-    c = conn.cursor()
-
-    since = (datetime.now() - timedelta(days=days)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+        results = c.fetchall()
+        return _chart_rows(results, "hour", clock)
+    finally:
         conn.close()
-        return []
-
-    c.execute(
-        """SELECT 
-        strftime('%Y-%m-%d %H:00', timestamp) as hour,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE timestamp >= ?
-          AND channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY hour
-        ORDER BY hour""",
-        (since, resolved_gid),
-    )
-
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
 
 
-def get_daily_data(days=30, device_gid: str | None = None):
+def get_daily_data(days=30, device_gid: str | None = None, *,
+                    now: datetime | None = None) -> list[dict]:
     conn = _connect()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    since = (datetime.now() - timedelta(days=days)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+        clock, _, since, until = _query_window(conn, timedelta(days=days), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
+
+        grouping = "energy_day(timestamp)" if clock else "strftime('%Y-%m-%d', timestamp)"
+        c.execute(
+            f"""SELECT
+            {grouping} as day,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents
+            FROM readings
+            WHERE timestamp >= ? AND timestamp <= ?
+              AND channel_name = 'Main'
+              AND device_gid = ?
+            GROUP BY day
+            ORDER BY day""",
+            (since, until, resolved_gid),
+        )
+
+        results = c.fetchall()
+        return [dict(row) for row in results]
+    finally:
         conn.close()
-        return []
-
-    c.execute(
-        """SELECT 
-        strftime('%Y-%m-%d', timestamp) as day,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE timestamp >= ?
-          AND channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY day
-        ORDER BY day""",
-        (since, resolved_gid),
-    )
-
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
 
 
 def get_latest(device_gid: str | None = None):
@@ -1710,7 +2505,8 @@ def get_latest(device_gid: str | None = None):
         return []
 
     c.execute(
-        """SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
+        """SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
            FROM latest_channel_snapshot
            WHERE device_gid = ?
            ORDER BY usage_kwh DESC""",
@@ -1718,9 +2514,11 @@ def get_latest(device_gid: str | None = None):
     )
     results = c.fetchall()
     if not results:
-        c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
+        c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
             FROM (
                 SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp,
                        ROW_NUMBER() OVER (
                            PARTITION BY channel_name
                            ORDER BY timestamp DESC, id DESC
@@ -1735,262 +2533,236 @@ def get_latest(device_gid: str | None = None):
     return [dict(row) for row in results]
 
 
-def get_month_comparison(device_gid: str | None = None):
-    """Compare current month to previous month using Main channel only (avoids double-counting)."""
+def get_month_comparison(device_gid: str | None = None, *,
+                         now: datetime | None = None) -> dict:
+    """Current reporting month vs the previous month, using Main only."""
     conn = _connect()
-    c = conn.cursor()
-
-    now = datetime.now()
-    # First day of this month
-    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    # First day of last month
-    last_month_start = (this_month_start - timedelta(days=1)).replace(day=1)
-
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return {"this_month": None, "last_month": None}
-
-    c.execute(
-        """SELECT
-        strftime('%Y-%m', timestamp) as month,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE timestamp >= ?
-          AND channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY month""",
-        (last_month_start.isoformat(), resolved_gid),
-    )
-
-    results = c.fetchall()
-    conn.close()
-
-    months = {row["month"]: dict(row) for row in results}
-
-    this_month_key = now.strftime("%Y-%m")
-    last_month_key = last_month_start.strftime("%Y-%m")
-
-    return {
-        "this_month": months.get(this_month_key),
-        "last_month": months.get(last_month_key),
-    }
-
-
-def get_peak_usage(device_gid: str | None = None):
-    """Find peak usage times."""
-    conn = _connect()
-    c = conn.cursor()
-    since = (datetime.now() - timedelta(days=30)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return {"peak_hours": [], "peak_days": []}
-
-    c.execute("""SELECT 
-        strftime('%H', timestamp) as hour,
-        AVG(usage_kwh) as avg_kwh
-        FROM readings
-        WHERE timestamp >= ?
-          AND device_gid = ?
-          AND channel_name = 'Main'
-        GROUP BY hour
-        ORDER BY avg_kwh DESC
-        LIMIT 5""", (since, resolved_gid))
-
-    peak_hours = c.fetchall()
-
-    c.execute("""SELECT 
-        strftime('%w', timestamp) as day_of_week,
-        AVG(usage_kwh) as avg_kwh
-        FROM readings
-        WHERE timestamp >= ?
-          AND device_gid = ?
-          AND channel_name = 'Main'
-        GROUP BY day_of_week
-        ORDER BY avg_kwh DESC
-        LIMIT 5""", (since, resolved_gid))
-
-    peak_days = c.fetchall()
-    conn.close()
-
-    day_names = [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-    ]
-
-    return {
-        "peak_hours": [dict(row) for row in peak_hours],
-        "peak_days": [
-            {"day": day_names[int(row["day_of_week"])], "avg_kwh": row["avg_kwh"]}
-            for row in peak_days
-        ],
-    }
-
-
-def get_intraday_comparison(device_gid: str | None = None) -> dict:
-    """Return hourly Main-channel totals for today vs yesterday in local time."""
-    conn = _connect()
-    c = conn.cursor()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return {"labels": [], "today": [], "yesterday": []}
-
-    now = datetime.now()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    yesterday_start = today_start - timedelta(days=1)
-    tomorrow_start = today_start + timedelta(days=1)
-
-    c.execute(
-        """SELECT date(timestamp) as day_key,
-                  CAST(strftime('%H', timestamp) AS INTEGER) as hour_num,
-                  SUM(usage_kwh) as total_kwh
-           FROM readings
-           WHERE channel_name = 'Main'
-             AND device_gid = ?
-             AND timestamp >= ?
-             AND timestamp < ?
-           GROUP BY day_key, hour_num""",
-        (resolved_gid, yesterday_start.isoformat(), tomorrow_start.isoformat()),
-    )
-    rows = c.fetchall()
-    conn.close()
-
-    today_key = today_start.date().isoformat()
-    yesterday_key = yesterday_start.date().isoformat()
-    today = [0.0] * 24
-    yesterday = [0.0] * 24
-    for row in rows:
-        hour = row["hour_num"]
-        if row["day_key"] == today_key:
-            today[hour] = row["total_kwh"] or 0.0
-        elif row["day_key"] == yesterday_key:
-            yesterday[hour] = row["total_kwh"] or 0.0
-
-    labels = []
-    for hour in range(24):
-        if hour == 0:
-            labels.append("12a")
-        elif hour < 12:
-            labels.append(f"{hour}a")
-        elif hour == 12:
-            labels.append("12p")
-        else:
-            labels.append(f"{hour-12}p")
-
-    return {"labels": labels, "today": today, "yesterday": yesterday}
-
-
-def get_peak_24h(device_gid: str | None = None) -> dict:
-    """Return the highest-demand timestamp in the last 24h (Main channel) and its watt estimate."""
-    conn = _connect()
-    c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=24)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return {"peak_watts": 0, "peak_time": None}
-    # Sum all channels per timestamp to get total load, pick the max
-    c.execute("""
-        SELECT timestamp, SUM(usage_kwh) as total_kwh
-        FROM readings
-        WHERE timestamp >= ?
-          AND device_gid = ?
-          AND channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
-        GROUP BY timestamp
-        ORDER BY total_kwh DESC
-        LIMIT 1
-    """, (since, resolved_gid))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return {"peak_watts": 0, "peak_time": None}
-    # Poll data is requested at one-minute scale, so convert kWh/min to watts.
-    watts = (row["total_kwh"] or 0) * 60 * 1000
-    ts = row["timestamp"]
     try:
-        dt = datetime.fromisoformat(ts[:19])
-        hour = dt.hour
-        label = ("12 AM" if hour == 0 else f"{hour} AM" if hour < 12
-                 else "12 PM" if hour == 12 else f"{hour-12} PM")
-        time_label = f"{label} ({dt.strftime('%m/%d')})"
-    except Exception:
-        time_label = ts[:16]
-    return {"peak_watts": watts, "peak_time": time_label}
-
-
-def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
-    conn = _connect()
-    c = conn.cursor()
-
-    now = datetime.now()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+        clock, moment, _, until = _query_window(conn, timedelta(0), now)
+        local = clock.local(moment) if clock else moment
+        first_day = local.date().replace(day=1)
+        previous_day = (first_day-timedelta(days=1)).replace(day=1)
+        since = (clock.stamp(clock.day_bounds(previous_day)[0]) if clock else
+                 datetime.combine(previous_day, datetime.min.time()).isoformat())
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return {"this_month": None, "last_month": None}
+        grouping = "energy_month(timestamp)" if clock else "strftime('%Y-%m', timestamp)"
+        rows = conn.execute(
+            f"""SELECT {grouping} month, SUM(usage_kwh) total_kwh,
+                       SUM(cost_cents) total_cents FROM readings
+                WHERE timestamp>=? AND timestamp<=? AND channel_name='Main' AND device_gid=?
+                GROUP BY month""", (since, until, gid),
+        ).fetchall()
+        months = {row["month"]: dict(row) for row in rows}
+        return {"this_month": months.get(first_day.strftime("%Y-%m")),
+                "last_month": months.get(previous_day.strftime("%Y-%m"))}
+    finally:
         conn.close()
-        return {"data": [], "total": {
-            "total_kwh": None,
-            "total_cents": None,
-            "readings": 0,
-            "first_reading": None,
-            "last_reading": None,
-        }}
 
-    if period == "hour":
-        since = (now - timedelta(hours=24)).isoformat()
-        group_by = "strftime('%Y-%m-%d %H:00', timestamp)"
-    elif period == "day":
-        since = (now - timedelta(days=7)).isoformat()
-        group_by = "strftime('%Y-%m-%d', timestamp)"
-    elif period == "week":
-        since = (now - timedelta(days=30)).isoformat()
-        group_by = "strftime('%Y-%m-%d', timestamp)"
-    elif period == "month":
-        since = (now - timedelta(days=365)).isoformat()
-        group_by = "strftime('%Y-%m', timestamp)"
-    elif period == "year":
-        since = (now - timedelta(days=365 * 3)).isoformat()
-        group_by = "strftime('%Y', timestamp)"
-    else:
-        since = (now - timedelta(days=7)).isoformat()
-        group_by = "strftime('%Y-%m-%d', timestamp)"
 
-    c.execute(
-        f"""SELECT {group_by} as period,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE channel_name = ? AND timestamp >= ? AND device_gid = ?
-        GROUP BY period
-        ORDER BY period""",
-        (channel_name, since, resolved_gid),
-    )
+def get_peak_usage(device_gid: str | None = None, *,
+                   now: datetime | None = None) -> dict:
+    """Hours/weekdays with largest mean stored reading energy (not measured power)."""
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        clock, _, since, until = _query_window(conn, timedelta(days=30), now)
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return {"peak_hours": [], "peak_days": []}
+        hour = "energy_clock_hour(timestamp)" if clock else "strftime('%H', timestamp)"
+        weekday = "energy_weekday(timestamp)" if clock else "strftime('%w', timestamp)"
+        parameters = (since, until, gid)
+        hours = conn.execute(
+            f"""SELECT {hour} hour, AVG(usage_kwh) avg_kwh FROM readings
+                WHERE timestamp>=? AND timestamp<=? AND device_gid=? AND channel_name='Main'
+                GROUP BY hour ORDER BY avg_kwh DESC,hour LIMIT 5""", parameters,
+        ).fetchall()
+        days = conn.execute(
+            f"""SELECT {weekday} day_of_week, AVG(usage_kwh) avg_kwh FROM readings
+                WHERE timestamp>=? AND timestamp<=? AND device_gid=? AND channel_name='Main'
+                GROUP BY day_of_week ORDER BY avg_kwh DESC,day_of_week LIMIT 5""", parameters,
+        ).fetchall()
+        day_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        return {"peak_hours": [dict(row) for row in hours],
+                "peak_days": [{"day": day_names[int(row['day_of_week'])], "avg_kwh": row['avg_kwh']}
+                              for row in days]}
+    finally:
+        conn.close()
 
-    results = c.fetchall()
 
-    # Also get total
-    c.execute(
-        """SELECT 
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents,
-        COUNT(*) as readings,
-        MIN(timestamp) as first_reading,
-        MAX(timestamp) as last_reading
-        FROM readings
-        WHERE channel_name = ? AND timestamp >= ? AND device_gid = ?""",
-        (channel_name, since, resolved_gid),
-    )
+def get_intraday_comparison(device_gid: str | None = None, *,
+                            now: datetime | None = None) -> dict:
+    """Actual hourly Main energy for today/yesterday; null means unrecorded."""
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        clock, moment, _, until = _query_window(conn, timedelta(0), now)
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return {"labels": [], "today": [], "yesterday": []}
+        if clock:
+            day = clock.local(moment).date()
+            first = clock.day_bounds(day-timedelta(days=1))[0]
+            boundary = clock.day_bounds(day)[1]
+            rows = conn.execute(
+                """SELECT energy_hour(timestamp) hour, SUM(usage_kwh) total_kwh FROM readings
+                   WHERE channel_name='Main' AND device_gid=? AND timestamp>=? AND timestamp<=?
+                   GROUP BY hour""", (gid, clock.stamp(first), until),
+            ).fetchall()
+            totals = {row['hour']: row['total_kwh'] for row in rows}
+            bins = clock.buckets(first, boundary, hourly=True)
+            result = {"reporting_timezone": clock.reporting_timezone}
+            for name, date in (("today", day), ("yesterday", day-timedelta(days=1))):
+                selected = [row for row in bins if clock.local(row['start']).date() == date]
+                clocks = [clock.local(row['start']).strftime('%H:%M') for row in selected]
+                labels = []
+                for row, wall in zip(selected, clocks, strict=True):
+                    local = clock.local(row['start'])
+                    label = str(local.hour % 12 or 12)
+                    if local.minute:
+                        label += f":{local.minute:02d}"
+                    label += "a" if local.hour < 12 else "p"
+                    if clocks.count(wall) > 1:
+                        label += " " + local.strftime('%z')
+                    labels.append(label)
+                result[name] = [totals.get(row['key']) for row in selected]
+                result[name+'_labels'] = labels
+                result[name+'_hours'] = [row['label'] for row in selected]
+            result['labels'] = result['today_labels']
+            return result
+        today = moment.replace(hour=0, minute=0, second=0, microsecond=0)
+        yesterday = today-timedelta(days=1)
+        rows = conn.execute(
+            """SELECT date(timestamp) day_key, CAST(strftime('%H',timestamp) AS INTEGER) hour,
+                      SUM(usage_kwh) total_kwh FROM readings
+               WHERE channel_name='Main' AND device_gid=? AND timestamp>=? AND timestamp<=?
+               GROUP BY day_key,hour""", (gid, yesterday.isoformat(), until),
+        ).fetchall()
+        result = {'labels': [str(hour % 12 or 12)+('a' if hour < 12 else 'p') for hour in range(24)],
+                  'today': [None]*24, 'yesterday': [None]*24}
+        for row in rows:
+            name = 'today' if row['day_key'] == today.date().isoformat() else 'yesterday'
+            result[name][row['hour']] = row['total_kwh']
+        return result
+    finally:
+        conn.close()
 
-    total = dict(c.fetchone())
-    conn.close()
 
-    return {"data": [dict(row) for row in results], "total": total}
+def get_peak_24h(device_gid: str | None = None, *,
+                 now: datetime | None = None) -> dict:
+    """Highest evidenced aligned monitored-circuit interval average in 24h, not instantaneous power."""
+    conn = _connect()
+    try:
+        c = conn.cursor()
+        clock, _, since, until = _query_window(conn, timedelta(hours=24), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return {"peak_watts": None, "peak_time": None, "measurement_seconds": None}
+        conn.create_function('energy_average_watts', 3,
+            lambda kwh, seconds, source: reading_average_watts(dict(
+                usage_kwh=kwh, measurement_seconds=seconds, measurement_source=source,
+            )), deterministic=True)
+        # Do not sum unknown durations, mixed scales, different source zones or
+        # distinct provider instants into a fictitious simultaneous panel load.
+        row = conn.execute("""
+            SELECT timestamp, SUM(energy_average_watts(usage_kwh,measurement_seconds,
+                       measurement_source)) watts, MIN(measurement_seconds) measurement_seconds
+            FROM readings
+            WHERE timestamp>=? AND timestamp<=? AND device_gid=?
+              AND channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
+            GROUP BY timestamp
+            HAVING COUNT(*)=COUNT(energy_average_watts(usage_kwh,measurement_seconds,measurement_source))
+              AND COUNT(DISTINCT measurement_seconds)=1
+              AND COUNT(DISTINCT COALESCE(source_timezone,''))=1
+              AND COUNT(DISTINCT COALESCE(provider_timestamp,''))=1
+              AND COUNT(DISTINCT CASE WHEN measurement_source='emporia_minute' THEN 'live' ELSE 'csv' END)=1
+              AND ABS(watts)<=1.7976931348623157e308
+            ORDER BY watts DESC,timestamp DESC LIMIT 1
+        """, (since, until, resolved_gid)).fetchone()
+        if not row:
+            return {"peak_watts": None, "peak_time": None, "measurement_seconds": None}
+        watts = row['watts']
+        ts = row["timestamp"]
+        try:
+            dt = clock.local(clock.parse(ts)) if clock else datetime.fromisoformat(ts)
+            hour = dt.hour
+            label = ("12 AM" if hour == 0 else f"{hour} AM" if hour < 12
+                     else "12 PM" if hour == 12 else f"{hour-12} PM")
+            time_label = f"{label} ({dt.strftime('%m/%d')})"
+            if clock:
+                time_label += " " + dt.strftime('%z')
+        except ValueError:
+            logger.warning("Invalid recorded peak timestamp")
+            time_label = ts[:16]
+        return {"peak_watts": watts, "peak_time": time_label,
+                "measurement_seconds": row["measurement_seconds"]}
+    finally:
+        conn.close()
+
+
+def get_circuit_data(channel_name, period="day", device_gid: str | None = None, *,
+                     now: datetime | None = None) -> dict:
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        c = conn.cursor()
+
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return {"data": [], "total": {
+                "total_kwh": None,
+                "total_cents": None,
+                "readings": 0,
+                "first_reading": None,
+                "last_reading": None,
+            }}
+
+        duration, expression = {
+            "hour": (timedelta(hours=24), "strftime('%Y-%m-%d %H:00', timestamp)"),
+            "day": (timedelta(days=7), "strftime('%Y-%m-%d', timestamp)"),
+            "week": (timedelta(days=30), "strftime('%Y-%m-%d', timestamp)"),
+            "month": (timedelta(days=365), "strftime('%Y-%m', timestamp)"),
+            "year": (timedelta(days=365*3), "strftime('%Y', timestamp)"),
+        }.get(period, (timedelta(days=7), "strftime('%Y-%m-%d', timestamp)"))
+        clock, _, since, until = _query_window(conn, duration, now)
+        group_by = ({"hour": "energy_hour(timestamp)", "month": "energy_month(timestamp)",
+                     "year": "energy_year(timestamp)"}.get(period, "energy_day(timestamp)")
+                    if clock else expression)
+
+        c.execute(
+            f"""SELECT {group_by} as period,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents
+            FROM readings
+            WHERE channel_name = ? AND timestamp >= ? AND timestamp <= ? AND device_gid = ?
+            GROUP BY period
+            ORDER BY period""",
+            (channel_name, since, until, resolved_gid),
+        )
+
+        results = c.fetchall()
+
+        # Also get total
+        c.execute(
+            """SELECT
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents,
+            COUNT(*) as readings,
+            MIN(timestamp) as first_reading,
+            MAX(timestamp) as last_reading
+            FROM readings
+            WHERE channel_name = ? AND timestamp >= ? AND timestamp <= ? AND device_gid = ?""",
+            (channel_name, since, until, resolved_gid),
+        )
+
+        total = dict(c.fetchone())
+
+        return {"data": _chart_rows(results, "period", clock if period == "hour" else None),
+                "total": total}
+    finally:
+        conn.close()
 
 
 def get_circuit_history(
@@ -2002,29 +2774,32 @@ def get_circuit_history(
     dense minute sampling in both equal-length periods. This is a sampling guard,
     not a guarantee of coverage for imported history of unknown intervals.
     """
-    now = now or datetime.now()
     conn = _connect()
     try:
+        conn.execute("BEGIN")
+        clock, now, _, until = _query_window(conn, timedelta(0), now)
+        serialize = clock.stamp if clock else datetime.isoformat
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return None
         latest = conn.execute(
-            """SELECT timestamp, usage_kwh FROM readings
+            """SELECT timestamp,usage_kwh,measurement_seconds,measurement_source,source_timezone,provider_timestamp FROM readings
                WHERE device_gid=? AND channel_name=? AND timestamp<=?
                ORDER BY timestamp DESC LIMIT 1""",
-            (gid, channel_name, now.isoformat()),
+            (gid, channel_name, until),
         ).fetchone()
         if latest is None:
             return None
 
         def totals(start: datetime, end: datetime) -> dict:
+            minute = "energy_minute(timestamp)" if clock else "substr(timestamp,1,16)"
             return dict(conn.execute(
-                """SELECT SUM(usage_kwh) total_kwh, SUM(cost_cents) total_cents,
-                          COUNT(*) readings, COUNT(DISTINCT substr(timestamp,1,16)) sampled_minutes,
+                f"""SELECT SUM(usage_kwh) total_kwh, SUM(cost_cents) total_cents,
+                          COUNT(*) readings, COUNT(DISTINCT {minute}) sampled_minutes,
                           MIN(timestamp) first_reading, MAX(timestamp) last_reading
                    FROM readings WHERE device_gid=? AND channel_name=?
                    AND timestamp>=? AND timestamp<? AND usage_kwh IS NOT NULL""",
-                (gid, channel_name, start.isoformat(), end.isoformat()),
+                (gid, channel_name, serialize(start), serialize(end)),
             ).fetchone())
 
         windows = []
@@ -2035,65 +2810,73 @@ def get_circuit_history(
             dense = all(row['sampled_minutes'] >= days * 1440 * 0.8 for row in (current, previous))
             change = _delta_pct(current['total_kwh'], previous['total_kwh']) if dense else None
             grouping = "%Y-%m-%d %H:00" if days == 1 else "%Y-%m-%d"
+            expression = ("energy_hour(timestamp)" if days == 1 else "energy_day(timestamp)") if clock else "strftime(?, timestamp)"
+            parameters = (gid, channel_name, serialize(start), until)
             buckets = {
                 row['period']: dict(row) for row in conn.execute(
-                    """SELECT strftime(?, timestamp) period, SUM(usage_kwh) total_kwh,
+                    f"""SELECT {expression} period, SUM(usage_kwh) total_kwh,
                               COUNT(*) readings FROM readings
                        WHERE device_gid=? AND channel_name=? AND timestamp>=?
                        AND timestamp<? AND usage_kwh IS NOT NULL
                        GROUP BY period ORDER BY period""",
-                    (grouping, gid, channel_name, start.isoformat(), now.isoformat()),
+                    parameters if clock else (grouping, *parameters),
                 ).fetchall()
             }
-            cursor = start.replace(minute=0, second=0, microsecond=0) if days == 1 else start.replace(hour=0, minute=0, second=0, microsecond=0)
-            step = timedelta(hours=1) if days == 1 else timedelta(days=1)
             series = []
-            while cursor < now:
-                label = cursor.strftime(grouping)
-                series.append({
-                    **buckets.get(label, {'period': label, 'total_kwh': None, 'readings': 0}),
-                    'partial_bucket': cursor < start or cursor + step > now,
-                })
-                cursor += step
+            if clock:
+                for bucket in clock.buckets(start, now, hourly=days == 1):
+                    row = dict(buckets.get(bucket['key'], {'total_kwh': None, 'readings': 0}))
+                    row.update(period=bucket['label'],
+                               partial_bucket=bucket['start'] < start or bucket['end'] > now,
+                               bucket_utc=clock.stamp(bucket['start']),
+                               interval_minutes=(bucket['end']-bucket['start']).total_seconds()/60)
+                    series.append(row)
+            else:
+                cursor = start.replace(minute=0, second=0, microsecond=0) if days == 1 else start.replace(hour=0, minute=0, second=0, microsecond=0)
+                step = timedelta(hours=1) if days == 1 else timedelta(days=1)
+                while cursor < now:
+                    label = cursor.strftime(grouping)
+                    series.append({
+                        **buckets.get(label, {'period': label, 'total_kwh': None, 'readings': 0}),
+                        'partial_bucket': cursor < start or cursor + step > now,
+                    })
+                    cursor += step
             windows.append({
                 **current, 'days': days, 'previous_kwh': previous['total_kwh'],
                 'change_pct': change, 'comparison_sampled': dense,
                 'series': series,
             })
-        age = (now - datetime.fromisoformat(latest['timestamp'])).total_seconds()
         return {
             'channel_name': channel_name, 'device_gid': gid,
             'last_reading': latest['timestamp'],
-            'live_watts': latest['usage_kwh'] * 60000 if 0 <= age < 180 and latest['usage_kwh'] is not None else None,
+            'live_watts': reading_live_watts(dict(latest), now=now),
+            'latest_average_watts': reading_average_watts(dict(latest)),
+            'measurement_seconds': latest['measurement_seconds'],
             'windows': windows,
         }
     finally:
         conn.close()
 
 
-def get_monthly_projection(device_gid: str | None = None):
-    """Most recent month's total using Main channel only (avoids double-counting)."""
+def get_monthly_projection(device_gid: str | None = None, *,
+                           now: datetime | None = None) -> dict | None:
+    """Most recent recorded reporting month, using Main only and excluding future rows."""
     conn = _connect()
-    c = conn.cursor()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+    try:
+        clock, _, _, until = _query_window(conn, timedelta(0), now)
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return None
+        grouping = "energy_month(timestamp)" if clock else "strftime('%Y-%m', timestamp)"
+        row = conn.execute(
+            f"""SELECT {grouping} month, SUM(usage_kwh) total_kwh,
+                       SUM(cost_cents) total_cents FROM readings
+                WHERE channel_name='Main' AND device_gid=? AND timestamp<=?
+                GROUP BY month ORDER BY month DESC LIMIT 1""", (gid, until),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
         conn.close()
-        return None
-
-    c.execute("""SELECT
-        strftime('%Y-%m', timestamp) as month,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY month
-        ORDER BY month DESC
-        LIMIT 1""", (resolved_gid,))
-
-    result = c.fetchone()
-    conn.close()
-    return dict(result) if result else None
 
 
 def _delta_pct(a, b):
@@ -2103,194 +2886,181 @@ def _delta_pct(a, b):
     return round((a - b) / b * 100, 1)
 
 
-def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) -> dict:
-    """
-    Return the total kWh for the most recent `window_minutes` of readings,
-    compared to the same window yesterday, one week ago, and one month ago.
-    Includes per-circuit breakdown for the current window.
-    """
-    conn = _connect()
-    c = conn.cursor()
-    now = datetime.now()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return {
-            "window_minutes": window_minutes,
-            "current_kwh": None,
-            "yesterday_kwh": None,
-            "last_week_kwh": None,
-            "last_month_kwh": None,
-            "vs_yesterday_pct": None,
-            "vs_last_week_pct": None,
-            "vs_last_month_pct": None,
-            "change_pct": None,
-            "circuits": [],
-            "latest": [],
-        }
+def _context_duration(window_minutes: int) -> timedelta:
+    if type(window_minutes) is not int or not 1 <= window_minutes <= 525600:
+        raise ValueError("Window minutes must be an integer between 1 and 525600")
+    return timedelta(minutes=window_minutes)
 
-    current_end = now
-    current_start = current_end - timedelta(minutes=window_minutes)
-    previous_end = current_start
-    previous_start = previous_end - timedelta(minutes=window_minutes)
-    yesterday_end = now - timedelta(days=1)
-    yesterday_start = yesterday_end - timedelta(minutes=window_minutes)
-    last_week_end = now - timedelta(days=7)
-    last_week_start = last_week_end - timedelta(minutes=window_minutes)
-    last_month_end = now - timedelta(days=30)
-    last_month_start = last_month_end - timedelta(minutes=window_minutes)
 
-    c.execute(
-        """SELECT
-               SUM(CASE WHEN timestamp BETWEEN ? AND ? THEN usage_kwh ELSE 0 END) AS current_kwh,
-               SUM(CASE WHEN timestamp BETWEEN ? AND ? THEN usage_kwh ELSE 0 END) AS previous_kwh,
-               SUM(CASE WHEN timestamp BETWEEN ? AND ? THEN usage_kwh ELSE 0 END) AS yesterday_kwh,
-               SUM(CASE WHEN timestamp BETWEEN ? AND ? THEN usage_kwh ELSE 0 END) AS last_week_kwh,
-               SUM(CASE WHEN timestamp BETWEEN ? AND ? THEN usage_kwh ELSE 0 END) AS last_month_kwh
-           FROM readings
-           WHERE channel_name = 'Main'
-             AND device_gid = ?
-             AND timestamp >= ?
-             AND timestamp <= ?""",
-        (
-            current_start.isoformat(), current_end.isoformat(),
-            previous_start.isoformat(), previous_end.isoformat(),
-            yesterday_start.isoformat(), yesterday_end.isoformat(),
-            last_week_start.isoformat(), last_week_end.isoformat(),
-            last_month_start.isoformat(), last_month_end.isoformat(),
-            resolved_gid,
-            last_month_start.isoformat(),
-            current_end.isoformat(),
-        ),
-    )
-    row = c.fetchone()
-    current = row["current_kwh"] if row and row["current_kwh"] is not None else None
-    previous_window = row["previous_kwh"] if row and row["previous_kwh"] is not None else None
-    yesterday = row["yesterday_kwh"] if row and row["yesterday_kwh"] is not None else None
-    last_week = row["last_week_kwh"] if row and row["last_week_kwh"] is not None else None
-    last_month = row["last_month_kwh"] if row and row["last_month_kwh"] is not None else None
-
-    # Per-circuit for the current window
-    since = (now - timedelta(minutes=window_minutes)).isoformat()
-    c.execute(
-        """SELECT channel_name, SUM(usage_kwh) as kwh, SUM(cost_cents) as cents
-           FROM readings
-           WHERE timestamp >= ? AND device_gid = ?
-           GROUP BY channel_name
-           ORDER BY kwh DESC""",
-        (since, resolved_gid),
-    )
-    circuits = [dict(r) for r in c.fetchall()]
-
-    c.execute(
-        """SELECT channel_name, channel_num, usage_kwh, timestamp
-           FROM latest_channel_snapshot
-           WHERE device_gid = ?
-           ORDER BY usage_kwh DESC""",
-        (resolved_gid,),
-    )
-    latest_readings = [dict(r) for r in c.fetchall()]
-    if not latest_readings:
-        c.execute(
-            """SELECT channel_name, channel_num, usage_kwh, timestamp
-               FROM (
-                   SELECT channel_name, channel_num, usage_kwh, timestamp,
-                          ROW_NUMBER() OVER (
-                              PARTITION BY channel_name
-                              ORDER BY timestamp DESC, id DESC
-                          ) AS rn
-                FROM readings
-                WHERE device_gid = ?
-               )
-               WHERE rn = 1
-               ORDER BY usage_kwh DESC""",
-            (resolved_gid,),
-        )
-        latest_readings = [dict(r) for r in c.fetchall()]
-
-    conn.close()
-
+def _context_with_conn(conn, gid: str | None, clock: EnergyClock | None,
+                       moment: datetime, window_minutes: int, channel_name: str) -> dict:
+    duration = _context_duration(window_minutes)
+    if not isinstance(channel_name, str) or not channel_name:
+        raise ValueError("Channel name must be nonempty")
+    serialize = clock.stamp if clock else datetime.isoformat
+    windows = {'current': (moment, 'available'), 'previous': (moment-duration, 'available')}
+    for name, days in (('yesterday', 1), ('last_week', 7), ('last_month', 30)):
+        windows[name] = (clock.previous_wall_time(moment, days) if clock else
+                         (moment-timedelta(days=days), 'available'))
+    values, counts, ranges, statuses = {}, {}, {}, {}
+    minute = 'energy_minute(timestamp)' if clock else 'substr(timestamp,1,16)'
+    for name, (end, status) in windows.items():
+        statuses[name] = status
+        if end is None:
+            values[name], counts[name], ranges[name] = None, 0, None
+            continue
+        start = end-duration
+        ranges[name] = {'start': serialize(start), 'end': serialize(end)}
+        row = conn.execute(
+            f"""SELECT SUM(usage_kwh) kwh, COUNT(DISTINCT {minute}) minutes FROM readings
+                WHERE device_gid=? AND channel_name=? AND timestamp>? AND timestamp<=?
+                  AND usage_kwh IS NOT NULL""",
+            (gid, channel_name, serialize(start), serialize(end)),
+        ).fetchone() if gid else None
+        values[name], counts[name] = (row['kwh'], row['minutes']) if row else (None, 0)
+    comparable = {name: counts['current'] >= window_minutes*0.8 and counts[name] >= window_minutes*0.8
+                  for name in windows if name != 'current'}
     return {
-        "window_minutes": window_minutes,
-        "current_kwh": current,
-        "yesterday_kwh": yesterday,
-        "last_week_kwh": last_week,
-        "last_month_kwh": last_month,
-        "vs_yesterday_pct": _delta_pct(current, yesterday),
-        "vs_last_week_pct": _delta_pct(current, last_week),
-        "vs_last_month_pct": _delta_pct(current, last_month),
-        "change_pct": _delta_pct(current, previous_window),
-        "circuits": circuits,
-        "latest": latest_readings,
+        'window_minutes': window_minutes, 'current_kwh': values['current'],
+        'previous_kwh': values['previous'],
+        'yesterday_kwh': values['yesterday'], 'last_week_kwh': values['last_week'],
+        'last_month_kwh': values['last_month'],
+        'vs_yesterday_pct': _delta_pct(values['current'], values['yesterday']) if comparable['yesterday'] else None,
+        'vs_last_week_pct': _delta_pct(values['current'], values['last_week']) if comparable['last_week'] else None,
+        'vs_last_month_pct': _delta_pct(values['current'], values['last_month']) if comparable['last_month'] else None,
+        'change_pct': _delta_pct(values['current'], values['previous']) if comparable['previous'] else None,
+        'comparison_sampled': comparable, 'sampled_minutes': counts,
+        'window_ranges': ranges, 'context_status': statuses,
     }
 
 
-def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
+def get_channel_context(channel_name: str, window_minutes: int = 60,
+                        device_gid: str | None = None, *, now: datetime | None = None) -> dict:
+    """Device-scoped recorded context; last-month reference is thirty calendar days ago."""
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        clock, moment, _, _ = _query_window(conn, timedelta(0), now)
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        return _context_with_conn(conn, gid, clock, moment, window_minutes, channel_name)
+    finally:
+        conn.close()
+
+
+def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None, *,
+                       now: datetime | None = None) -> dict:
+    """Main recorded context plus bounded current circuit and latest-reading snapshots."""
+    duration = _context_duration(window_minutes)
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        clock, moment, since, until = _query_window(conn, duration, now)
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        result = _context_with_conn(conn, gid, clock, moment, window_minutes, 'Main')
+        circuits = conn.execute(
+            """SELECT channel_name,SUM(usage_kwh) kwh,SUM(cost_cents) cents FROM readings
+               WHERE timestamp>? AND timestamp<=? AND device_gid=?
+               GROUP BY channel_name ORDER BY kwh DESC""", (since, until, gid),
+        ).fetchall() if gid else []
+        # A future snapshot can mask an older valid reading for one channel;
+        # fill only missing channels from bounded recorded history.
+        latest = conn.execute(
+            """SELECT channel_name,channel_num,usage_kwh,timestamp,
+                          measurement_seconds,measurement_source,source_timezone,provider_timestamp FROM latest_channel_snapshot
+               WHERE device_gid=? AND timestamp<=? ORDER BY usage_kwh DESC""", (gid, until),
+        ).fetchall() if gid else []
+        names = {row['channel_name'] for row in latest}
+        future_snapshot = conn.execute(
+            "SELECT 1 FROM latest_channel_snapshot WHERE device_gid=? AND timestamp>? LIMIT 1",
+            (gid, until),
+        ).fetchone() if gid else None
+        history = conn.execute(
+            """SELECT channel_name,channel_num,usage_kwh,timestamp,
+                          measurement_seconds,measurement_source,source_timezone,provider_timestamp FROM (
+                   SELECT channel_name,channel_num,usage_kwh,timestamp,
+                          measurement_seconds,measurement_source,source_timezone,provider_timestamp,
+                          ROW_NUMBER() OVER(PARTITION BY channel_name ORDER BY timestamp DESC,id DESC) rn
+                   FROM readings WHERE device_gid=? AND timestamp<=?)
+               WHERE rn=1 ORDER BY usage_kwh DESC""", (gid, until),
+        ).fetchall() if gid and (not latest or future_snapshot) else []
+        result['circuits'] = [dict(row) for row in circuits]
+        result['latest'] = [dict(row) for row in latest]+[dict(row) for row in history if row['channel_name'] not in names]
+        result['latest'].sort(key=lambda row: row['usage_kwh'] if row['usage_kwh'] is not None else -math.inf, reverse=True)
+        return result
+    finally:
+        conn.close()
+
+
+def get_trend(days_back: int = 14, device_gid: str | None = None, *,
+              now: datetime | None = None) -> dict:
     """
     Return daily totals for the last `days_back` days plus a simple
     linear trend slope (positive = usage rising, negative = falling).
-    Also returns the 7-day rolling average and the best/worst days.
+    Also returns the observed daily average and the best/worst recorded days.
     """
     conn = _connect()
-    c = conn.cursor()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return {
-            "daily": [],
-            "slope": None,
-            "avg_kwh": None,
-            "best_day": None,
-            "worst_day": None,
-        }
+    try:
+        c = conn.cursor()
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return {
+                "daily": [],
+                "slope": None,
+                "avg_kwh": None,
+                "best_day": None,
+                "worst_day": None,
+            }
 
-    since = (datetime.now() - timedelta(days=days_back)).isoformat()
-    c.execute(
-        """SELECT strftime('%Y-%m-%d', timestamp) as day,
-                  SUM(usage_kwh) as total_kwh,
-                  SUM(cost_cents) as total_cents
-           FROM readings
-           WHERE channel_name = 'Main' AND timestamp >= ? AND device_gid = ?
-           GROUP BY day
-           ORDER BY day""",
-        (since, resolved_gid),
-    )
-    daily = [dict(r) for r in c.fetchall()]
-    conn.close()
+        clock, _, since, until = _query_window(conn, timedelta(days=days_back), now)
+        grouping = "energy_day(timestamp)" if clock else "strftime('%Y-%m-%d', timestamp)"
+        c.execute(
+            f"""SELECT {grouping} as day,
+                      SUM(usage_kwh) as total_kwh,
+                      SUM(cost_cents) as total_cents
+               FROM readings
+               WHERE channel_name = 'Main' AND timestamp >= ? AND timestamp <= ? AND device_gid = ?
+               GROUP BY day
+               ORDER BY day""",
+            (since, until, resolved_gid),
+        )
+        daily = [dict(r) for r in c.fetchall()]
 
-    if len(daily) < 2:
+        if len(daily) < 2:
+            return {
+                "daily": daily,
+                "slope": None,
+                "avg_kwh": None,
+                "best_day": None,
+                "worst_day": None,
+            }
+
+        # Preserve elapsed calendar days when capture has gaps.
+        n = len(daily)
+        first_day = datetime.fromisoformat(daily[0]["day"]).date()
+        xs = [(datetime.fromisoformat(row["day"]).date()-first_day).days for row in daily]
+        ys = [d["total_kwh"] for d in daily]
+        x_mean = sum(xs) / n
+        y_mean = sum(ys) / n
+        denom = sum((x - x_mean) ** 2 for x in xs)
+        slope = (
+            sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(n)) / denom
+            if denom
+            else 0
+        )
+
+        avg_kwh = y_mean
+        best_day = min(daily, key=lambda d: d["total_kwh"])
+        worst_day = max(daily, key=lambda d: d["total_kwh"])
+
         return {
             "daily": daily,
-            "slope": None,
-            "avg_kwh": None,
-            "best_day": None,
-            "worst_day": None,
+            "slope": round(slope, 4),  # kWh/day change
+            "avg_kwh": round(avg_kwh, 3),
+            "best_day": best_day,
+            "worst_day": worst_day,
         }
-
-    # Simple least-squares slope over the day index
-    n = len(daily)
-    xs = list(range(n))
-    ys = [d["total_kwh"] for d in daily]
-    x_mean = sum(xs) / n
-    y_mean = sum(ys) / n
-    denom = sum((x - x_mean) ** 2 for x in xs)
-    slope = (
-        sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(n)) / denom
-        if denom
-        else 0
-    )
-
-    avg_kwh = y_mean
-    best_day = min(daily, key=lambda d: d["total_kwh"])
-    worst_day = max(daily, key=lambda d: d["total_kwh"])
-
-    return {
-        "daily": daily,
-        "slope": round(slope, 4),  # kWh/day change
-        "avg_kwh": round(avg_kwh, 3),
-        "best_day": best_day,
-        "worst_day": worst_day,
-    }
+    finally:
+        conn.close()
 
 
 def _clean_csv_channel_name(col: str) -> str:
@@ -2376,7 +3146,8 @@ def _csv_interval_seconds(interval: str, moment: datetime, zone: str | None) -> 
 def _refresh_import_snapshot_with_conn(conn, device_gid: str) -> None:
     """Publish only accepted database values, never an ignored conflicting upload."""
     rows = conn.execute(
-        """SELECT device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp
+        """SELECT device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp,
+                  measurement_seconds,measurement_source,source_timezone,provider_timestamp
            FROM (SELECT *, ROW_NUMBER() OVER (
                     PARTITION BY channel_name ORDER BY timestamp DESC,id DESC) rn
                  FROM readings WHERE device_gid=? AND channel_name IS NOT NULL)
@@ -2387,33 +3158,222 @@ def _refresh_import_snapshot_with_conn(conn, device_gid: str) -> None:
         _upsert_latest_snapshot_with_conn(conn, **dict(row))
 
 
+def _refresh_history_snapshots_with_conn(conn, device_gid: str, channels: set[str]) -> None:
+    """Keep newer/pruned live snapshots; historical buckets never become live power."""
+    for channel in channels:
+        row = conn.execute('''SELECT device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp,
+            measurement_seconds,measurement_source,source_timezone,provider_timestamp
+            FROM readings WHERE device_gid=? AND channel_name=? ORDER BY timestamp DESC,id DESC LIMIT 1''',
+            (device_gid, channel)).fetchone()
+        if row:
+            _upsert_latest_snapshot_with_conn(conn, **dict(row))
+
+
+def publish_completed_history(capture: dict, content: bytes, *,
+                              legacy_storage_timezone: str | None = None,
+                              settling_seconds: int = 300) -> dict:
+    """Atomically retain captured chart evidence and project shared CSV/chart history.
+
+    This explicit acquisition/import path does not enable continuous collection,
+    adopt unowned live history, reprice accepted evidence or activate UTC storage.
+    Legacy publication requires a separately reviewed storage zone, not host time.
+    """
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            result = publish_chart(conn, capture, content, _utc_clock(conn), RATE_CENTS,
+                legacy_storage_timezone=legacy_storage_timezone, settling_seconds=settling_seconds)
+            _refresh_history_snapshots_with_conn(conn, result['device_gid'], {result['channel_name']})
+        return result
+    finally:
+        conn.close()
+
+
+def discover_completed_collection_channels(vue) -> dict:
+    """Record provider channel identities without archiving unproven live samples."""
+    gids, _ = get_devices_with_channels(vue)
+    usage = vue.get_device_list_usage(deviceGids=gids, instant=None,
+                                      scale=Scale.MINUTE.value, unit=Unit.KWH.value)
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            stamp = EnergyClock.stamp(datetime.now(timezone.utc))
+            for gid, device in usage.items():
+                record_channel_names(conn, gid, device.channels.items(), _normalize_channel_name, stamp)
+            channels = [dict(row) for row in conn.execute('''SELECT device_gid,channel_num,channel_name
+                FROM energy_channel_claims ORDER BY device_gid,channel_num,channel_name''')]
+    finally:
+        conn.close()
+    return {'channels': channels, 'readings_recorded': 0}
+
+
+def configure_completed_collection(device_gid: str, channel_num: str, start: datetime, *,
+                                   legacy_storage_timezone: str | None = None,
+                                   window_minutes: int = 60, settling_seconds: int = 300,
+                                   retry_seconds: int = 300, requests_hour: int,
+                                   requests_day: int, now: datetime | None = None) -> dict:
+    """Explicitly promote a reviewed channel to completed history; never adopt unowned data."""
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            history_collection.configure(conn, device_gid, channel_num, start, _utc_clock(conn),
+                legacy_storage_timezone=legacy_storage_timezone, window_minutes=window_minutes,
+                settling_seconds=settling_seconds, retry_seconds=retry_seconds,
+                requests_hour=requests_hour, requests_day=requests_day, now=now or datetime.now(timezone.utc))
+    finally:
+        conn.close()
+    return get_completed_collection_status()
+
+
+def set_completed_collection_enabled(device_gid: str, channel_num: str, enabled: bool) -> dict:
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            history_collection.set_enabled(conn, device_gid, channel_num, enabled)
+    finally:
+        conn.close()
+    return get_completed_collection_status()
+
+
+def get_completed_collection_status() -> dict:
+    conn = _connect()
+    try:
+        conn.execute('BEGIN')
+        return history_collection.status(conn)
+    finally:
+        conn.close()
+
+
+def run_completed_collection(vue, *, max_requests: int = 1, now: datetime | None = None) -> dict:
+    """Reserve durable work before GET, then commit evidence/projection/progress together.
+
+    Default poller acquisition is disabled. This function uses the already authenticated
+    SDK instance; no connection/transaction is held during cloud I/O. Reserve the SDK's
+    worst-case chart HTTP retry allowance (including its 401 replay), not just one call.
+    """
+    if type(max_requests) is not int or not 1 <= max_requests <= 100:
+        raise ValueError('Invalid history request limit')
+    retries = getattr(vue.auth, 'max_retry_attempts', None)
+    if type(retries) is not int or not 1 <= retries <= 10:
+        raise ValueError('Unknown or excessive SDK retry budget')
+
+    def moment():
+        return EnergyClock.instant(now) if now is not None else datetime.now(timezone.utc)
+
+    outcomes = []
+    for _ in range(max_requests):
+        conn = _connect()
+        try:
+            with conn:
+                conn.execute('BEGIN IMMEDIATE')
+                lease = history_collection.reserve(conn, moment(), _utc_clock(conn), request_weight=2 * retries)
+        finally:
+            conn.close()
+        if not lease:
+            break
+        try:
+            capture, content = capture_chart(vue, lease['device_gid'], lease['channel_num'],
+                EnergyClock.parse(lease['start_utc']), EnergyClock.parse(lease['end_utc']))
+        except Exception as exc:
+            conn = _connect()
+            try:
+                with conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    history_collection.finish(conn, lease, moment(), _utc_clock(conn), error_type=type(exc).__name__)
+            finally:
+                conn.close()
+            outcomes.append('acquisition_error')
+            continue
+        conn = _connect()
+        try:
+            with conn:
+                conn.execute('BEGIN IMMEDIATE')
+                clock = _utc_clock(conn)
+                job = history_collection.check_lease(conn, lease, moment(), clock)
+                request = capture.get('request', {})
+                for field in ('device_gid', 'channel_num'):
+                    if request.get(field) != job[field]:
+                        raise ValueError('Captured history scope differs from reserved job')
+                for field in ('start', 'end'):
+                    if EnergyClock.stamp(datetime.fromisoformat(request[field])) != job[field + '_utc']:
+                        raise ValueError('Captured history window differs from reserved job')
+                result = publish_chart(conn, capture, content, clock, RATE_CENTS,
+                    legacy_storage_timezone=None if clock else job['storage_timezone'],
+                    settling_seconds=job['settling_seconds'])
+                expected = int((EnergyClock.parse(job['end_utc']) - EnergyClock.parse(job['start_utc'])).total_seconds() // 60)
+                if result['expected_completed_buckets'] != expected:
+                    raise ValueError('Captured receipt cannot prove the reserved completed window')
+                _refresh_history_snapshots_with_conn(conn, result['device_gid'], {result['channel_name']})
+                outcome = history_collection.finish(conn, lease, moment(), clock, result)
+            outcomes.append(outcome)
+        except Exception as exc:
+            logger.warning('Completed-history publication outcome requires durable-state inspection: %s', type(exc).__name__)
+            outcomes.append('publication_outcome_unknown')
+            break
+        finally:
+            conn.close()
+    return {'attempted': len(outcomes), 'outcomes': outcomes, 'continuous_capture_verified': False}
+
+
+def collect_completed_history(vue, device_gid: str, channel_num: str,
+                              start: datetime, end: datetime, *,
+                              legacy_storage_timezone: str | None = None,
+                              settling_seconds: int = 300) -> dict:
+    """Fetch one bounded raw chart window with the existing authenticated SDK client."""
+    if type(settling_seconds) is not int or not 0 <= settling_seconds <= 86400:
+        raise ValueError('Invalid settling delay')
+    conn = _connect()
+    try:
+        _resolve_chart_scope(conn, {'device_gid': device_gid, 'channel_num': channel_num})
+        if not _utc_clock(conn):
+            if not isinstance(legacy_storage_timezone, str):
+                raise ValueError('Legacy chart publication requires a reviewed storage timezone')
+            ZoneInfo(legacy_storage_timezone)
+    finally:
+        conn.close()
+    capture, content = capture_chart(vue, device_gid, channel_num, start, end)
+    return publish_completed_history(capture, content,
+        legacy_storage_timezone=legacy_storage_timezone, settling_seconds=settling_seconds)
+
+
 def import_emporia_csv(
     filepath: str,
     device_gid: str | None = None,
     original_filename: str | None = None,
+    *,
+    require_registered_device: bool = False,
 ) -> dict:
     """Validate an export before atomically publishing energy, snapshots and capabilities.
 
     Power columns require a known interval; energy columns retain their raw kWh.
     Declared zones are validated, and ambiguous/nonexistent wall times are reported
-    rather than guessed. Storage remains legacy local until coordinated UTC cutover.
-    Interval/source metadata returned here is not yet persisted per reading (#135).
+    rather than guessed. Timestamps follow the persisted storage policy; UTC needs
+    an explicit CSV source zone. Ordinary UTC activation remains guarded.
+    Retain exact source bytes/cells, then project non-overlapping verified intervals.
+    Conflicts and unmanaged/unknown history need explicit reconciliation (#135).
+    Automatic identity requires persisted cloud discovery. Explicit Python callers
+    may assert a device ID; HTTP callers must select a registered canonical monitor.
+    Operator selections bind only this source, never an unverified global alias.
     """
     import csv
 
     path = Path(filepath)
     stem = Path(original_filename).stem if original_filename else path.stem
-    gid = str(device_gid) if device_gid is not None else stem.split('-')[0]
-    if not gid:
-        raise ValueError("CSV device identity must be nonempty")
+    export_identity = stem.split('-')[0].upper()
     interval = stem.split('-')[-1].upper()
     rate = RATE_CENTS
     if not math.isfinite(rate) or rate < 0:
         raise ValueError("Electricity rate must be finite and nonnegative")
     skipped = errors = ambiguous = nonexistent = 0
     capability = dict.fromkeys(('has_main', 'has_mains_a', 'has_mains_b', 'has_mains_c', 'mains_c_no_ct'), False)
-    units, durations, rows_to_insert = set(), set(), []
-    with path.open(newline='', encoding='utf-8-sig') as handle:
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    units, durations, observations = set(), set(), []
+    with io.StringIO(content.decode('utf-8-sig'), newline='') as handle:
         reader = csv.DictReader(handle)
         headers = reader.fieldnames or []
         if len(headers) < 2 or any(not isinstance(header, str) for header in headers):
@@ -2437,9 +3397,9 @@ def import_emporia_csv(
                 raise ValueError("CSV channel names must be nonempty and unique after normalization")
             if name in ('Main', 'Mains_A', 'Mains_B', 'Mains_C'):
                 capability[{'Main': 'has_main', 'Mains_A': 'has_mains_a', 'Mains_B': 'has_mains_b', 'Mains_C': 'has_mains_c'}[name]] = True
-            columns.append((header, name, power))
+            columns.append((header, name, power, match.group(1)))
 
-        for row in reader:
+        for row_number, row in enumerate(reader, start=2):
             if None in row:
                 errors += 1
                 continue
@@ -2449,20 +3409,24 @@ def import_emporia_csv(
                 continue
             try:
                 moment = datetime.strptime(stamp, '%m/%d/%Y %H:%M:%S')
+                utc_stamp = None
                 if zone:
-                    status = classify_timestamp(moment.isoformat(), zone)['status']
+                    resolved = classify_timestamp(moment.isoformat(), zone)
+                    status = resolved['status']
                     if status != 'legacy_unique':
                         ambiguous += status == 'ambiguous'
                         nonexistent += status == 'nonexistent'
                         errors += 1
                         continue
+                    utc_stamp = resolved['utc_candidates'][0]
                 duration = _csv_interval_seconds(interval, moment, zone)
-            except ValueError:
+                end_utc = (datetime.fromisoformat(utc_stamp) + timedelta(seconds=duration)).isoformat(timespec='microseconds') if utc_stamp and duration else None
+            except (ValueError, OverflowError):
                 errors += 1
                 continue
             if duration is not None:
                 durations.add(duration)
-            for header, name, power in columns:
+            for header, name, power, source_unit in columns:
                 value = (row.get(header) or '').strip()
                 if not value or value.lower() == 'no ct':
                     if name == 'Mains_C' and value.lower() == 'no ct':
@@ -2478,19 +3442,40 @@ def import_emporia_csv(
                 except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
-                rows_to_insert.append((moment.isoformat(), gid, None, name, kwh, cents))
+                observations.append({
+                    'row_number': row_number, 'channel_name': name, 'source_header': header,
+                    'source_unit': source_unit, 'raw_timestamp': row.get(headers[0]) or '',
+                    'raw_value': row.get(header) or '',
+                    'source_local_timestamp': moment.isoformat(), 'source_utc_timestamp': utc_stamp,
+                    'start_utc': utc_stamp if end_utc else None, 'end_utc': end_utc,
+                    'usage_kwh': kwh, 'cost_cents': cents, 'measurement_seconds': duration,
+                    'measurement_source': 'csv_power' if power else 'csv_energy',
+                })
 
     conn = _connect()
     try:
         with conn:
             conn.execute('BEGIN IMMEDIATE')
-            inserted = conn.executemany(
-                """INSERT OR IGNORE INTO readings
-                   (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents)
-                   VALUES (?,?,?,?,?,?)""", rows_to_insert,
-            ).rowcount if rows_to_insert else 0
-            skipped += len(rows_to_insert) - inserted
-            if rows_to_insert:
+            clock = _utc_clock(conn)
+            if clock and zone is None:
+                raise ValueError('UTC CSV import requires a declared source timezone')
+            gid, resolution = resolve_export(conn, export_identity, device_gid, require_registered_device)
+            batch_id = _csv_identity('csv_source_v2', gid, export_identity, interval, digest)
+            for observation in observations:
+                observation.update(id=_csv_identity(batch_id, observation['row_number'], observation['source_header']),
+                                   batch_id=batch_id)
+            source = {
+                'id': batch_id, 'sha256': digest,
+                'original_filename': Path(original_filename or filepath).name,
+                'device_gid': gid, 'interval': interval, 'source_timezone': zone,
+                'headers_json': json.dumps(headers, ensure_ascii=True), 'rate_cents': rate, 'content': content,
+            }
+            projection = _publish_csv(conn, source, observations, clock)
+            bind_source(conn, batch_id, export_identity, gid, resolution,
+                        datetime.now(timezone.utc).isoformat(timespec='microseconds'))
+            inserted = projection['imported']
+            skipped += len(observations) - inserted
+            if observations:
                 _refresh_import_snapshot_with_conn(conn, gid)
             _save_device_capabilities_with_conn(
                 conn, device_gid=gid,
@@ -2502,9 +3487,13 @@ def import_emporia_csv(
     duration = next(iter(durations)) if len(durations) == 1 else _CSV_FIXED_INTERVAL_SECONDS.get(interval)
     unit = next(iter(units)) if len(units) == 1 else 'mixed'
     return {
+        **projection,
+        'device_gid': gid, 'export_identity': export_identity, 'identity_resolution': resolution,
         'imported': inserted, 'skipped': skipped, 'errors': errors,
         'unit': unit, 'interval': interval, 'interval_seconds': duration,
         'source_timezone': zone, 'ambiguous_timestamps': ambiguous,
+        'timestamp_format': 'utc_v1' if clock else 'legacy_local_v1',
+        'reporting_timezone': clock.reporting_timezone if clock else None,
         'nonexistent_timestamps': nonexistent,
         'conversion_factor': duration / 3600 if unit == 'kWatts' and duration is not None else 1.0 if unit == 'kWhs' else None,
     }
@@ -2537,7 +3526,7 @@ def backfill_latest_channel_snapshot() -> dict:
     conn = _connect()
     conn.execute(
         "INSERT INTO migrations(name, applied_at) VALUES(?, ?)",
-        (migration_name, datetime.now().isoformat()),
+        (migration_name, _storage_timestamp(conn)),
     )
     conn.commit()
     conn.close()
@@ -2546,46 +3535,68 @@ def backfill_latest_channel_snapshot() -> dict:
 
 def get_capture_history(hours: int, device_gid: str | None = None,
                         now: datetime | None = None) -> list[dict]:
-    """Recorded Main minute coverage in completed local-clock hours, not uptime."""
-    if type(hours) is not int or hours not in (48, 168):
-        raise ValueError('hours must be 48 or 168')
-    end = (now or datetime.now()).replace(minute=0, second=0, microsecond=0)
-    start = end - timedelta(hours=hours)
+    """Capture over completed elapsed hours, labeled in the persisted reporting zone."""
+    if type(hours) is not int or hours not in (24, 48, 168):
+        raise ValueError('hours must be 24, 48 or 168')
     conn = _connect()
     try:
+        conn.execute("BEGIN")
+        clock, moment, _, _ = _query_window(conn, timedelta(0), now)
+        end = (clock.parse(clock.hour_key(clock.stamp(moment))) if clock else
+               moment.replace(minute=0, second=0, microsecond=0))
+        start = end-timedelta(hours=hours)
+        serialize = clock.stamp if clock else datetime.isoformat
+        if clock:
+            bins = clock.buckets(start, end, hourly=True)
+            hour, minute = 'energy_hour(timestamp)', 'energy_minute(timestamp)'
+        else:
+            bins = [{'key': (start+timedelta(hours=index)).isoformat()[:13],
+                     'start': start+timedelta(hours=index), 'end': start+timedelta(hours=index+1)}
+                    for index in range(hours)]
+            hour, minute = 'substr(timestamp,1,13)', 'substr(timestamp,1,16)'
         gid = _resolve_device_gid(conn.cursor(), device_gid)
-        rows = conn.execute('''SELECT substr(timestamp,1,13) AS hour,
-            COUNT(DISTINCT substr(timestamp,1,16)) AS minutes FROM readings
-            WHERE device_gid=? AND channel_name='Main' AND usage_kwh>=0
-              AND timestamp>=? AND timestamp<? GROUP BY hour''',
-                            (gid, start.isoformat(), end.isoformat())).fetchall() if gid else []
-        health = conn.execute('''SELECT substr(timestamp,1,13) AS hour,
-            COUNT(*) AS reports,SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS errors
-            FROM poller_health_events WHERE timestamp>=? AND timestamp<? GROUP BY hour''',
-                              (start.isoformat(), end.isoformat())).fetchall()
+        rows = conn.execute(
+            f"""SELECT {hour} hour, COUNT(DISTINCT {minute}) minutes FROM readings
+                WHERE device_gid=? AND channel_name='Main' AND usage_kwh>=0
+                  AND timestamp>=? AND timestamp<? GROUP BY hour""",
+            (gid, serialize(start), serialize(end)),
+        ).fetchall() if gid else []
+        health = conn.execute(
+            f"""SELECT {hour} hour, COUNT(*) reports,
+                       SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) errors FROM poller_health_events
+                WHERE timestamp>=? AND timestamp<? GROUP BY hour""",
+            (serialize(start), serialize(end)),
+        ).fetchall()
+        counts = {row['hour']: row['minutes'] for row in rows}
+        health_counts = {row['hour']: dict(row) for row in health}
+        result = []
+        for bucket in bins:
+            lower, upper = max(start, bucket['start']), min(end, bucket['end'])
+            expected = (upper-lower).total_seconds()/60
+            minutes = min(expected, counts.get(bucket['key'], 0))
+            coverage = minutes/expected*100
+            reports = health_counts.get(bucket['key'], {})
+            result.append({
+                'hour': clock.local(lower).isoformat(timespec='minutes') if clock else lower.isoformat(),
+                'minutes': minutes, 'expected_minutes': expected,
+                'coverage_pct': round(coverage),
+                'state': 'dense' if coverage >= 95 else 'partial' if minutes else 'missing',
+                'health_reports': reports.get('reports', 0), 'reported_errors': reports.get('errors', 0),
+                'partial_bucket': lower != bucket['start'] or upper != bucket['end'],
+                **({'bucket_utc': bucket['key'], 'reporting_timezone': clock.reporting_timezone} if clock else {}),
+            })
+        return result
     finally:
         conn.close()
-    counts = {row['hour']: row['minutes'] for row in rows}
-    health_counts = {row['hour']: dict(row) for row in health}
-    result = []
-    for index in range(hours):
-        stamp = start + timedelta(hours=index)
-        minutes = min(60, counts.get(stamp.isoformat()[:13], 0))
-        state = 'dense' if minutes >= 57 else 'partial' if minutes else 'missing'
-        reports = health_counts.get(stamp.isoformat()[:13], {})
-        result.append({'hour': stamp.isoformat(), 'minutes': minutes,
-                       'coverage_pct': round(minutes / 60 * 100), 'state': state,
-                       'health_reports': reports.get('reports', 0),
-                       'reported_errors': reports.get('errors', 0)})
-    return result
 
 
 def get_log_entries(n: int = 200) -> list[dict]:
     """Return the most recent n poll timestamps and total kWh recorded."""
     conn = _connect()
-    c = conn.cursor()
-    c.execute(
-        """SELECT timestamp,
+    try:
+        clock = _utc_clock(conn)
+        rows = conn.execute(
+            """SELECT timestamp,
                   SUM(usage_kwh)   as total_kwh,
                   SUM(cost_cents)  as total_cents,
                   COUNT(*)         as channel_count
@@ -2593,11 +3604,16 @@ def get_log_entries(n: int = 200) -> list[dict]:
            GROUP BY timestamp
            ORDER BY timestamp DESC
            LIMIT ?""",
-        (n,),
-    )
-    rows = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return rows
+            (n,),
+        ).fetchall()
+        result = [dict(row) for row in rows]
+        if clock:
+            for row in result:
+                row['local_timestamp'] = clock.local(clock.parse(row['timestamp'])).isoformat(timespec='seconds')
+                row['reporting_timezone'] = clock.reporting_timezone
+        return result
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

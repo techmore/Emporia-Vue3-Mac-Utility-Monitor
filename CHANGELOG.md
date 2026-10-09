@@ -1,5 +1,262 @@
 # Changelog
 
+## 2.3.53 - Unreleased
+
+- Add opt-in durable per-channel completed-history collection with explicit
+  canonical scope, start/zone review and immutable request budgets/configuration.
+  Keep jobs, 15-minute leases and append-only attempt/results through restarts.
+  Charge worst-case SDK chart retries/401 replays against rolling-hour/day limits;
+  no refund on crash. Never hold a database transaction during cloud requests.
+- Commit exact source evidence, shared projection, job outcome and scan progress
+  atomically. Distinguish scanned from verified prefixes; null/absent history is
+  a retryable gap, conflicting or unowned evidence needs review, not deletion.
+  Recheck the recent two-hour window no sooner than 30 minutes; bound repair slots
+  so old gaps cannot starve current collection. Preserve original values/IDs/cents.
+- Explicit channel promotion keeps live display snapshots separate from canonical
+  history, even when acquisition is paused. Discover missing provider labels
+  without first archiving unproven samples. Select promoted live devices before
+  their first historical window. Unconfigured channels retain existing behavior.
+- Add private operator CLI and bounded status API. Poller acquisition requires
+  `EMPORIA_COMPLETED_HISTORY=1`; it is disabled by default and independent from
+  successful live-poll health. Verify recovery/lease/budget/clock/rename/rollback,
+  actual HTTP acquisition/cache/Swift totals and private UTC guards. No deployment,
+  automatic production adoption, source-retention policy or UTC cutover.
+
+## 2.3.52 - Unreleased
+
+- Negotiate `interval_v2` before any chart-capable journal page, including CSV
+  replacements/deletions and identity/reset checks. Older clients receive HTTP
+  426 without changes; immutable chart source order keeps the gate active after
+  pruning/checkpoints. The same read snapshot covers capability and journal.
+- Require the collector to acknowledge the upgraded downloader's model before
+  applying even a supported CSV page. Upgrade the collector before using this
+  downloader; an older server ignoring negotiation cannot partially mutate cache.
+- Allow only additive v1-to-v2 measurement support on an otherwise unchanged
+  cache contract. Preserve source/generation, reading IDs and stored costs; refuse
+  downgrades, unknown models or timestamp/reporting-zone changes. Swift offline
+  history explicitly accepts both known models for legacy and UTC caches.
+- Verify old-client refusal, supported-first-event replacement, single-event
+  resume, concurrent publication, sticky retention gates, malformed contracts,
+  actual HTTP downloads and native legacy/UTC totals. Collection scheduling,
+  production reconciliation and backed-up SER8/UTC cutover remain open. No deploy.
+
+## 2.3.51 - Unreleased
+
+- Retain exact completed chart response bytes, scoped request/receipt identity,
+  SHA256, original price basis and verified half-open minute observations in a
+  private append-only energy ledger. Fetch one bounded window via SDK-authenticated
+  raw GET; never use its missing-anchor fallback or reinterpret live samples.
+- Share one CSV/chart coverage/conflict selector and immutable source order.
+  Complete finer coverage replaces owned coarse rows without double counting;
+  partial/null windows retain coarse evidence, disagreements require review,
+  and unknown live/legacy coverage remains blocked. Preserve surviving IDs,
+  stored cents, original sources and single-event cache replacement order.
+- Persist provider-supplied channel identity claims from discovery/live polling;
+  do not guess names for unnamed channels. Unknown, renamed or ambiguous scope
+  fails closed. Require an explicit reviewed legacy storage zone; retain fold
+  evidence without publishing ambiguous wall keys. Ordinary UTC guards remain.
+- Verify retries/counters, original source immutability, actual acquisition,
+  response cleanup, transactional failure, UTC conversion and cache pages.
+  This explicit window path does not yet schedule continuous completed-history
+  collection, reconcile production live data or activate the SER8/UTC cutover.
+  #135/#140/#127 remain open; no production deployment or repricing.
+
+## 2.3.50 - Unreleased
+
+- Add reviewed offline legacy CSV identity binding and append-only reversal.
+  Audit verified private standalone backups; require exact snapshot/plan hashes
+  before publishing a new copy. Verify original bytes/cells/units/zones/bounds and
+  stored pricing; block unowned data, collisions, unknown target coverage and
+  intersecting intervals. Never guess historical units or change stored costs.
+- Preserve raw IDs/bindings and use batch-scoped effective identity decisions for
+  subsequent projection. Move only owned reading IDs, preserving energy/evidence,
+  original journals and stream identities. Keep newer/unrelated target snapshots;
+  append ordinary upserts and record immutable review/row/derived-state receipts.
+  Reversal preserves earlier reviews and rejects changed or superseded state.
+- Verify real HTTP cache resume/native history, finer re-import, private-file/drift/
+  rollback failure guards and original-export binding/reversal. UTC live guards and
+  production services remain unchanged. Source disagreements, pre-ledger adoption,
+  completed-history publication and production cutover remain #140/#135/#127 gates.
+- A CLI error after publication reports an unknown outcome, not a false rollback.
+  Verify the destination/receipt before retry or activation; inject post-publication
+  receipt failure to confirm preserved output and secret-free diagnostics.
+
+## 2.3.49 - Unreleased
+
+- Resolve new CSV imports to canonical cloud monitor IDs using poller discovery,
+  not filename prefixes or display names. Preserve parent/nested channels without
+  mutating SDK objects; retain immutable discovery claims and per-source bindings.
+- Add explicit discovered-monitor selection to Import. Reject unknown/ambiguous
+  auto-matches, unregistered HTTP selections and contradictions before publication.
+  Keep canonical live/CSV overlap guards active; existing split history requires
+  reviewed reconciliation rather than a silent alias or rewrite.
+- Verify actual Flask imports, scoped history, rendered submit-handler selection,
+  source immutability, collisions, idempotence, upgrade preservation and rollback.
+  Package the identity module for native and Linux/Incus/LXD source deployments.
+  Legacy reconciliation and production acceptance remain open in #140/#127/#135;
+  this draft does not change the running application or deploy a new collector.
+
+## 2.3.48 - Unreleased
+
+- Add strict read-only completed-chart evidence validation and a private offline
+  audit CLI. Require explicit request/receipt timestamps and the returned server
+  anchor; exclude inclusive API end buckets and unsettled/partial intervals.
+  Preserve null gaps, signed energy and zero; reject malformed values and units.
+- Real read-only probes exposed different live/chart timestamp semantics and an
+  inclusive chart end bucket. Do not guess a universal previous-minute shift or
+  substitute the SDK's requested-start fallback for missing source provenance.
+- Keep production collection unchanged. General raw-source ledger integration,
+  completed history publication, CSV/live reconciliation and UTC cutover remain
+  open in #127/#135. No app installation, production mutation or deployment.
+
+## 2.3.47 - Unreleased
+
+- Retain immutable original CSV bytes, hashes, headers, cells, source-local/UTC
+  instants, interval bounds and import-time pricing in a collector-side ledger.
+  Project only non-overlapping verified CSV intervals into readings; maximize
+  covered elapsed time before preferring finer resolution. Keep coarse energy
+  when finer coverage is incomplete; never invent a prorated remainder.
+- Preserve accepted values on conflicting sources. Quarantine crossing coverage,
+  unmanaged overlaps and unknown bounds with explicit review warnings. Publish
+  source evidence, owned projection replacements, journal and snapshots atomically;
+  preserve surviving reading IDs and sync identity. Order journal replacements so
+  even single-event cache pages never mix superseded and replacement CSV coverage.
+  An immutable source sequence preserves precedence through database maintenance.
+  Retention cleans membership without resurrecting unrelated archives; explicit
+  re-import may restore evidence.
+- Display review and projection counts in Import; distinguish retained source
+  observations from rows contributing to totals. Verify exhaustive interval
+  selection, actual import/history/cache paths, failure rollback, exact evidence
+  and private persisted-policy UTC conversion. Source archives remain private and
+  are not automatically pruned or sent to clients.
+- Historical reconciliation, subsequently collected live overlap and operational
+  UTC cutover remain unresolved. #127/#135 stay open; this draft is not deployed.
+
+## 2.3.46 - Unreleased
+
+- Reject HTTP failures and malformed success counts in the CSV upload UI before
+  displaying a green result. Preserve safe validation/size/origin error messages,
+  HTTP status for non-JSON proxy failures, and partial-import counts. A lost
+  request reports an unknown import outcome rather than claiming rollback.
+- Execute the actual rendered submit handler against real Flask error and partial
+  import responses. Verify escaping, per-file continuation and restored controls.
+- Preserve `.gitignore` in portable source packages and require it during release
+  validation, so packaged runtime-exclusion tests and future Git checkouts retain
+  the same private-file safeguards. Run the full suite from the extracted release
+  ZIP in CI. No production deployment, historical overlap repair or UTC activation;
+  #127 and #135 remain open.
+
+## 2.3.45 - Unreleased
+
+- Make poll receipts, latest snapshots, journal replicas, capability timestamps,
+  migration markers and retention bounds follow persisted energy clock policy.
+  Capture one poll instant and hold the publication transaction while reading
+  policy. Heartbeat files use aware UTC; legacy health rows retain local semantics.
+- Convert UTC CSV imports using their declared source zone, never the laptop or
+  reporting zone. Reject missing source zones before publication, keep gaps/folds
+  unresolved, preserve actual daily duration, and retain legacy import timestamps.
+  Validate UTC snapshot stamps and close/rollback failed capability publications.
+- Rotate the energy stream generation atomically with private UTC conversion,
+  including already-aware inputs. Record old/new generations, preserve collector
+  identity, reading IDs, original journal sequences, raw energy/cost and unrelated
+  streams. Verify automatic HTTP replacement of a real legacy cache; failed
+  generation changes roll back timestamps, evidence and policy.
+- Add 20 writer/rollback regressions, including real persisted-policy writes on a
+  disposable converted fixture and cross-host timezone subprocesses. Ordinary
+  writable UTC connections remain blocked; activation/cutover and historical
+  overlap reconciliation are unfinished. #127/#135 stay open. Not deployed.
+
+## 2.3.44 - Unreleased
+
+- Negotiate energy sync protocol 3 with explicit timestamp/reporting-zone and
+  measurement contracts. Preserve protocol 2 for legacy collectors; reject old
+  clients before sending UTC rows. Validate canonical UTC timestamps, reject
+  silent format downgrades and isolate UTC rows from older native cache readers.
+- Guard snapshot publication against concurrent cache progress. Publish cache
+  rows, format and generation atomically without replacing unrelated sensor data.
+- Read UTC offline history using the collector reporting zone, actual elapsed
+  windows and offset-bearing fold labels. Preserve microsecond bounds, recorded
+  zeroes and missing bins; omit nonexistent spring hours and clip half-hour
+  transition bins. Fail closed on invalid policies and partial caches.
+- Private converted-artifact HTTP/download/native tests pass; ordinary live UTC
+  connections remain blocked. No production migration or deployment. #127/#135
+  stay open pending writer/import coordination and historical reconciliation.
+
+## 2.3.43 - Unreleased
+
+- Restrict compaction to compatible evidenced Emporia minute-only groups. Preserve
+  unknown/imported intervals, isolated samples, mixed channel/source identities and
+  repeated provider instants (including equivalent offsets). Keep aggregate duration
+  unknown, preserve signed energy/stored costs and an agreed source zone. Do not erase
+  colliding CSV buckets or imply complete hourly capture.
+- Protect compaction deletes, replacement inserts and journal events with a savepoint
+  while retaining caller transaction ownership. Qualify scratch-table operations with
+  `temp` so maintenance cannot drop a permanent same-named table. Use canonical hour
+  keys and elapsed retention bounds in private UTC-clock tests; ordinary UTC activation
+  remains blocked. Add rollback, collision, cache and fold-boundary regressions.
+- Development only: does not repair previously corrupted/overlapping history or
+  complete UTC writer/client coordination. #135/#127 remain open; not deployed.
+
+## 2.3.42 - Unreleased
+
+- Derive live power only from fresh evidenced Emporia minute observations, checking
+  both receipt and provider age. Preserve unknown power across dashboard events,
+  circuit previews, menu summaries and breaker ratings; keep recorded zero distinct.
+  Imported hourly averages are labeled historical, not live. Peak monitored averages
+  require aligned duration/source evidence rather than multiplying every kWh by 60,000.
+  Missing native legs cannot manufacture a total; recorded Main zero is authoritative.
+  Unknown/stale/imported readings cannot enter standby lists or power-based safety alerts.
+- Give the thin Today/Yesterday charts independent sizing containers to prevent
+  Chart.js from including row-label width and overflowing the banner on mobile.
+- Development only: historical overlap, sync capability negotiation and coordinated
+  UTC writers remain unfinished. No production reprice, migration or deployment;
+  #135 and #127 stay open.
+
+## 2.3.41 - Unreleased
+
+- Persist per-reading duration, measurement source, declared source timezone and
+  provider observation timestamp through CSV/minute polling, latest snapshots,
+  reading journals and Python/native-runner sync caches. Preserve unknown legacy
+  evidence and raw energy/cost; aggregate compaction cannot invent a full hour of
+  capture. Add an evidence-only average-power function and transactional poll
+  cleanup. CSV source zones take precedence over declared fallback assumptions in
+  private UTC conversion, without reinterpreting local poll receipt timestamps.
+  Dashboard power consumers, mixed-resolution overlap, cache capability
+  negotiation and coordinated UTC writers remain unfinished; #135/#127 stay open.
+
+- UTC integration in development: transactional conversion rehearsal on a new
+  private copy of a verified backup. Preserve original timestamp evidence,
+  non-time data, IDs and journal sequences; verify generated canonical upserts.
+  Reject the resulting artifact from ordinary app connections until the UTC
+  writer/query/import/client integration is complete. Add byte-preserving,
+  read-only maintenance connections. Not deployed; #127 remains open.
+- Preserve timezone offsets and microseconds in dashboard/native-menu freshness
+  and poller readiness checks. Reject malformed and excessively future-dated
+  timestamps; retain legacy local interpretation until storage cutover.
+- Persist the rehearsal's explicit UTC/reporting-zone policy and integrate it into
+  circuit calendar totals, monthly stored costs, week comparisons, heatmaps and
+  repeated-week baselines. Render actual transition-day column counts and retain
+  fold offsets; do not count duplicate/fold observations as independent weeks.
+  Live activation remains blocked pending the remaining coordinated UTC paths.
+- Restore readable light text on the heatmap's dark sticky circuit labels while
+  preserving the olive/stone theme and contained horizontal scrolling.
+- Continue UTC query integration: elapsed-time rolling totals, hourly/daily and
+  circuit history, reporting-month comparison/projection and observed-day trends.
+  Exclude future rows; retain stored cents, fold offsets and actual interval
+  lengths. Fill chart gaps along real UTC bins, not nonexistent wall hours, and
+  calculate trend slope across actual calendar-day gaps. These adapters remain
+  read-only rehearsal work; remaining writers/client paths still block cutover.
+- Integrate recorded context, intraday comparisons, capture history and peak-time
+  labels with the reporting zone. Keep repeated hours distinct, missing data null,
+  and partial capture bins duration-weighted. Use consistent read snapshots and
+  device-scoped circuit comparisons; do not double-count adjacent boundaries.
+- Remove duplicated dashboard sections that made circuit detail return HTTP 500;
+  retain its own chart and comparison cards. Correct polls/hour and recorded-zero
+  comparison display. The legacy-compatible fix is merged separately in 2.3.38 (PR #137).
+- Track measurement-interval/provenance repair in #135: hourly imported/compacted
+  energy must not be presented as minute-average watts. UTC time-label tests do
+  not establish power accuracy; this remains a release/cutover gate.
+
 ## 2.3.39 - 2026-10-08
 
 - Retire the unproven startup divide-by-60 correction; preserve historical values

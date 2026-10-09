@@ -184,8 +184,8 @@ class EnergyTests(unittest.TestCase):
         ts = energy.datetime.now().replace(microsecond=0).isoformat()
         conn.executemany(
             """INSERT INTO readings
-               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents,measurement_seconds,measurement_source)
+               VALUES (?, ?, ?, ?, ?, ?,60,'emporia_minute')""",
             [
                 (ts, "A", "1,2,3", "Main", 1.0, 10.0),
                 (ts, "A", 1, "Dryer", 0.3, 3.0),
@@ -220,7 +220,7 @@ class EnergyTests(unittest.TestCase):
             with web.app.app_context():
                 total_main, legs, mode = web._detect_service_feed(
                     energy.get_latest("A"),
-                    {r["channel_name"]: r["usage_kwh"] for r in energy.get_latest("A")},
+                    {r["channel_name"]: r for r in energy.get_latest("A")},
                     {row["slot"]: row for row in energy.get_panel_layout()},
                 )
         finally:
@@ -397,7 +397,7 @@ class EnergyTests(unittest.TestCase):
         client = web.app.test_client()
 
         expectations = {
-            "/reports": ["24h Cost", "Peak Today", "Next Best Actions"],
+            "/reports": ["24h Cost", "Peak Monitored Average (24h)", "Next Best Actions"],
             "/trends": ["Operational Summary", "Action Center", "24-Hour Summary", "Cost & Budget", "Load Review", "Biggest 24h Load", "Standby Loads"],
             "/guide": ["Start Here", "Metric Meanings", "Panel view"],
             "/settings": ["Settings", "Reports & Recommendations", "Circuits", "Import", "Aqara", "Log"],

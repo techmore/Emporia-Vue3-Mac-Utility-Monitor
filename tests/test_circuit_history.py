@@ -44,7 +44,8 @@ class CircuitHistoryTests(unittest.TestCase):
         series=result['windows'][0]['series']
         self.assertEqual(series[-1]['total_kwh'],0)
         self.assertTrue(any(r['total_kwh'] is None for r in series))
-        self.assertEqual(result['live_watts'],0)
+        self.assertIsNone(result['live_watts'])
+        # Zero energy with unknown duration is still not evidence of zero live power.
         self.assertEqual(result['windows'][1]['readings'],1)
 
     def test_comparable_minute_history_produces_trend(self):

@@ -35,6 +35,63 @@ private JSON writes. `VERSION` is the application version source; validate bundl
 metadata with `venv/bin/python3 scripts/check_release.py`. Audit and maintenance
 priorities live in `docs/AUDIT.md` and `docs/ROADMAP.md`.
 
+`csv_projection.py` owns append-only CSV evidence and verified non-overlapping
+CSV projections using a borrowed locked connection. DDL stays in `ensure_table`.
+Never rewrite original source bytes/cells or canonical source bounds during UTC
+conversion. Replace only explicitly owned readings; unknown live/legacy bounds
+and source disagreements require review, not guessed deletion or prorating.
+Keep delete/update/insert journal order safe for single-event cache pages. See
+`docs/CSV_IMPORT.md` and `tests/test_csv_projection.py`; this is not automatic
+historical repair or proof of continuous capture.
+
+`completed_history.py` acquires raw scoped chart windows and retains evidence in
+an append-only ledger; `csv_projection.publish_intervals` is the shared CSV/chart
+selector. Callers own connections/transactions. Source order is immutable across
+upgrades/retries. Only provider-supplied channel labels may bind history; empty,
+renamed or ambiguous labels need review. Keep chart buckets historical, not live
+power. Require explicit legacy storage-zone review, retain fold evidence without
+ambiguous wall keys and preserve ordinary UTC guards. Production collection and
+legacy adoption are not enabled. See `tests/test_completed_history.py`.
+
+`history_collection.py` schedules explicitly configured channels with durable
+leases, worst-case chart retry budgets and separate scanned/verified progress.
+Evidence/projection/job/cursor completion shares one transaction; no DB handle
+stays open during cloud I/O. Promotion permanently separates live snapshots from
+canonical history, even when paused. Never promote unowned legacy data implicitly.
+The poller runs one acquisition only with `EMPORIA_COMPLETED_HISTORY=1`; default
+is off. Recent rechecks and gap repairs cannot starve head collection. DDL remains
+in `ensure_table`. See `scripts/collect_completed_history.py` and its tests.
+
+Chart-capable history requires protocol 3 with `measurement_model=interval_v2`
+before any journal page, even a supported CSV event. Immutable chart source order
+keeps the gate sticky. `sync_history` requires explicit model acknowledgment;
+upgrade the collector first. Same-generation cache changes allow only additive
+v1-to-v2 support with unchanged timestamps/zone. See `tests/test_chart_sync_contract.py`.
+
+`emporia_history.py` validates captured completed chart windows without a DB.
+Require returned `firstUsageInstant`; never substitute an echoed live `instant`
+or the SDK's requested-start fallback. Clip inclusive end buckets and preserve
+null gaps. The offline audit script does not publish readings; see
+`docs/EMPORIA_HISTORY_CONTRACT.md` before integrating a general source ledger.
+
+`device_identity.py` resolves CSV export prefixes against immutable discovery
+claims from the poller. Resolve within the publication transaction; HTTP operator
+selection must name a registered canonical monitor. Unknown/ambiguous prefixes
+never become implicit new devices, and display names are not identity evidence.
+Keep original CSV bytes and per-source identity bindings immutable. Existing split
+history requires reviewed reconciliation, not aliases added to every read query.
+See `docs/CSV_IMPORT.md` and `tests/test_device_identity.py`.
+
+`identity_reconciliation.py` and `scripts/reconcile_csv_identity.py` audit/apply/revert
+only verified offline copies. `verified_snapshot.py` handles private immutable
+snapshot copying/publication. Require exact snapshot/plan approval, original cell
+validation and collision/coverage checks; never adopt unknown live/legacy history.
+Review/batch/row evidence is append-only. `csv_effective_devices` supplies reviewed
+batch scope to the CSV publisher without rewriting raw IDs or original bindings.
+Preserve reading values/IDs, journal prefixes, stream identities and newer target
+snapshots; reversed changes append ordinary upserts. Reconcile before guarded UTC
+conversion. These tools do not install/deploy artifacts or repair source conflicts.
+
 ---
 
 ## Build & Run Commands
@@ -45,7 +102,7 @@ priorities live in `docs/AUDIT.md` and `docs/ROADMAP.md`.
 # Install dependencies into the existing virtualenv
 venv/bin/pip install -r requirements.txt
 
-# Syntax-check both Python files (no test suite yet)
+# Syntax-check the core Python files
 venv/bin/python3 -m py_compile energy.py web.py
 
 # Run the poller (continuous, unbuffered output)
@@ -116,7 +173,7 @@ venv/bin/ruff check energy.py web.py
 venv/bin/ruff check --fix energy.py web.py    # auto-fix safe issues
 ```
 
-No `pyproject.toml` or `ruff.toml` config file exists; Ruff runs with defaults.
+Ruff configuration lives in `pyproject.toml`; use its selected rules and exclusions.
 
 ---
 

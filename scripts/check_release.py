@@ -6,6 +6,16 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
+assert (root / '.gitignore').is_file(), 'Missing runtime exclusion rules'
+assert (root / 'csv_projection.py').is_file(), 'Missing shared CSV/chart projection module'
+assert (root / 'completed_history.py').is_file(), 'Missing completed history publisher'
+for name in ('history_collection.py', 'scripts/collect_completed_history.py', 'tests/test_history_collection.py'):
+    assert (root / name).is_file(), f'Missing durable history collection file: {name}'
+assert (root / 'device_identity.py').is_file(), 'Missing canonical monitor identity module'
+for name in ('identity_reconciliation.py', 'verified_snapshot.py', 'scripts/reconcile_csv_identity.py'):
+    assert (root / name).is_file(), f'Missing reviewed identity reconciliation file: {name}'
+for name in ('emporia_history.py', 'scripts/audit_emporia_history.py', 'docs/EMPORIA_HISTORY_CONTRACT.md'):
+    assert (root / name).is_file(), f'Missing completed history evidence file: {name}'
 version = (root / 'VERSION').read_text().strip()
 assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Invalid VERSION'
 info = plistlib.loads((root / 'EnergyMonitorApp/Resources/Info.plist').read_bytes())
@@ -23,5 +33,7 @@ for name in ('aqara_trends.py', 'templates/aqara_trend_chart.html', 'static/aqar
     assert (root / name).is_file(), f'Missing release file: {name}'
 for name in ('timestamp_model.py', 'scripts/audit_timestamps.py', 'docs/UTC_MIGRATION.md'):
     assert (root / name).is_file(), f'Missing UTC preflight file: {name}'
+for name in ('utc_migration.py', 'energy_clock.py', 'scripts/rehearse_utc_migration.py'):
+    assert (root / name).is_file(), f'Missing UTC rehearsal file: {name}'
 assert (root / 'docs/CSV_IMPORT.md').is_file(), 'Missing CSV import/reconciliation guide'
 print(version)

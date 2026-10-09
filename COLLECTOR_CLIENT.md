@@ -19,6 +19,20 @@ service endpoint. Never run its preserved poller alongside the guest.
 Subsequent release upgrades are reflected by `/api/version` and the private
 deployment manifest; the original cutover receipt is not a latest-version pointer.
 
+## Development 2.3.52 Upgrade Order
+
+This unreleased development branch is not the currently deployed collector.
+Upgrade and verify the collector **before** using its new history downloader.
+The downloader requires protocol 3 with an acknowledged `interval_v2` measurement
+model; an older collector ignoring negotiation is refused before cache updates.
+Existing history remains intact, but download cannot resume until that upgrade.
+
+Once chart evidence is retained, the collector returns HTTP 426 to incompatible
+clients before even a CSV replacement/delete page. Upgrade the Mac app/downloader
+too. This additive model change preserves source/generation, reading IDs and
+stored costs; it does not authorize UTC activation or a production cutover.
+See [history contract and disposable tests](docs/EMPORIA_HISTORY_CONTRACT.md#client-capability-contract-development-2352).
+
 ## Original Native SER8 Deployment — 2026-10-08
 
 Release 2.3.26 is installed on the verified Ubuntu SER8. SSH was verified over
@@ -166,6 +180,26 @@ history is seeded once. `/api/sync/readings` returns at most 1,000 changes per p
 and requires an `ENERGY_SYNC_TOKEN` of at least 32 characters, passed as a Bearer
 header. It is disabled when the token is absent. Keep access behind the loopback
 SSH tunnel. Tokens must not be committed or put in URLs.
+
+Unreleased UTC development also supports energy protocol 3, requested with
+`protocol_version=3`. It declares timestamp format, reporting zone and measurement
+model; legacy protocol 2 remains the default for old clients. UTC inspection
+adapters refuse old clients with HTTP 426 rather than send ambiguous timestamps.
+The updated downloader requests 3 and accepts legacy collectors' protocol 2.
+UTC rows live in a separate cache namespace, with atomically saved format metadata.
+Format changes require a new stream generation and complete verified snapshot;
+concurrent cache progress prevents stale replacement. Native UTC cache history
+uses the declared reporting zone and preserves offsets/microseconds. This has
+passed private converted-artifact HTTP/download/offline-native tests, not live
+collector activation. Legacy local caches still require matching timezones;
+UTC writers/imports and the production cutover remain unfinished (#127/#135).
+
+Development 2.3.45 adds private-tested policy-aware energy writers/imports and
+atomic migration generation rotation. A converted snapshot now causes an existing
+legacy cache to download a full format-safe replacement automatically; unrelated
+sensor/panel data survives. Ordinary writable UTC connections are still rejected.
+Source provenance, live activation/rollback and overlap reconciliation remain
+unfinished; do not deploy the UTC draft merely because client reset tests pass.
 
 The code is included in the release, but the actual SER8 connection and automatic
 downloads have not been configured or verified. `sync_history.py` downloads pages to isolated cache

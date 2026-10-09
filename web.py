@@ -10,7 +10,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -31,9 +31,11 @@ from werkzeug.exceptions import RequestEntityTooLarge
 import energy
 import panel_photos
 import radon
+from energy_clock import EnergyClock
 from extensions import HOUSE_CSS, register_extensions
 from panel_model import breaker_load
 from solar_model import hourly_generation_offset, solar_offset
+from timestamp_model import ISO_TIMESTAMP
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
@@ -141,7 +143,7 @@ BASE_CSS = """
 .kasa-actions { display:flex; gap:8px; margin:12px 0; }
 .power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px; }
 .power-heatmap th { font-size: 0.7rem; padding: 3px; }
-.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); min-width: 140px; text-align: left; }
+.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); color: var(--olive-50); min-width: 140px; text-align: left; }
 .power-heatmap .heat-cell { padding: 0; height: 20px; min-width: 8px; border-radius: 2px; }
 .heat-missing { background: var(--stone-200); opacity: 0.15; }
 .heat-1 { background: var(--olive-900); }
@@ -390,8 +392,10 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   letter-spacing: 0.08em;
   color: var(--olive-300);
 }
-.banner-chart-row canvas {
-  width: 100%;
+.banner-chart-plot {
+  position: relative;
+  min-width: 0;
+  height: 26px;
 }
 .legend-swatch {
   width: 10px;
@@ -1028,32 +1032,39 @@ def _format_hour(h: str) -> str:
     return f"{hour - 12} PM"
 
 
+def _timestamp_age_secs(last_ts: str) -> float | None:
+    if not isinstance(last_ts, str) or not ISO_TIMESTAMP.fullmatch(last_ts):
+        return None
+    try:
+        moment = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+        if moment.tzinfo is not None:
+            moment = moment.astimezone(timezone.utc)
+        # Keep legacy host-local semantics until the coordinated storage cutover.
+        now = datetime.now() if moment.tzinfo is None else datetime.now(timezone.utc)
+        return (now - moment).total_seconds()
+    except (ValueError, OverflowError):
+        return None
+
+
 def _status(last_ts: str):
     """Return (css_class, label, hours_old) from the most recent timestamp."""
     if last_ts == "N/A":
         return "dead", "No data", 999
-    try:
-        dt = datetime.fromisoformat(last_ts[:19])
-        h  = (datetime.now() - dt).total_seconds() / 3600
-        if h < 0.1:  return "live",  f"Live · {int(h*60)}m ago",  h
-        if h < 1:    return "live",  f"Live · {int(h*60)}m ago",  h
-        if h < 6:    return "stale", f"Stale · {h:.1f}h ago",     h
-        return "dead", f"Offline · {h:.0f}h ago", h
-    except Exception:
+    age = _timestamp_age_secs(last_ts)
+    if age is None or age < -60:
         return "dead", "Unknown", 999
+    h = max(0, age) / 3600
+    if h < 1: return "live", f"Live · {int(h*60)}m ago", h
+    if h < 6: return "stale", f"Stale · {h:.1f}h ago", h
+    return "dead", f"Offline · {h:.0f}h ago", h
 
 
 def _poller_status_snapshot() -> dict:
     status = energy.read_poller_status()
     last_ts = status.get("timestamp")
-    age_secs = None
-    if last_ts:
-        try:
-            age_secs = int((datetime.now() - datetime.fromisoformat(last_ts[:19])).total_seconds())
-        except Exception:
-            pass
-    status["age_secs"] = age_secs
-    status["poller_running"] = age_secs is not None and age_secs < 180
+    age = _timestamp_age_secs(last_ts)
+    status["age_secs"] = None if age is None else int(age)
+    status["poller_running"] = age is not None and -60 <= age < 180
     return status
 
 
@@ -1061,11 +1072,11 @@ def _build_live_dashboard_payload() -> dict:
     _common_values, dashboard = _get_cached_dashboard()
     return {
         "latest_timestamp": energy.get_latest_timestamp(),
-        "current_watts": round(dashboard["current_watts"], 1),
-        "reading_fresh": _reading_fresh(dashboard["main_now"]),
+        "current_watts": round(dashboard["current_watts"], 1) if dashboard["current_watts"] is not None else None,
+        "reading_fresh": dashboard["current_watts"] is not None,
         "current_kwh": round(dashboard["ctx"]["current_kwh"] or 0, 3),
         "monthly_projected": round(dashboard["monthly_projected"], 2),
-        "cost_per_hour": round(dashboard["cost_per_hour"], 2),
+        "cost_per_hour": round(dashboard["cost_per_hour"], 2) if dashboard["cost_per_hour"] is not None else None,
         "top_circuits": dashboard["top_live_circuits"],
         "panel_fragment": dashboard["panel_fragment"],
         "budget_pct": dashboard["budget_pct"],
@@ -1084,15 +1095,38 @@ def _delta_badge(pct, label: str, invert: bool = False) -> str:
     return f'<span class="delta {cls}">{arrow} {abs(pct):.1f}% vs {label}</span>'
 
 
-def _watts_estimate(kwh_per_minute: float) -> float:
-    """Convert kWh reading (1-minute scale) to approximate watts."""
-    return kwh_per_minute * 60 * 1000
+def _live_watts(reading: dict | None) -> float | None:
+    return energy.reading_live_watts(reading, now=datetime.now(timezone.utc))
+
+
+def _standby_circuits(latest_map: dict[str, dict]) -> list[dict]:
+    result = []
+    for name, reading in latest_map.items():
+        if name in _MAINS_NAMES or name in _SKIP_NAMES:
+            continue
+        watts = _live_watts(reading)
+        if watts is not None and 1 <= watts <= 50:
+            result.append({'name': name, 'watts': watts})
+    return sorted(result, key=lambda row: row['watts'], reverse=True)
 
 
 def _fill_gaps(rows: list[dict], key: str, hourly: bool = False) -> list[dict]:
     """Insert empty buckets (total_kwh None) so charts show unrecorded periods as gaps."""
     if len(rows) < 2:
         return rows
+    if hourly and rows[0].get("bucket_utc"):
+        zone = rows[0]["reporting_timezone"]
+        if any(row.get("reporting_timezone") != zone or not row.get("bucket_utc") for row in rows):
+            raise ValueError("Inconsistent UTC chart metadata")
+        clock = EnergyClock(zone)
+        by_key = {row["bucket_utc"]: row for row in rows}
+        bins = clock.buckets(clock.parse(rows[0]["bucket_utc"]),
+                             clock.parse(rows[-1]["bucket_utc"])+timedelta(microseconds=1),
+                             hourly=True)
+        return [by_key.get(row["key"]) or {
+            key: row["label"], "bucket_utc": row["key"], "reporting_timezone": zone,
+            "total_kwh": None, "total_cents": None,
+        } for row in bins]
     fmt, step = ("%Y-%m-%d %H:00", timedelta(hours=1)) if hourly else ("%Y-%m-%d", timedelta(days=1))
     by_key = {row[key]: row for row in rows}
     cursor = datetime.strptime(rows[0][key], fmt)
@@ -1151,7 +1185,7 @@ PANEL_FRAGMENT_HTML = """
   <div class="panel-service-total">
     <div class="mains-card" style="background:var(--olive-700);">
       <div class="mc-leg">{{ total_main.label }}</div>
-      <div class="mc-w" style="font-size:{{ total_font_size }}rem;">{{ "%.0f"|format(total_main.watts) }} <span style="font-size:{{ total_unit_size }}rem;color:var(--olive-300)">W</span>
+      <div class="mc-w" style="font-size:{{ total_font_size }}rem;">{{ "%.0f"|format(total_main.watts) if total_main.watts is not none else "—" }} <span style="font-size:{{ total_unit_size }}rem;color:var(--olive-300)">W</span>
         <span style="font-size:{{ total_rate_size }}rem; color:var(--olive-300); margin-left:{{ total_rate_margin }}px;">${{ "%.4f"|format(total_main.cost_24h / (total_main.kwh_24h or 1)) }}/kWh</span>
       </div>
       <div class="mc-kwh">{{ "%.2f"|format(total_main.kwh_24h) }} kWh (24h) &bull; <strong>${{ "%.2f"|format(total_main.cost_24h) }}</strong></div>
@@ -1168,7 +1202,7 @@ PANEL_FRAGMENT_HTML = """
     {% for m in mains_legs %}
     <div class="mains-card">
       <div class="mc-leg">{{ m.label }}</div>
-      <div class="mc-w">{{ "%.0f"|format(m.watts) }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
+      <div class="mc-w">{{ "%.0f"|format(m.watts) if m.watts is not none else "—" }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
       {% if m.live_estimated %}<div class="mc-kwh" style="margin-top:2px;">live watts estimated from slot layout</div>{% endif %}
       <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
     </div>
@@ -1192,7 +1226,7 @@ PANEL_FRAGMENT_HTML = """
       <div class="breaker-body">
         <div class="breaker-name">{{ b.label }}</div>
         <div class="breaker-watts">
-          {{ "%.0f"|format(b.watts) }} W
+          {{ "%.0f"|format(b.watts) if b.watts is not none else "—" }} W
           {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
         </div>
         {% if b.load_label %}
@@ -1206,10 +1240,10 @@ PANEL_FRAGMENT_HTML = """
       </div>
       <div>
         <div class="breaker-bars">
-          <div class="breaker-bar-wrap" title="Relative share of current panel load">
+          <div class="breaker-bar-wrap" title="Relative magnitude of available minute-average power">
             <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
           </div>
-          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="{{ 'Estimated load vs configured rating; 80% reference' if b.rating_known else 'Set breaker rating in Panel Layout' }}">
+          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="{{ 'Power unavailable' if b.watts is none else 'Estimated load vs configured rating; 80% reference' if b.rating_known else 'Set breaker rating in Panel Layout' }}">
             <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
           </div>
         </div>
@@ -1373,7 +1407,7 @@ DASH_HTML = """
           Minute-average power
         </div>
         <div class="watts-big">
-          <span id="live-current-watts">{{ "%.1f"|format(current_watts) if freshness else "—" }}</span>
+          <span id="live-current-watts">{{ "%.1f"|format(current_watts) if current_watts is not none else "—" }}</span>
           <span class="watts-unit">W</span>
         </div>
         <div style="font-size:0.85rem; color:var(--olive-300); margin-top:0.3rem;">
@@ -1473,11 +1507,11 @@ DASH_HTML = """
       <div class="banner-chart-rows">
         <div class="banner-chart-row">
           <div class="banner-chart-row-label">Today</div>
-          <canvas id="todayRowChart" height="26"></canvas>
+          <div class="banner-chart-plot"><canvas id="todayRowChart" height="26"></canvas></div>
         </div>
         <div class="banner-chart-row">
           <div class="banner-chart-row-label">Yesterday</div>
-          <canvas id="yesterdayRowChart" height="26"></canvas>
+          <div class="banner-chart-plot"><canvas id="yesterdayRowChart" height="26"></canvas></div>
         </div>
       </div>
     </div>
@@ -1505,7 +1539,7 @@ DASH_HTML = """
             <div class="circuit-bar-wrap">
               <div class="circuit-bar {{ bar_cls }}" style="width:{{ c.pct|round(1) }}%"></div>
             </div>
-            <div class="circuit-val">{{ "%.0f"|format(c.watts) }} W</div>
+            <div class="circuit-val">{{ "%.0f"|format(c.watts) if c.watts is not none else "—" }} W</div>
           </div>
           {% endfor %}
         </div>
@@ -1525,8 +1559,8 @@ DASH_HTML = """
           <div class="panel-view-metrics">
             <div class="card">
               <div class="card-label">Cost Right Now</div>
-              <div class="card-value">$<span id="live-cost-per-hour">{{ "%.2f"|format(cost_per_hour) }}</span><span class="unit">/hr</span></div>
-              <div class="card-meta">{{ "%.0f"|format(current_watts) }} W at ${{ "%.4f"|format(rate) }}/kWh</div>
+              <div class="card-value">$<span id="live-cost-per-hour">{{ "%.2f"|format(cost_per_hour) if cost_per_hour is not none else "—" }}</span><span class="unit">/hr</span></div>
+              <div class="card-meta">{{ "%.0f"|format(current_watts) if current_watts is not none else "—" }} W at ${{ "%.4f"|format(rate) }}/kWh</div>
             </div>
             <div class="card">
               <div class="card-label">24h Cost</div>
@@ -1555,10 +1589,10 @@ DASH_HTML = """
           <!-- Row 3: Peak today + Top active circuits -->
           <div class="panel-view-metrics">
             <div class="card">
-              <div class="card-label">Peak Today</div>
-              {% if peak_24h.peak_watts %}
+              <div class="card-label">Peak Monitored Average (24h)</div>
+              {% if peak_24h.peak_watts is not none %}
               <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(peak_24h.peak_watts) }}<span class="unit">W</span></div>
-              <div class="card-meta">at {{ peak_24h.peak_time }}</div>
+              <div class="card-meta">at {{ peak_24h.peak_time }} · {{ peak_24h.measurement_seconds }} s average</div>
               {% else %}
               <div class="card-value" style="font-size:1.4rem;">—</div>
               <div class="card-meta">no data yet</div>
@@ -1574,7 +1608,7 @@ DASH_HTML = """
                   <span style="font-size:0.78rem; color:var(--text-light);">{{ "%.0f"|format(c.pct_24h or 0) }}%</span>
                 </div>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:2px;">
-                  <span style="font-size:0.75rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W now</span>
+                  <span style="font-size:0.75rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) if c.watts is not none else "—" }} W now</span>
                   <span style="font-size:0.75rem; color:var(--text-light);">{{ "%.2f"|format(c.kwh_24h or 0) }} kWh / 24h</span>
                 </div>
               </div>
@@ -1596,7 +1630,7 @@ DASH_HTML = """
         <a href="/circuit/{{ c.channel_name|urlencode }}" style="text-decoration:none;">
           <div class="card" style="display:flex; flex-direction:column; gap:4px;">
             <div class="card-label">{{ c.channel_name }}</div>
-            <div class="card-value" style="font-size:1.5rem;">{{ "%.0f"|format(c.watts) }}<span class="unit">W</span></div>
+            <div class="card-value" style="font-size:1.5rem;">{{ "%.0f"|format(c.watts) if c.watts is not none else "—" }}<span class="unit">W</span></div>
             <div class="card-meta">{{ "%.1f"|format(c.pct) }}% of load</div>
           </div>
         </a>
@@ -1649,7 +1683,7 @@ DASH_HTML = """
             <span style="font-size:0.78rem; color:var(--text-light);">${Math.round(circuit.pct_24h || 0)}%</span>
           </div>
           <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:2px;">
-            <span style="font-size:0.75rem; color:var(--text-light);">${Math.round(circuit.watts)} W now</span>
+            <span style="font-size:0.75rem; color:var(--text-light);">${circuit.watts == null ? "Power unavailable" : Math.round(circuit.watts) + " W now"}</span>
             <span style="font-size:0.75rem; color:var(--text-light);">${Number(circuit.kwh_24h || 0).toFixed(2)} kWh / 24h</span>
           </div>
         </div>
@@ -1667,10 +1701,10 @@ DASH_HTML = """
       const kwh = document.getElementById('live-window-kwh');
       const projected = document.getElementById('live-projected-month');
       const cost = document.getElementById('live-cost-per-hour');
-      if (watts) watts.textContent = dashboard.reading_fresh ? Number(dashboard.current_watts || 0).toFixed(1) : '—';
+      if (watts) watts.textContent = dashboard.reading_fresh && dashboard.current_watts != null ? Number(dashboard.current_watts).toFixed(1) : '—';
       if (kwh) kwh.textContent = Number(dashboard.current_kwh || 0).toFixed(3);
       if (projected) projected.textContent = Number(dashboard.monthly_projected || 0).toFixed(2);
-      if (cost) cost.textContent = Number(dashboard.cost_per_hour || 0).toFixed(2);
+      if (cost) cost.textContent = dashboard.cost_per_hour == null ? '—' : Number(dashboard.cost_per_hour).toFixed(2);
       const panel = document.getElementById('live-panel-fragment');
       if (panel && dashboard.panel_fragment) panel.innerHTML = dashboard.panel_fragment;
       const budgetProjected = document.getElementById('live-budget-projected');
@@ -1787,7 +1821,7 @@ if (document.getElementById('dailyChart')) {
 
 if (document.getElementById('hourlyChart')) {
   oliveChart('hourlyChart',
-    hourly.map(d => d.hour.slice(11,16)),
+    hourly.map(d => d.hour.slice(11,16) + (d.bucket_utc ? ' ' + d.hour.slice(-6) : '')),
     hourly.map(d => d.total_kwh),
     'oklch(42% 0.055 110)');
 }
@@ -1795,7 +1829,7 @@ if (document.getElementById('hourlyChart')) {
 if (document.getElementById('todayRowChart')) {
   thinRowChart(
     'todayRowChart',
-    intradayComparison.labels,
+    intradayComparison.today_labels || intradayComparison.labels,
     intradayComparison.today,
     'oklch(35% 0.045 110)'
   );
@@ -1803,7 +1837,7 @@ if (document.getElementById('todayRowChart')) {
 if (document.getElementById('yesterdayRowChart')) {
   thinRowChart(
     'yesterdayRowChart',
-    intradayComparison.labels,
+    intradayComparison.yesterday_labels || intradayComparison.labels,
     intradayComparison.yesterday,
     'oklch(55% 0.06 210)'
   );
@@ -1877,9 +1911,9 @@ REPORTS_HTML = """
       <div class="card-meta">{{ "%.0f"|format(budget_pct) }}% of budget</div>
     </div>
     <div class="card">
-      <div class="card-label">Peak Today</div>
-      <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(peak_24h.peak_watts or 0) }}<span class="unit">W</span></div>
-      <div class="card-meta">{{ peak_24h.peak_time or 'no data yet' }}</div>
+      <div class="card-label">Peak Monitored Average (24h)</div>
+      <div class="card-value" style="font-size:1.4rem;">{{ "%.0f"|format(peak_24h.peak_watts) if peak_24h.peak_watts is not none else "—" }}<span class="unit">W</span></div>
+      <div class="card-meta">{{ peak_24h.peak_time or 'Duration evidence unavailable' }}{% if peak_24h.measurement_seconds %} · {{ peak_24h.measurement_seconds }} s average{% endif %}</div>
     </div>
     <div class="card">
       <div class="card-label">Recommendation Reviews</div>
@@ -2188,7 +2222,7 @@ RECOMMENDATIONS_HTML = """
       <div class="card-value">{{ safety_breakers|length }}</div>
       <div class="card-meta">breakers near the 80% line</div>
       <div style="margin-top:10px; font-size:0.84rem; color:var(--text);">
-        {% if safety_breakers %}Start with {{ safety_breakers[0].label }} and confirm breaker rating, expected load, and duty cycle.{% else %}No immediate breaker-capacity warnings are active right now.{% endif %}
+        {% if safety_breakers %}Start with {{ safety_breakers[0].label }} and confirm breaker rating, expected load, and duty cycle.{% else %}No current power-based alerts. Unknown loads or ratings cannot establish safety.{% endif %}
       </div>
     </div>
     <div class="card">
@@ -2280,7 +2314,7 @@ CIRCUITS_HTML = """
           <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
         </div>
         {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No high-load estimates available. Missing power or ratings leave safety unassessed.</div>
         {% endfor %}
       </div>
       <div class="card">
@@ -2288,7 +2322,7 @@ CIRCUITS_HTML = """
         {% for c in top_live_circuits[:4] %}
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
           <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) if c.watts is not none else "—" }} W</span>
         </div>
         {% else %}
         <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
@@ -2299,7 +2333,7 @@ CIRCUITS_HTML = """
         {% for s in standby_circuits[:4] %}
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
           <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) if s.watts is not none else "—" }} W</span>
         </div>
         {% else %}
         <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
@@ -2495,16 +2529,18 @@ TRENDS_HTML = """
     <h2>Weekly Power Heatmap</h2>
     <p class="card-meta">Last seven complete days · hourly recorded kWh · brighter means more energy.
       Blank cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
-      Sample counts do not prove coverage; imports may represent longer intervals.</p>
+      Sample counts do not prove coverage; imports may represent longer intervals.
+      {% if heatmap.reporting_timezone %}Calendar: {{ heatmap.reporting_timezone }}.
+      Repeated hours retain their offsets; transition-day column counts follow elapsed time.{% endif %}</p>
     {% if heatmap.circuits %}
     <div style="overflow-x:auto;">
       <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
-        <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
-        <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ hour[-2:] if hour[-2:] in ['00','06','12','18'] else '' }}</th>{% endfor %}</tr></thead>
+        <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.day_columns %}<th colspan="{{ day.columns }}" scope="colgroup">{{ day.label }}</th>{% endfor %}</tr>
+        <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ heatmap.hour_labels[loop.index0] }}</th>{% endfor %}</tr></thead>
         <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
         {% for cell in circuit.cells %}<td class="heat-cell {{ 'heat-' ~ cell.level if cell else 'heat-missing' }}"
           tabindex="0" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
-          title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }}{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
+          title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }} · {{ heatmap.hour_minutes[loop.index0]|int }} minutes{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
       </table>
     </div>
     {% else %}<p>No circuit history recorded in this window.</p>{% endif %}
@@ -2514,6 +2550,7 @@ TRENDS_HTML = """
     <h2>Typical Week &amp; Cost Forecast</h2>
     <p class="card-meta">Last 28 complete days · Monday–Sunday. Each predicted hour needs at least
       two matching weekdays with 57 or more distinct recorded minutes. Hourly imports alone cannot qualify.
+      Ambiguous repeated hours and partial transition-hour bins do not establish weekly repetitions.
       This is a repeat-pattern baseline, not a weather-adjusted forecast. Missing hours remain unknown.</p>
     {% if pattern.circuits %}
     <div style="overflow-x:auto;">
@@ -2664,7 +2701,7 @@ TRENDS_HTML = """
           <span style="font-size:0.8rem; color:{{ 'var(--red)' if b.safe_cls == 'danger' else 'var(--amber)' }};">{{ b.load_label }}</span>
         </div>
         {% else %}
-        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No breakers are near the 80% line.</div>
+        <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No high-load estimates available. Missing power or ratings leave safety unassessed.</div>
         {% endfor %}
       </div>
       <div class="card">
@@ -2672,7 +2709,7 @@ TRENDS_HTML = """
         {% for c in top_live_circuits[:4] %}
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
           <a href="/circuit/{{ c.channel_name|urlencode }}" style="font-weight:600; color:var(--text); text-decoration:none;">{{ c.display_name }}</a>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) }} W</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(c.watts) if c.watts is not none else "—" }} W</span>
         </div>
         {% else %}
         <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No active circuit data yet.</div>
@@ -2683,7 +2720,7 @@ TRENDS_HTML = """
         {% for s in standby_circuits[:4] %}
         <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border);">
           <span style="font-weight:600; color:var(--text);">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) if s.watts is not none else "—" }} W</span>
         </div>
         {% else %}
         <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby candidates detected.</div>
@@ -2720,7 +2757,7 @@ TRENDS_HTML = """
         {% for s in standby_circuits[:10] %}
         <div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:{% if not loop.last %}1px solid var(--border){% else %}none{% endif %};">
           <span style="font-size:0.82rem;">{{ s.name }}</span>
-          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) }} W</span>
+          <span style="font-size:0.8rem; color:var(--text-light);">{{ "%.0f"|format(s.watts) if s.watts is not none else "—" }} W</span>
         </div>
         {% else %}
         <div style="color:var(--text-light); font-size:0.82rem; font-style:italic;">No standby loads detected</div>
@@ -2788,7 +2825,7 @@ mkChart('trendChart',
   'oklch(35% 0.045 110)');
 
 mkChart('hourlyChart',
-  hourlyData.map(d=>d.hour.slice(11,16)),
+  hourlyData.map(d=>d.hour.slice(11,16) + (d.bucket_utc ? ' ' + d.hour.slice(-6) : '')),
   hourlyData.map(d=>d.total_kwh),
   'oklch(42% 0.055 110)');
 </script>
@@ -2801,17 +2838,17 @@ LOG_HTML = """
 <div class="page">
   <section class="card" style="margin-top:1.5rem;" aria-labelledby="capture-heading">
     <h2 id="capture-heading">Recorded Capture Quality</h2>
-    <p>Completed hours only; each mark counts distinct minutes with a recorded Main reading for the selected device. This is not process uptime. Imported or compacted data, non-minute polling, and local-clock changes can affect interpretation.</p>
+    <p>Completed hours only; each mark counts distinct minutes with a recorded Main reading for the selected device. This is not process uptime. Imported or compacted data and non-minute polling can affect interpretation. UTC reporting-zone intervals preserve repeated-hour offsets and use actual minute denominators for partial transition bins.</p>
     {% for hours, buckets in capture_history %}
     <h3>{{ '48 hours' if hours == 48 else '7 days' }}</h3>
-    <div style="display:flex;gap:2px;margin:8px 0;" role="img" aria-label="{{ hours }} completed hourly capture buckets; details below">
+    <div style="display:flex;gap:2px;margin:8px 0;" role="img" aria-label="{{ buckets|length }} capture intervals over {{ hours }} completed elapsed hours; details below">
       {% for bucket in buckets %}
-      <span style="flex:1;min-width:0;height:20px;background:{{ 'var(--green)' if bucket.state == 'dense' else 'var(--amber)' if bucket.state == 'partial' else 'var(--stone-300)' }};" title="{{ bucket.hour }}: {{ bucket.minutes }}/60 minutes ({{ bucket.coverage_pct }}%), {{ bucket.state }}"></span>
+      <span style="flex:1;min-width:0;height:20px;background:{{ 'var(--green)' if bucket.state == 'dense' else 'var(--amber)' if bucket.state == 'partial' else 'var(--stone-300)' }};" title="{{ bucket.hour }}: {{ "%.0f"|format(bucket.minutes) }}/{{ "%.0f"|format(bucket.expected_minutes|default(60)) }} minutes ({{ bucket.coverage_pct }}%), {{ bucket.state }}"></span>
       {% endfor %}
     </div>
     <details><summary>Hourly capture details · {{ hours }} hours</summary>
-      <div style="max-height:240px;overflow:auto;"><table><thead><tr><th>Hour (collector local time)</th><th>Recorded minutes</th><th>Coverage</th><th>Collector health reports / errors</th></tr></thead><tbody>
-      {% for bucket in buckets %}<tr><td>{{ bucket.hour }}</td><td>{{ bucket.minutes }}/60 · {{ bucket.state }}</td><td>{{ bucket.coverage_pct }}%</td><td>{{ bucket.health_reports }} / {{ bucket.reported_errors }}</td></tr>{% endfor %}
+      <div style="max-height:240px;overflow:auto;"><table><thead><tr><th>Hour (reporting-zone or legacy collector time)</th><th>Recorded minutes</th><th>Coverage</th><th>Collector health reports / errors</th></tr></thead><tbody>
+      {% for bucket in buckets %}<tr><td>{{ bucket.hour }}</td><td>{{ "%.0f"|format(bucket.minutes) }}/{{ "%.0f"|format(bucket.expected_minutes|default(60)) }} · {{ bucket.state }}</td><td>{{ bucket.coverage_pct }}%</td><td>{{ bucket.health_reports }} / {{ bucket.reported_errors }}</td></tr>{% endfor %}
       </tbody></table></div>
     </details>
     {% endfor %}
@@ -2895,7 +2932,7 @@ LOG_HTML = """
     </div>
     {% for e in entries %}
     <div class="log-entry">
-      <span class="log-ts">{{ e.timestamp[:19] }}</span>
+      <span class="log-ts">{{ e.local_timestamp|default(e.timestamp[:19]) }}</span>
       <span class="log-kwh">{{ "%.4f"|format(e.total_kwh or 0) }} kWh</span>
       <span class="log-cost">${{ "%.4f"|format((e.total_cents or 0)/100) }}</span>
       <span class="log-ch">{{ e.channel_count }} ch</span>
@@ -2962,7 +2999,7 @@ function applyStatus(d) {
       panel.style.display = 'block';
     }
 
-    last.textContent = d.timestamp ? (d.timestamp.slice(0,19).replace('T',' ') + ' (' + fmtAge(d.age_secs) + ')') : '—';
+    last.textContent = d.timestamp ? (d.timestamp.replace('T',' ') + ' (' + fmtAge(d.age_secs) + ')') : '—';
     errs.textContent = d.consecutive_errors ?? '—';
     errs.style.color = (d.consecutive_errors > 0) ? 'var(--red)' : 'var(--text)';
 
@@ -3019,9 +3056,21 @@ IMPORT_HTML = """
   <div class="card" style="max-width:600px;">
     <p style="margin-bottom:1rem; color:var(--text-light); font-size:0.9rem;">
       Select one or more <code>.csv</code> files exported from the Emporia app
-      (any resolution: 1MIN, 15MIN, 1H, 1DAY). Duplicate rows are skipped automatically.
+      (any resolution: 1MIN, 15MIN, 1H, 1DAY). Source files are retained privately.
+      New CSV projections use non-overlapping verified intervals. Review any
+      conflict or unknown-coverage warnings; existing live/history reconciliation
+      remains separate and old history is not repaired by guess.
     </p>
     <form id="import-form" enctype="multipart/form-data">
+      <label for="import-device" style="display:block; margin-bottom:0.5rem; font-weight:600;">Monitor</label>
+      <select id="import-device" name="device_gid" style="display:block; margin-bottom:1rem; max-width:100%;">
+        <option value="">Match export to a discovered monitor</option>
+        {% for device in import_devices %}
+        <option value="{{ device.canonical_gid }}">{{ device.display_name or 'Monitor' }} ({{ device.canonical_gid }})</option>
+        {% endfor %}
+      </select>
+      <p style="color:var(--text-light); font-size:0.88rem;">For unknown or ambiguous exports, explicitly select
+        the correct monitor. Monitors appear after poller discovery; existing split history requires review.</p>
       <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CSV file(s)</label>
       <input type="file" id="csv-files" name="files" multiple accept=".csv"
              style="display:block; margin-bottom:1rem; font-size:0.9rem;">
@@ -3061,6 +3110,7 @@ IMPORT_HTML = """
 document.getElementById('import-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const files = document.getElementById('csv-files').files;
+  const device = document.getElementById('import-device').value;
   if (!files.length) return;
   const btn = document.getElementById('import-btn');
   const results = document.getElementById('import-results');
@@ -3071,18 +3121,42 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
   for (const file of files) {
     const fd = new FormData();
     fd.append('file', file);
+    if (device) fd.append('device_gid', device);
+    let responseReceived = false;
     try {
       const r = await fetch('/api/import-csv', { method: 'POST', body: fd });
-      const d = await r.json();
-      const cls = d.errors ? 'err' : 'ok';
+      responseReceived = true;
+      let d;
+      try { d = await r.json(); }
+      catch (_) {
+        throw new Error(r.ok ? 'Invalid import response.' : `Import failed (HTTP ${r.status}).`);
+      }
+      if (!r.ok) {
+        const message = typeof d?.message === 'string' ? d.message : d?.error;
+        throw new Error(typeof message === 'string' && message ? message : `Import failed (HTTP ${r.status}).`);
+      }
+      if (!d || d.error != null || !['imported', 'skipped', 'errors'].every(
+          key => Number.isSafeInteger(d[key]) && d[key] >= 0) ||
+          ['warnings', 'superseded', 'updated', 'inserted', 'deleted', 'observations_recorded'].some(
+            key => d[key] != null && (!Number.isSafeInteger(d[key]) || d[key] < 0))) {
+        throw new Error('Invalid import response.');
+      }
+      const cls = d.errors || d.warnings ? 'err' : 'ok';
       results.innerHTML +=
         `<div class="import-result ${cls}">
           <strong>${escapeHTML(file.name)}</strong>: imported ${d.imported}, skipped ${d.skipped}, errors ${d.errors}
+          ${d.device_gid ? ', monitor ' + escapeHTML(d.device_gid) : ''}
+          ${d.warnings ? ', review warnings ' + d.warnings : ''}
+          ${d.observations_recorded != null ? ', source observations retained ' + d.observations_recorded : ''}
+          ${d.superseded ? ', superseded intervals ' + d.superseded : ''}
+          ${d.inserted != null ? ', projection: inserted ' + d.inserted + ', updated ' + (d.updated || 0) + ', removed ' + (d.deleted || 0) : ''}
           ${d.message ? ' — ' + escapeHTML(d.message) : ''}
         </div>`;
     } catch (ex) {
+      const message = responseReceived ? ex.message :
+        'Request failed; import outcome unknown. Check recorded data before retrying.';
       results.innerHTML +=
-        `<div class="import-result err"><strong>${escapeHTML(file.name)}</strong>: network error — ${escapeHTML(ex)}</div>`;
+        `<div class="import-result err"><strong>${escapeHTML(file.name)}</strong>: ${escapeHTML(message)}</div>`;
     }
   }
   btn.disabled = false;
@@ -3140,11 +3214,8 @@ _SKIP_NAMES  = {"Balance"}
 def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
     if not reading or not reading.get("timestamp"):
         return False
-    try:
-        age = (datetime.now() - datetime.fromisoformat(reading["timestamp"][:19])).total_seconds()
-        return -60 <= age < max_age_secs
-    except Exception:
-        return False
+    age = _timestamp_age_secs(reading["timestamp"])
+    return age is not None and -60 <= age < max_age_secs
 
 
 def _load_panel_display_settings() -> dict:
@@ -3233,7 +3304,7 @@ def _seed_layout_from_latest(
 
 
 def _build_mains_cards(
-    latest_map: dict[str, float],
+    latest_map: dict[str, dict],
     hours: int = 24,
     active_device_gid: str | None = None,
 ) -> tuple[dict | None, list[dict]]:
@@ -3246,21 +3317,29 @@ def _build_mains_cards(
     }
     leg_labels = {"Mains_A": "Leg A", "Mains_B": "Leg B", "Mains_C": "Leg C"}
 
+    main_watts = _live_watts(latest_map.get('Main'))
+    capability = energy.get_device_capabilities(active_device_gid) or {}
+    required_legs = ('Mains_A', 'Mains_B', 'Mains_C') if (
+        capability.get('service_mode') == 'three_phase_native' or 'Mains_C' in latest_map
+    ) else ('Mains_A', 'Mains_B')
+    leg_values = [_live_watts(latest_map.get(name)) for name in required_legs]
+    leg_instants = {(latest_map.get(name) or {}).get('provider_timestamp') or
+                    (latest_map.get(name) or {}).get('timestamp') for name in required_legs}
+    if main_watts is None and all(value is not None for value in leg_values) and len(leg_instants) == 1:
+        main_watts = sum(leg_values)
+        if not math.isfinite(main_watts):
+            main_watts = None
     total_card = {
-        "label": "Total",
-        "is_total": True,
-        "watts": _watts_estimate(latest_map.get("Main", 0)) or sum(
-            _watts_estimate(latest_map.get(name, 0)) for name in ("Mains_A", "Mains_B", "Mains_C")
-        ),
-        "kwh_24h": main_total.get("total_kwh", 0) or 0,
-        "cost_24h": (main_total.get("total_cents", 0) or 0) / 100,
+        'label': 'Total', 'is_total': True, 'watts': main_watts,
+        'kwh_24h': main_total.get('total_kwh', 0) or 0,
+        'cost_24h': (main_total.get('total_cents', 0) or 0) / 100,
     }
 
     leg_cards = []
     for name in ("Mains_A", "Mains_B", "Mains_C"):
         row = mains_totals.get(name, {})
-        watts = _watts_estimate(latest_map.get(name, 0))
-        if not watts and not row:
+        watts = _live_watts(latest_map.get(name))
+        if name not in latest_map and not row:
             continue
         leg_cards.append({
             "label": leg_labels[name],
@@ -3275,9 +3354,9 @@ def _build_mains_cards(
 
 
 def _infer_live_leg_watts(
-    latest_map: dict[str, float],
+    latest_map: dict[str, dict],
     layout: dict[int, dict],
-) -> tuple[float, float, bool]:
+) -> tuple[float | None, float | None, bool]:
     leg_a_watts = 0.0
     leg_b_watts = 0.0
     found = False
@@ -3285,7 +3364,9 @@ def _infer_live_leg_watts(
         name = row.get("channel_name")
         if not name or name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
-        watts = _watts_estimate(latest_map.get(name, 0))
+        watts = _live_watts(latest_map.get(name))
+        if watts is None:
+            return None, None, False
         poles = row.get("poles") or 1
         if poles == 2:
             leg_a_watts += watts / 2
@@ -3295,12 +3376,12 @@ def _infer_live_leg_watts(
         else:
             leg_b_watts += watts
         found = True
-    return leg_a_watts, leg_b_watts, found
+    return (leg_a_watts, leg_b_watts, True) if found else (None, None, False)
 
 
 def _detect_service_feed(
     latest_rows: list[dict],
-    latest_map: dict[str, float],
+    latest_map: dict[str, dict],
     layout: dict[int, dict],
     active_device_gid: str | None = None,
 ) -> tuple[dict | None, list[dict], str]:
@@ -3310,7 +3391,7 @@ def _detect_service_feed(
     inferred_a, inferred_b, inferred_found = _infer_live_leg_watts(latest_map, layout)
     latest_rows_by_name = {row["channel_name"]: row for row in latest_rows}
     live_has_native_legs = all(
-        _reading_fresh(latest_rows_by_name.get(name))
+        _live_watts(latest_rows_by_name.get(name)) is not None
         for name in ("Mains_A", "Mains_B")
     )
     if capabilities and capabilities.get("service_mode") == "three_phase_native":
@@ -3351,7 +3432,7 @@ def _detect_service_feed(
 def _build_dashboard_context(panel_label: str, active_device_gid: str | None = None) -> dict:
     ctx = energy.get_now_vs_context(60, active_device_gid)
     trend = energy.get_trend(14, active_device_gid)
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in ctx["latest"]}
+    latest_map = {r["channel_name"]: r for r in ctx["latest"]}
     summary_24 = energy.get_summary(24, active_device_gid)
     main_24h = energy.get_main_total(24, active_device_gid)
     total_24h = main_24h or {
@@ -3360,7 +3441,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     }
 
     main_now = next((r for r in ctx["latest"] if r["channel_name"] == "Main"), None)
-    current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
+    current_watts = _live_watts(main_now)
     summary_24_map = {row["channel_name"]: row for row in summary_24}
     circuits_24 = [
         row for row in summary_24
@@ -3373,7 +3454,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         name = row["channel_name"]
         if name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
-        watts = _watts_estimate(latest_map.get(name, 0))
+        watts = _live_watts(latest_map.get(name))
         summary_row = summary_24_map.get(name, {})
         top_circuits.append({
             **row,
@@ -3383,11 +3464,11 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
             "kwh_24h": summary_row.get("total_kwh", 0),
             "pct_24h": ((summary_row.get("total_kwh", 0) / ((total_24h.get("total_kwh") or 0) or (sum(r["total_kwh"] for r in circuits_24) or 1))) * 100),
         })
-    top_circuits.sort(key=lambda row: row["watts"], reverse=True)
+    top_circuits.sort(key=lambda row: (row["watts"] is not None, abs(row["watts"] or 0)), reverse=True)
     top_circuits = top_circuits[:12]
     top_live_circuits = [
         {"channel_name": row["channel_name"], "display_name": row["display_name"], "watts": row["watts"], "kwh_24h": row["kwh_24h"], "pct_24h": row["pct_24h"]}
-        for row in top_circuits
+        for row in top_circuits if row["watts"] is not None
     ]
 
     for row in circuits_24:
@@ -3418,9 +3499,9 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         ctx["latest"], latest_map, layout, active_device_gid
     )
     dash_mains = ([total_main] if total_main else []) + mains_legs
-    max_w = max((_watts_estimate(latest_map.get(name, 0)) for name in ordered), default=1) or 1
-    live_watts = {name: _watts_estimate(latest_map.get(name, 0)) for name in ordered}
-    sorted_watts = sorted(live_watts.values(), reverse=True)
+    live_watts = {name: _live_watts(latest_map.get(name)) for name in ordered}
+    sorted_watts = sorted((abs(watts) for watts in live_watts.values() if watts is not None), reverse=True)
+    max_w = max(sorted_watts, default=1) or 1
     peak_threshold = sorted_watts[2] if len(sorted_watts) >= 3 else (sorted_watts[0] if sorted_watts else 0)
     dash_breakers = []
     for slot in range(1, dashboard_panel_slots + 1):
@@ -3428,8 +3509,8 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         name = row.get("channel_name")
         configured_amps = row.get("amps")
         poles = row.get("poles") or 1
-        watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
-        bar = min(100, watts / max_w * 100)
+        watts = _live_watts(latest_map.get(name))
+        bar = min(100, abs(watts) / max_w * 100) if watts is not None else 0
         load = breaker_load(watts, configured_amps, poles)
         sz_cls = load["zone_cls"]
         load_cls, fill_cls = load["load_cls"], load["fill_cls"]
@@ -3453,7 +3534,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
             "safe_bar_pct": safe_bar_pct,
             "safe_cls": safe_cls,
             "rating_known": load["rating_known"],
-            "is_peak": bool(name and watts >= peak_threshold and watts > 0),
+            "is_peak": bool(name and watts is not None and abs(watts) >= peak_threshold and watts != 0),
         })
 
     panel_display = _load_panel_display_settings()
@@ -3477,24 +3558,18 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     else:
         delta_month = _delta_badge(None, "last month")
 
-    standby = [
-        {"name": name, "watts": _watts_estimate(kwh)}
-        for name, kwh in latest_map.items()
-        if name not in _MAINS_NAMES and name not in _SKIP_NAMES
-        and 1 <= _watts_estimate(kwh) <= 50
-    ]
-    standby.sort(key=lambda row: row["watts"], reverse=True)
+    standby = _standby_circuits(latest_map)
     leg_rows = mains_legs
-    legs_fresh = bool(leg_rows)
+    legs_fresh = bool(leg_rows) and all(row.get("watts") is not None for row in leg_rows)
     balance_info = None
-    if len(mains_legs) >= 2:
+    if len(mains_legs) == 2 and all(row.get("watts") is not None for row in mains_legs) and sum(abs(row["watts"]) for row in mains_legs) > 0:
         leg_a, leg_b = mains_legs[0], mains_legs[1]
-        leg_total = (leg_a.get("watts") or 0) + (leg_b.get("watts") or 0)
+        leg_total = abs(leg_a["watts"]) + abs(leg_b["watts"])
         balance_info = {
             "leg_a_label": leg_a.get("label", "Leg A"),
             "leg_b_label": leg_b.get("label", "Leg B"),
-            "pct_a": int(round(((leg_a.get("watts") or 0) / (leg_total or 1)) * 100)),
-            "pct_b": int(round(((leg_b.get("watts") or 0) / (leg_total or 1)) * 100)),
+            "pct_a": int(round((abs(leg_a["watts"]) / leg_total) * 100)),
+            "pct_b": int(round((abs(leg_b["watts"]) / leg_total) * 100)),
             "live_estimated": bool(leg_a.get("live_estimated") or leg_b.get("live_estimated")),
         }
 
@@ -3504,7 +3579,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         "ctx": ctx,
         "main_now": main_now,
         "current_watts": current_watts,
-        "cost_per_hour": current_watts / 1000 * RATE,
+        "cost_per_hour": current_watts / 1000 * RATE if current_watts is not None else None,
         "top_circuits": top_circuits,
         "top_live_circuits": top_live_circuits,
         "total_24h": total_24h,
@@ -3549,7 +3624,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
             breakers_left,
             breakers_right,
             balance_info,
-            panel_label_text=f"{panel_label} — {'Live' if _reading_fresh(main_now) else 'Last recorded'}",
+            panel_label_text=f"{panel_label} — {'Live' if current_watts is not None else 'Last recorded'}",
             bus_label=f"Bus bar • {dashboard_panel_slots} slots",
         ),
     }
@@ -3621,20 +3696,13 @@ def reports_page():
     if biggest_circuit:
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest = energy.get_latest()
-    standby = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
-        for row in latest
-        if row["channel_name"] not in _MAINS_NAMES
-        and row["channel_name"] not in _SKIP_NAMES
-        and 1 <= _watts_estimate(row["usage_kwh"]) <= 50
-    ]
-    standby.sort(key=lambda x: x["watts"], reverse=True)
+    standby = _standby_circuits({row["channel_name"]: row for row in latest})
     standby_total_w = sum(s["watts"] for s in standby)
     safety_breakers = []
     layout = {row["slot"]: row for row in energy.get_panel_layout()}
     for row in latest:
         name = row["channel_name"]
-        watts = _watts_estimate(row["usage_kwh"])
+        watts = _live_watts(row)
         panel_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
         if not panel_row or name in _MAINS_NAMES or not watts:
             continue
@@ -3643,7 +3711,7 @@ def reports_page():
             continue
         poles = panel_row.get("poles") or 1
         voltage = 240 if poles == 2 else 120
-        amps_now = watts / voltage
+        amps_now = abs(watts) / voltage
         safe_pct = amps_now / (amps * 0.8) * 100 if amps else 0
         if safe_pct >= 80:
             safety_breakers.append({
@@ -3687,13 +3755,13 @@ def reports_page():
         except (ValueError, OverflowError):
             solar_error = ('Enter finite nonnegative generation and rates, and a self-consumption '
                            'percentage from 0 to 100. Recorded Main consumption is required.')
-    capture = energy.get_capture_history(48, com['active_device_gid'])[-24:]
+    capture = energy.get_capture_history(24, com['active_device_gid'])
     return _render(
         REPORTS_HTML,
         monthly_costs=energy.get_monthly_costs(12),
         active_page="reports",
         solar_result=solar_result, solar_error=solar_error, solar_main=main_24h,
-        solar_dense_hours=sum(hour['state'] == 'dense' for hour in capture),
+        solar_dense_hours=sum(hour['expected_minutes']/60 for hour in capture if hour['state'] == 'dense'),
         solar_inputs={key: request.args.get(key, '') for key in
                       ('solar_generation', 'solar_self_pct', 'solar_export_rate')},
         solar_rate_cents=energy.RATE_CENTS,
@@ -3730,7 +3798,7 @@ def recommendations_page():
 def circuits_page():
     com = _common()
     latest_rows = energy.get_latest(com["active_device_gid"])
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in latest_rows}
+    latest_map = {r["channel_name"]: r for r in latest_rows}
 
     # Per-period summaries
     sum_24h  = {r["channel_name"]: r for r in energy.get_summary(24, com["active_device_gid"])}
@@ -3755,9 +3823,9 @@ def circuits_page():
     )
     mains = ([total_main] if total_main else []) + mains_legs
 
-    max_w = max((_watts_estimate(latest_map.get(n, 0)) for n in all_circuits), default=1) or 1
-    _live_w_c = {n: _watts_estimate(latest_map.get(n, 0)) for n in all_circuits}
-    _sorted_w_c = sorted(_live_w_c.values(), reverse=True)
+    _live_w_c = {n: _live_watts(latest_map.get(n)) for n in all_circuits}
+    _sorted_w_c = sorted((abs(watts) for watts in _live_w_c.values() if watts is not None), reverse=True)
+    max_w = max(_sorted_w_c, default=1) or 1
     _peak_thr_c = _sorted_w_c[2] if len(_sorted_w_c) >= 3 else (_sorted_w_c[0] if _sorted_w_c else 0)
 
     breakers = []
@@ -3766,14 +3834,14 @@ def circuits_page():
         name  = row.get("channel_name")
         configured_amps = row.get("amps")
         poles = row.get("poles") or 1
-        watts = _watts_estimate(latest_map.get(name, 0)) if name else 0
-        bar   = min(100, watts / max_w * 100)
+        watts = _live_watts(latest_map.get(name))
+        bar   = min(100, abs(watts) / max_w * 100) if watts is not None else 0
         load = breaker_load(watts, configured_amps, poles)
         sz_cls = load["zone_cls"]
         load_cls, fill_cls = load["load_cls"], load["fill_cls"]
         load_bar_w, load_label = load["load_bar_w"], load["load_label"]
         safe_bar_pct, safe_cls = load["safe_bar_pct"], load["safe_cls"]
-        is_peak = bool(name and watts >= _peak_thr_c and watts > 0)
+        is_peak = bool(name and watts is not None and abs(watts) >= _peak_thr_c and watts != 0)
         cls = sz_cls + (" active-heat" if bar > 75 else " active-high" if bar > 40 else "")
         breakers.append({
             "slot":         slot,
@@ -3834,17 +3902,14 @@ def circuits_page():
         top_live_circuits.append({
             "channel_name": name,
             "display_name": usage_row_map.get(name, {}).get("display_name", name),
-            "watts": _watts_estimate(row["usage_kwh"]),
+            "watts": _live_watts(row),
         })
-    top_live_circuits.sort(key=lambda r: r["watts"], reverse=True)
+    top_live_circuits = [row for row in top_live_circuits if row["watts"] is not None]
+    top_live_circuits.sort(key=lambda r: abs(r["watts"]), reverse=True)
 
-    standby_circuits = [
-        {"name": usage_row_map.get(name, {}).get("display_name", name), "watts": watts}
-        for name, watts in ((n, _watts_estimate(kwh)) for n, kwh in latest_map.items())
-        if name not in _MAINS_NAMES and name not in _SKIP_NAMES
-        and 1 <= watts <= 50
-    ]
-    standby_circuits.sort(key=lambda r: r["watts"], reverse=True)
+    standby_circuits = _standby_circuits(latest_map)
+    for row in standby_circuits:
+        row['name'] = usage_row_map.get(row['name'], {}).get('display_name', row['name'])
 
     # Split breakers into left (odd) / right (even) columns with invert support
     import json as _json2
@@ -3892,39 +3957,12 @@ def circuit_detail(circuit_name, period="day"):
     circuit_url  = quote(circuit_name, safe="")
     com = _common()
 
-    data = energy.get_circuit_data(circuit_name, period, com["active_device_gid"])
+    data = energy.get_circuit_data(circuit_name, period, com['active_device_gid'])
 
     # Per-circuit context comparison using same window as the period
     window_map = {"hour": 60, "day": 60*24, "week": 60*24*7, "month": 60*24*30}
     wmin = window_map.get(period, 60*24)
-    # Keep all comparison windows in one device-scoped read snapshot.
-    conn = energy._connect()
-    try:
-        conn.execute("BEGIN")
-        now = datetime.now()
-
-        def circuit_kwh(offset_days):
-            end = now - timedelta(days=offset_days)
-            start = end - timedelta(minutes=wmin)
-            row = conn.execute(
-                """SELECT SUM(usage_kwh) FROM readings
-                   WHERE device_gid=? AND channel_name=? AND timestamp>? AND timestamp<=?""",
-                (com["active_device_gid"], circuit_name, start.isoformat(), end.isoformat()),
-            ).fetchone()
-            return row[0] if row else None
-
-        current, yesterday, week, month = [circuit_kwh(days) for days in (0, 1, 7, 30)]
-        ckt_ctx = {
-            "current_kwh": current,
-            "yesterday_kwh": yesterday,
-            "last_week_kwh": week,
-            "last_month_kwh": month,
-            "vs_yesterday_pct": energy._delta_pct(current, yesterday),
-            "vs_last_week_pct": energy._delta_pct(current, week),
-            "vs_last_month_pct": energy._delta_pct(current, month),
-        }
-    finally:
-        conn.close()
+    ckt_ctx = energy.get_channel_context(circuit_name, wmin, com['active_device_gid'])
 
     return _render(
         CIRCUIT_HTML,
@@ -3977,27 +4015,21 @@ def trends_page():
     if biggest_circuit:
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest_rows = energy.get_latest(com["active_device_gid"])
-    standby_circuits = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
-        for row in latest_rows
-        if row["channel_name"] not in _MAINS_NAMES
-        and row["channel_name"] not in _SKIP_NAMES
-        and 1 <= _watts_estimate(row["usage_kwh"]) <= 50
-    ]
-    standby_circuits.sort(key=lambda x: x["watts"], reverse=True)
+    standby_circuits = _standby_circuits({row["channel_name"]: row for row in latest_rows})
     top_live_circuits = [
-        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
+        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": _live_watts(row)}
         for row in latest_rows
         if row["channel_name"] not in _MAINS_NAMES and row["channel_name"] not in _SKIP_NAMES
     ]
-    top_live_circuits.sort(key=lambda x: x["watts"], reverse=True)
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in latest_rows}
+    top_live_circuits = [row for row in top_live_circuits if row["watts"] is not None]
+    top_live_circuits.sort(key=lambda x: abs(x["watts"]), reverse=True)
+    latest_map = {r["channel_name"]: r for r in latest_rows}
     safety_breakers = []
     for row in energy.get_panel_layout():
         name = row.get("channel_name")
         if not name or name in _MAINS_NAMES or name in _SKIP_NAMES:
             continue
-        watts = _watts_estimate(latest_map.get(name) or 0)
+        watts = _live_watts(latest_map.get(name))
         if not watts:
             continue
         configured_amps = row.get("amps")
@@ -4005,7 +4037,7 @@ def trends_page():
             continue
         poles = row.get("poles") or 1
         voltage = 240 if poles == 2 else 120
-        amps_now = watts / voltage
+        amps_now = abs(watts) / voltage
         safe_limit_amps = configured_amps * 0.8
         safe_pct = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
         if safe_pct >= 80:
@@ -4102,21 +4134,34 @@ def api_sync_readings():
     try:
         after = int(request.args.get("after", "0"))
         limit = int(request.args.get("limit", "500"))
+        protocol = int(request.args.get('protocol_version', '2'))
+        measurement_model = request.args.get('measurement_model')
+        if any(len(request.args.getlist(key)) > 1 for key in ('protocol_version', 'measurement_model')):
+            raise ValueError('Sync contract parameters must occur only once')
         expected_generation = request.args.get("generation_id")
         if expected_generation:
-            identity = energy.get_reading_changes(0, 1)
+            identity = energy.get_reading_changes(0, 1, protocol_version=protocol,
+                                                  measurement_model=measurement_model)
             if request.args.get("source_id") != identity["source_id"]:
                 return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
             if expected_generation != identity["generation_id"]:
                 return jsonify({"error": "Stream checkpoint changed", "reset_required": True,
                                 "source_id": identity["source_id"],
                                 "generation_id": identity["generation_id"]}), 409
-        page = energy.get_reading_changes(after, limit)
+        page = energy.get_reading_changes(after, limit, protocol_version=protocol,
+                                         measurement_model=measurement_model)
         if expected_generation and expected_generation != page["generation_id"]:
             return jsonify({"error": "Stream checkpoint changed; retry"}), 409
         expected_source = request.args.get("source_id")
         if expected_source and expected_source != page["source_id"]:
             return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
+    except energy.SyncUpgradeRequired as exc:
+        payload = {'error': str(exc), 'required_protocol': 3}
+        if exc.measurement_model:
+            payload['required_measurement_model'] = exc.measurement_model
+        response = jsonify(payload)
+        response.headers['Cache-Control'] = 'no-store'
+        return response, 426
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     response = jsonify(page)
@@ -4127,6 +4172,11 @@ def api_sync_readings():
 @app.route("/api/version")
 def api_version():
     return jsonify({"version": VERSION})
+
+
+@app.route('/api/completed-history/status')
+def api_completed_history_status():
+    return jsonify(energy.get_completed_collection_status())
 
 
 @app.route("/api/events")
@@ -4245,7 +4295,7 @@ def api_menu_summary():
     main = next((row for row in latest if row["channel_name"] == "Main"), None)
     status = _poller_status_snapshot()
     online = bool(status.get("ok") and status.get("poller_running") and _reading_fresh(main, 180))
-    watts = _watts_estimate(main["usage_kwh"]) if online and main["usage_kwh"] is not None else None
+    watts = _live_watts(main) if online and main["usage_kwh"] is not None else None
     saved_layout = energy.get_panel_layout()
     labels = {row["channel_name"]: row.get("label") for row in saved_layout}
     layout = {row.get("slot", index + 1): row for index, row in enumerate(saved_layout)}
@@ -4259,7 +4309,7 @@ def api_menu_summary():
     )
     watts_by_name = {
         row["channel_name"]: (
-            _watts_estimate(row["usage_kwh"])
+            _live_watts(row)
             if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None
             else None
         )
@@ -4307,13 +4357,13 @@ def api_menu_summary():
             "load_state": rating["safe_cls"] if rating and rating["rating_known"] else None,
         })
     # Same relative-usage rules as the dashboard breaker cards (heat >75%, high >40%, top 3 starred).
-    live = sorted((row["watts"] for row in breaker_slots if row["channel_name"] and row["watts"]), reverse=True)
+    live = sorted((abs(row["watts"]) for row in breaker_slots if row["channel_name"] and row["watts"]), reverse=True)
     max_watts = live[0] if live else 0
     peak_threshold = live[min(2, len(live) - 1)] if live else 0
     for row in breaker_slots:
-        share = (row["watts"] or 0) / max_watts * 100 if max_watts else 0
+        share = abs(row["watts"] or 0) / max_watts * 100 if max_watts else 0
         row["usage_state"] = "heat" if share > 75 else "high" if share > 40 else None
-        row["is_peak"] = bool(row["channel_name"] and row["watts"] and row["watts"] >= peak_threshold)
+        row["is_peak"] = bool(row["channel_name"] and row["watts"] and abs(row["watts"]) >= peak_threshold)
     display = _load_panel_display_settings()
     left = breaker_slots[::2]
     right = breaker_slots[1::2]
@@ -4331,17 +4381,19 @@ def api_menu_summary():
         {
             "channel_name": row["channel_name"],
             "display_name": labels.get(row["channel_name"]) or row["channel_name"],
-            "watts": _watts_estimate(row["usage_kwh"]) if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None else None,
+            "watts": _live_watts(row) if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None else None,
         }
         for row in latest if row["channel_name"] not in energy.META_CHANNELS
     ]
-    circuits.sort(key=lambda row: (-(row["watts"] or 0), row["display_name"]))
+    circuits = [row for row in circuits if row["watts"] is not None]
+    circuits.sort(key=lambda row: (-abs(row["watts"]), row["display_name"]))
     total = energy.get_main_total(24, gid)
     this_month = next(iter(energy.get_monthly_costs(1, gid)), None)
     return jsonify({
         "version": VERSION, "online": online, "current_watts": watts,
         "active_device_gid": gid,
-        "collector_source_id": energy.get_reading_changes(0, 1)["source_id"],
+        "collector_source_id": energy.get_reading_changes(0, 1, protocol_version=3,
+                                                         measurement_model='interval_v2')["source_id"],
         "cost_24h": total["total_cents"] / 100 if total and total["total_cents"] is not None else None,
         "month_cost": this_month["total_cents"] / 100 if this_month and this_month["total_cents"] is not None else None,
         "month_days_recorded": this_month["days_recorded"] if this_month else 0,
@@ -5607,7 +5659,7 @@ def api_save_panel_display():
 @app.route("/import")
 def import_page():
     com = _common()
-    return _render(IMPORT_HTML, active_page="settings", **com)
+    return _render(IMPORT_HTML, active_page="settings", import_devices=energy.get_registered_devices(), **com)
 
 
 @app.route("/api/import-csv", methods=["POST"])
@@ -5624,7 +5676,8 @@ def api_import_csv():
         f.save(tmp.name)
         tmp_path = tmp.name
     try:
-        result = energy.import_emporia_csv(tmp_path, original_filename=f.filename)
+        result = energy.import_emporia_csv(tmp_path, device_gid=request.form.get('device_gid') or None,
+                                          original_filename=f.filename, require_registered_device=True)
     except (ValueError, csv.Error) as exc:
         return jsonify({"imported": 0, "skipped": 0, "errors": 1, "message": str(exc)}), 400
     except Exception:

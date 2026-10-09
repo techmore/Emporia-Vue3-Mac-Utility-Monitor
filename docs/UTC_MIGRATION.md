@@ -1,6 +1,7 @@
 # UTC migration - issue #127
 
-Status: preflight tooling only. Production still uses legacy naive/local energy
+Status: preflight tooling in production; transactional rehearsal and readiness
+compatibility and initial calendar integration in development. Production still uses legacy naive/local energy
 timestamps. Do not convert live data or change the collector timezone yet.
 This is not a completed UTC migration, and a clean preflight does not authorize one.
 
@@ -14,7 +15,8 @@ applies to that snapshot, not later readings or unverified original source zones
 ## Evidence and interpretation
 
 Emporia poll writes use `datetime.now().isoformat()`. The CSV importer parses
-wall-clock buckets but does not persist their source-zone header. The supplied
+wall-clock buckets; development 2.3.41 now persists source-zone evidence for new
+accepted imports, but old rows do not gain provenance by schema upgrade. The supplied
 exports declare `Time Bucket (America/New_York)`; that proves the timezone of
 those files, not every row ever imported. `channel_num IS NULL` is not sufficient
 provenance: compaction can also remove a channel number from live readings.
@@ -71,6 +73,65 @@ the remaining gates. Keep exports and reports private.
 
 ## Required implementation before cutover
 
+Development work on `codex/utc-migration-integration` adds a transactional
+conversion rehearsal. It does **not** enable UTC production storage. Run it only
+from that reviewed development checkout, with the locked Python requirements:
+
+```bash
+umask 077
+mkdir -m 700 /private/utc-rehearsal
+venv/bin/python3 scripts/rehearse_utc_migration.py \
+  --snapshot /private/verified-archive.db \
+  --destination /private/utc-rehearsal/converted.utc-rehearsal.db \
+  --expected-sha256 VERIFIED_ARCHIVE_SHA256 \
+  --legacy-timezone America/New_York \
+  --reporting-timezone America/New_York > /private/utc-rehearsal/receipt.json
+```
+
+The archive and output must be private regular files; output directory must be
+0700. Existing targets, symlinks, source WAL/rollback sidecars and hash mismatches
+are rejected. The tool copies the archive before opening SQLite, initializes only
+that working copy, and refuses schema initialization that changes archived data.
+The app's normal import-time schema bootstrap is isolated in a temporary directory.
+
+One transaction converts energy readings, their latest snapshots, heartbeat
+events, capability/migration metadata, cache receipt times and original reading
+journal timestamps. Ambiguous or nonexistent times in **any** of those replicas
+abort the whole copy. Original timestamps and row keys remain in evidence tables;
+all non-timestamp column fingerprints must match, including stored kWh/cents and
+collector identity. Development 2.3.45 intentionally rotates only the energy
+stream generation in the conversion transaction and records both values in the
+receipt; unrelated stream/cache identities stay unchanged. Existing journal sequences remain; reading UPDATE
+triggers append exactly one canonical upsert per changed reading. Those appended
+events and SQLite autoincrement state are checked, not silently rebuilt.
+
+Only an integrity-checked, standalone copy is atomically published, without
+overwriting a target. The original archive hash must still match. Failures clean
+only this run's temporary copy. The output is **not deployable** and has
+`live_ready: false`; current development app connections reject it before
+switching journal mode. Inspection requires
+`energy._connect(path, allow_utc_rehearsal=True, read_only=True)`, which cannot write
+or change its file hash. Older app versions do not recognize this marker; never
+point them at the artifact. No collectors, credentials, settings or services are
+changed by the rehearsal. New artifacts persist `energy_time_policy` with
+`timestamp_format=utc_v1`, an explicit reporting timezone and the declared legacy
+timezone assumption. Unknown formats fail closed. Neither the rehearsal marker
+nor this policy permits ordinary app connections or writes, even if one marker
+is missing. An old artifact without the policy remains available for raw
+read-only inspection but cannot run the new calendar queries; make a new copy.
+
+The October 8 private rehearsal converted all 100,237 readings and their energy
+timestamp replicas, retaining 201,918 original timestamp evidence entries. All 30
+non-timestamp table fingerprints and 1,168 local-calendar day/month energy/cost
+groups matched. Existing journal sequences were preserved and exactly 100,237
+canonical reading upserts appended. Both archive and artifact hashes remained
+unchanged during subsequent read-only inspection. These results use the declared
+New York source assumption, not independently established row provenance.
+Production remained on 2.3.37; development 2.3.38 is not released or deployed.
+
+This engine is an integration prerequisite, not a replacement for the following
+still-required live implementation:
+
 1. Establish and persist collector reporting timezone and legacy source provenance.
    Preserve original timestamps, IDs, kWh and stored cents in migration evidence.
    Quarantine unresolved rows rather than guessing DST folds or source zones.
@@ -87,13 +148,234 @@ the remaining gates. Keep exports and reports private.
    Stop only owned writers for the final cutover, verify backup/rollback, then
    confirm real collection, HTTP queries and Mac synchronization before closing #127.
 
+The development dashboard and native-menu API now preserve complete timestamps
+when determining reading and heartbeat age. Offset-aware timestamps are compared
+as UTC instants, including microseconds and both explicit repeated-hour offsets.
+Invalid values and future skew beyond the existing one-minute reading tolerance
+cannot make the poller or menu appear live. The status label clamps permitted
+small future skew to zero instead of displaying negative minutes. This changes
+no stored timestamps: naive values retain current host-local interpretation,
+which must still be replaced by persisted source/reporting timezone policy during
+cutover.
+
+The initial UTC calendar adapters now use this database policy in circuit
+day/week/month-to-date totals, monthly recorded costs/report closure, completed-week comparisons,
+the seven-day heatmap and repeated-week baselines. Range bounds are canonical UTC;
+calendar grouping uses the persisted zone, not SQLite's UTC `strftime` or the
+host clock. Stored cents and device boundaries remain intact; future readings
+are excluded from month-to-date totals. Expected weekly capture minutes reflect
+actual elapsed DST time rather than a constant 10,080 minutes.
+
+Heatmap bins step along actual UTC instants within each reporting day. New York
+transition days render 23/25 columns; both fall folds retain their local offsets.
+Half-hour transitions retain a clipped final interval with its actual duration;
+missing bins remain missing and recorded zero stays zero. Forecast baselines
+require distinct calendar-day repetitions; ambiguous fold hours and partial
+transition-hour bins cannot invent independent weeks. The original 168-slot
+typical-week model remains a normal-week template, not a claim that every actual
+week lasts 168 hours.
+
+The next adapters cover rolling Main/circuit/mains-leg totals, hourly and daily
+Main charts, full circuit charts and 1/7/30-day circuit history, reporting-month
+comparison/projection, and observed-day trends. Rolling windows are elapsed UTC
+durations with a captured upper cutoff, not a fixed number of wall-clock dates.
+Stored costs and device isolation remain unchanged. The existing ghost-device
+compatibility alias still resolves to the selected real device rather than
+mixing in the ghost's zero readings.
+
+UTC hourly chart rows carry a canonical `bucket_utc`, explicit
+`reporting_timezone`, and an offset-bearing local label. Chart gap filling uses
+actual reporting-day bins: both repeated hours are distinct, spring-gap hours
+are omitted, and a clipped half-hour bin reaches the next local midnight rather
+than skipping it. Circuit history retains null missing buckets, recorded zeroes,
+partial-range flags and actual interval durations. Trend regression uses elapsed
+calendar days, so missing observations cannot compress a three-day change into
+one day. Daily averages remain averages of recorded days, not proof of complete
+capture or an inferred usage total for missing days.
+
+These adapters are exercised only through explicit read-only maintenance
+connections to private rehearsal copies. This is not permission to launch Flask
+against a converted artifact. Writers, imports, retention/compaction and native cache/sync paths are not yet
+UTC-ready; the ordinary connection guard remains until they are coordinated.
+
+Recorded context, intraday, capture and peak-time queries now use the persisted
+reporting zone in read-only rehearsals. Context windows use one captured instant
+and a consistent database read snapshot; adjacent windows do not share a reading.
+Same-clock references on ambiguous/nonexistent prior dates stay unavailable rather
+than guessing a DST fold or normalizing a gap. Circuit detail uses device-scoped
+queries instead of mixing same-named channels across devices.
+
+Today/yesterday rows have independent actual-day labels and null missing/future
+bins. Capture bars exclude the incomplete current bin, use distinct observed
+minute positions, and retain actual elapsed denominators on clipped transition
+bins. Solar capture is duration-weighted over its requested 24-hour range, not
+the last 24 cells. These minute-position counts are sampling heuristics, not proof
+of uninterrupted collection or known measurement duration. Peak time labels use
+the reporting zone and preserve fold offsets; watt accuracy is still unresolved.
+
+Issue #135 blocks accurate power estimates: importing a 3 kWh hourly observation
+currently produces a 180,000 W minute-based estimate instead of a 3,000 W hourly
+average. Persist source/interval evidence through polling, imports, compaction,
+sync and clients; suppress power where duration is unknown. Passing UTC query
+tests cannot close this separate measurement-model problem.
+
 ## Reproduction tests
 
 ```bash
 python3 -m unittest discover -s tests -p test_timestamp_model.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_dashboard_freshness.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_calendar_queries.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_duration_queries.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_live_queries.py -v
 ```
 
 Tests cover New York gaps/folds, explicit offsets, a half-hour DST transition,
 an entirely skipped calendar day, microseconds, collisions, invalid identities,
-empty exports, bounded examples, redacted errors and CLI runs under different
-host timezones with no database creation or input-file changes.
+empty exports, bounded examples and redacted errors. Preflight CLI runs under
+different host timezones create no database or input changes. Rehearsal tests
+cover private atomic publication, source drift, nonregular input, schema-reseed
+rejection, data fingerprints, journal updates, read-only inspection and rollback.
+Calendar tests execute the real adapters on converted fixtures, assert rendered
+heatmap column/cell/offset semantics, verify exact now/month boundaries and costs,
+test full spring/fall capture weeks, forbid duplicate/fold forecast repetitions,
+exercise half-/quarter-hour zones and repeat reads under three real host timezones.
+
+The next private rehearsal of the same 100,237-reading archive exercised the
+actual calendar adapters, not just timestamp grouping in an inspection script.
+Independent pointwise aggregation matched twelve device-scoped day/week/month,
+monthly-cost, heatmap and week-capture comparisons across two device IDs, plus
+all seventeen repeated-week profiles. Source and artifact hashes stayed unchanged.
+The maximum measured query times on that guest were 0.034 s for circuit calendar
+totals, 0.452 s for twelve-month costs, 0.253 s for heatmaps and 0.185 s for week
+comparisons. These are this snapshot's observations, not a performance guarantee
+or proof that the remaining app queries support UTC. Browser fixture checks
+verified 23/25 columns, explicit fold labels, contained 390px scrolling, and
+readable sticky circuit labels. No production source, data or services changed.
+
+The subsequent private duration-query checks independently aggregated the same
+100,237 archived readings pointwise. Seventy-two comparisons matched rolling
+totals, hourly/daily/month/year buckets, stored cents, trends and circuit-history
+totals/coverage across two effective devices and three requested identities,
+including the legacy ghost alias. Source and artifact hashes stayed unchanged.
+Maximum observed query times ranged from 0.010 to 0.032 seconds on this snapshot;
+these are measurements, not guarantees. Tests exercise actual host-timezone
+subprocesses, both DST folds, spring gaps, half-hour day-end clipping, exact
+microsecond bounds, query cleanup on invalid clocks and the real Trends chart
+script's offset-bearing labels. This does not verify production HTTP/native
+operation against UTC data, and does not authorize deployment.
+
+The live-query fixture suite executes the actual dashboard, Reports, Trends,
+circuit detail, Log and menu API against explicit read-only UTC fixture adapters.
+It also exercises real concurrent WAL updates, healthy snapshot fast paths,
+future-snapshot fallback, independent banner chart labels and three host-timezone
+subprocesses. It exposed duplicated dashboard markup that made circuit detail
+return HTTP 500; the development template now retains only circuit-owned sections.
+These are fixture HTTP checks, not a live UTC collector or native-cache rehearsal.
+
+Development 2.3.41 persists measurement evidence in energy observations, latest
+snapshots, reading changes and downloaded caches. CSV source-zone evidence takes
+precedence over the rehearsal's explicitly declared fallback assumption in
+conversion and projected collision checks. The provider timestamp of a minute
+poll is kept separately; its UTC offset cannot reinterpret a local receipt time.
+A mixed Chicago-export/New-York-receipt fixture verifies all three timestamp
+replicas, exact energy/provider evidence and an unchanged archive hash. This is
+a private conversion test, not permission to enable production UTC writers.
+
+Development 2.3.42 uses this evidence for dashboard/native-menu live power and
+historical circuit averages. Only fresh Emporia minute observations qualify as
+live; unknown duration, imported intervals and stale provider times remain
+unavailable. Aligned monitored peak averages reject mixed interval/source cohorts.
+These consumer changes do not repair overlapping historical energy, prove complete
+panel coverage, negotiate old clients or enable UTC collection. #135/#127 remain
+open and production activation is still blocked by the coordinated cutover gates.
+
+Development 2.3.43 makes compaction reject unknown/mixed/imported observations and
+repeated provider instants rather than erasing their evidence. Replacement and
+journal publication are savepoint-protected, without committing caller work.
+Private injected-clock tests exercise canonical hour keys, distinct fall folds
+and equivalent-offset elapsed retention bounds. These are actual compactor tests
+on private fixtures with an injected clock, not a writable UTC-policy collector:
+the ordinary connection guard remains intact. Raw sum preservation and cache
+round-trips do not prove that the underlying samples have non-overlapping coverage.
+
+Development 2.3.44 negotiates energy sync protocol 3. Its `time_policy` declares
+`timestamp_format`, `reporting_timezone` and `measurement_model`. Legacy storage
+declares `legacy_local_v1` with a null reporting zone rather than inventing source
+provenance; UTC declares `utc_v1`, a validated IANA reporting zone and `interval_v1`.
+Interval fields can remain unknown. Old protocol-2 clients receive HTTP 426 from
+UTC adapters before any reading rows. Legacy collectors retain protocol 2; the
+new downloader requests 3 and can accept an old collector's protocol-2 response.
+
+UTC downloaded rows use `sync_cached_utc_readings`, separate from the table queried
+by older native apps. Cache format is immutable within a stream generation; a
+format transition requires a new generation and complete private replacement.
+Reset publication compares the destination identity, generation, cursor,
+watermark, receipt and format under a write lock before replacing only energy
+cache tables. Concurrent progress causes a retry error, not lost cached updates.
+At the 2.3.44 milestone this implemented client reset enforcement but not migration
+generation rotation. The private conversion engine adds rotation below; the live
+activation/cutover coordinator is still required before storage activation.
+
+The new native reader preserves canonical microseconds and bins UTC history in
+the declared reporting zone, independent of the laptop timezone. Hour labels
+retain offsets, spring gaps are omitted and clipped half-hour bins stay distinct.
+Recorded zero differs from missing history; raw stored cents remain unchanged.
+Legacy caches still require the same local timezone as their collector because
+their source zone is unknown. Modern completion receipts are aware UTC instants.
+
+Tests run an actual converted private artifact through a test-only read-only
+Flask adapter, authenticated localhost HTTP, the real Python downloader and the
+actual Swift offline reader after the server stops. Source/artifact hashes stay
+unchanged. Separate Swift tests cover New York folds/gaps, Lord Howe clipping,
+reporting midnight, microsecond end cutoffs, three host zones and invalid policies.
+The actual previous 2.3.43 reader returns unavailable for the UTC-only namespace.
+These are private fixture checks, not a live UTC writer or production deployment.
+The full local suite passes 436 tests. #127/#135 remain open; the connection guard
+and coordinated-cutover requirements above are unchanged.
+
+```bash
+venv/bin/python3 -m unittest discover -s tests -p test_sync_contract.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_native_history_cache.py -v
+```
+
+Development 2.3.45 makes poll, snapshot, capability, heartbeat-history, migration
+marker and retention writes use persisted clock policy. A poll captures one
+instant after the API response, reads policy under `BEGIN IMMEDIATE`, and uses
+that same instant for receipts, capability metadata, pruning and compaction.
+UTC instants retain microseconds and both fold hours. Legacy storage keeps its
+local convention. Heartbeat JSON is always offset-aware UTC; its corresponding
+legacy database event remains local, while UTC events share the file's instant.
+
+CSV parsing retains validated source-local and canonical UTC interpretations
+until publication reads the database policy under its transaction. UTC imports
+require an explicit source zone; the reporting zone is not a provenance fallback.
+Daily duration follows actual source-zone bounds. Invalid/gap/fold rows retain
+their error counts, and duplicates cannot replace accepted energy, evidence or
+snapshots. UTC snapshots reject noncanonical timestamps before mutation.
+
+The conversion engine now changes energy stream generation atomically with
+timestamp policy, even if all source timestamps were already canonical. Existing
+client caches therefore receive a reset instead of attempting a format-changing
+append. `stream_transition` records reason, previous and new generations.
+All unrelated non-time fingerprints, collector identity, original journal
+sequences and reading IDs remain verified. Generation failure rolls the entire
+conversion back; invalid source generations cannot publish an artifact.
+
+Verification includes 18 writer regressions and two migration-failure regressions.
+An actual disposable fixture is converted with the real engine, then exercised
+with real persisted-policy poll/import/heartbeat writes using handles opened
+before conversion. New writable UTC connections remain rejected. Read-only
+queries and sync see canonical rows and correct reporting-month totals; the
+original archive hash stays unchanged. This deliberate private-handle harness
+does not authorize live collection or implement an activation bypass. The real
+HTTP test now also starts with a legacy cache and verifies automatic generation
+reset/replacement while retaining its unrelated panel labels. The full suite
+passes 456 tests. Source provenance, operational activation/rollback, historical
+overlap and production/native acceptance remain cutover gates; #127/#135 stay open.
+
+```bash
+venv/bin/python3 -m unittest discover -s tests -p test_utc_writers.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_sync_contract.py -v
+```
