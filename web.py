@@ -188,7 +188,42 @@ BASE_CSS = """
   --amber:      #b07d2a;
   --chart1:     var(--olive-600);
   --chart2:     #5ba4b5;
+  --history-color-1: #345f93;
+  --history-color-2: #ad4738;
+  --history-color-3: #287c78;
+  --history-color-4: #9b6a18;
+  --history-color-5: #647a30;
+  --history-color-6: #98506c;
+  --history-color-7: #3f839f;
+  --history-color-8: #b45d23;
+  --history-color-9: #376a43;
+  --history-color-10: #76634c;
+  --history-color-11: #b23758;
+  --history-color-12: #425397;
+  --history-color-13: #7d7930;
+  --history-color-14: #24657d;
+  --history-color-15: #8d483d;
+  --history-color-16: #555e65;
 }
+
+.history-comparison { margin-top:16px; }
+.history-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin:12px 0; }
+.history-toolbar label { display:grid; gap:4px; font-size:.75rem; }
+.history-toolbar select,.history-toolbar input { max-width:210px; }
+.history-legend { display:flex; flex-wrap:wrap; gap:8px 16px; margin:12px 0; }
+.history-legend-item { display:flex; align-items:center; gap:6px; font-size:.8rem; cursor:pointer; }
+.history-legend-item input { width:auto; }
+.history-swatch { display:inline-block; width:22px; height:4px; border-radius:2px; }
+.history-plot svg { display:block; width:100%; min-height:180px; }
+.history-summaries { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.history-device-summary { padding:12px; background:var(--surface2); border-top:3px solid var(--accent); border-radius:6px; }
+.history-summary-value { font-size:1.2rem; font-weight:600; }
+.history-data { margin-top:12px; }
+.history-table-scroll { overflow:auto; max-height:360px; }
+.comfort-card-main { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.comfort-temperature { font-size:2rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.comfort-details { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+@media(max-width:600px) { .history-toolbar>* { flex:1 1 40%; } .history-summaries { grid-template-columns:1fr; } }
 
 html { scroll-behavior: smooth; }
 

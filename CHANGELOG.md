@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.41 - 2026-10-09
+
+- Add Kasa and Mitsubishi comparison histories for 4 hours, 24 hours, 7, 14 and
+  30 days, with colored device overlays, selectable metrics, prior windows,
+  accessible tables and CSV exports. Aggregate in SQLite into bounded buckets.
+- Show Comfort temperatures in Fahrenheit by default, heating/cooling setpoints,
+  mode history and vendor schedule/adapter diagnostics from verified API fields.
+- Distinguish missing data from zero; estimate enabled time only across adjacent
+  successful observations within three minutes. Do not infer HVAC power or
+  compressor runtime, or invent historical observations before collection began.
+
 ## 2.3.40 - 2026-10-09
 
 - Add a private systemd update-check timer for Linux collectors. Compare the
