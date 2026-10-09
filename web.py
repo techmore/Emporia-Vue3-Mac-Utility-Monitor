@@ -4174,6 +4174,11 @@ def api_version():
     return jsonify({"version": VERSION})
 
 
+@app.route('/api/completed-history/status')
+def api_completed_history_status():
+    return jsonify(energy.get_completed_collection_status())
+
+
 @app.route("/api/events")
 def api_events():
     def event_stream():

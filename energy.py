@@ -21,6 +21,7 @@ import pyemvue
 import requests
 from pyemvue.enums import Scale, Unit
 
+import history_collection
 from completed_history import capture_chart, publish_chart, record_channel_names, record_channels
 from completed_history import resolve_chart_scope as _resolve_chart_scope
 from csv_projection import identity as _csv_identity
@@ -756,6 +757,75 @@ def ensure_table(path: str | Path | None = None):
         BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS energy_source_observation_delete BEFORE DELETE ON energy_source_observations
         BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TABLE IF NOT EXISTS energy_history_limits (
+            singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+            requests_hour INTEGER NOT NULL CHECK (requests_hour>0),
+            requests_day INTEGER NOT NULL CHECK (requests_day>=requests_hour)
+        );
+        CREATE TABLE IF NOT EXISTS energy_history_channels (
+            device_gid TEXT NOT NULL, channel_num TEXT NOT NULL, channel_name TEXT NOT NULL,
+            start_utc TEXT NOT NULL, storage_format TEXT NOT NULL, storage_timezone TEXT NOT NULL,
+            window_minutes INTEGER NOT NULL, settling_seconds INTEGER NOT NULL, retry_seconds INTEGER NOT NULL,
+            scan_cursor_utc TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0,1)),
+            configured_at_utc TEXT NOT NULL, last_attempt_utc TEXT,
+            reservation_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(device_gid,channel_num),
+            FOREIGN KEY(device_gid,channel_num,channel_name)
+                REFERENCES energy_channel_claims(device_gid,channel_num,channel_name)
+        );
+        CREATE TABLE IF NOT EXISTS energy_history_jobs (
+            id TEXT PRIMARY KEY, device_gid TEXT NOT NULL, channel_num TEXT NOT NULL,
+            start_utc TEXT NOT NULL, end_utc TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending','error','gap','review','complete')),
+            attempts INTEGER NOT NULL, next_attempt_utc TEXT NOT NULL,
+            lease_id TEXT, lease_until_utc TEXT, source_id TEXT, result_json TEXT,
+            UNIQUE(device_gid,channel_num,start_utc),
+            FOREIGN KEY(device_gid,channel_num) REFERENCES energy_history_channels(device_gid,channel_num),
+            FOREIGN KEY(source_id) REFERENCES energy_source_batches(id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_history_channel_lease
+            ON energy_history_jobs(device_gid,channel_num) WHERE lease_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_history_due ON energy_history_jobs(device_gid,channel_num,status,next_attempt_utc);
+        CREATE INDEX IF NOT EXISTS idx_history_recent ON energy_history_jobs(device_gid,channel_num,status,end_utc,next_attempt_utc);
+        CREATE TRIGGER IF NOT EXISTS history_job_scope_update BEFORE UPDATE ON energy_history_jobs
+        WHEN NEW.id!=OLD.id OR NEW.device_gid!=OLD.device_gid OR NEW.channel_num!=OLD.channel_num
+            OR NEW.start_utc!=OLD.start_utc OR NEW.end_utc!=OLD.end_utc OR NEW.attempts<OLD.attempts
+        BEGIN SELECT RAISE(ABORT, 'History job scope is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_job_delete BEFORE DELETE ON energy_history_jobs
+        BEGIN SELECT RAISE(ABORT, 'History job evidence is retained'); END;
+        CREATE TABLE IF NOT EXISTS energy_history_attempts (
+            token TEXT PRIMARY KEY, job_id TEXT NOT NULL, started_at_utc TEXT NOT NULL,
+            request_weight INTEGER NOT NULL CHECK (request_weight>0),
+            FOREIGN KEY(job_id) REFERENCES energy_history_jobs(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_history_budget ON energy_history_attempts(started_at_utc);
+        CREATE TABLE IF NOT EXISTS energy_history_attempt_results (
+            token TEXT PRIMARY KEY, finished_at_utc TEXT NOT NULL, source_id TEXT, result_json TEXT NOT NULL,
+            FOREIGN KEY(token) REFERENCES energy_history_attempts(token),
+            FOREIGN KEY(source_id) REFERENCES energy_source_batches(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS history_config_immutable BEFORE UPDATE ON energy_history_channels
+        WHEN NEW.device_gid!=OLD.device_gid OR NEW.channel_num!=OLD.channel_num OR NEW.channel_name!=OLD.channel_name
+            OR NEW.start_utc!=OLD.start_utc OR NEW.storage_format!=OLD.storage_format
+            OR NEW.storage_timezone!=OLD.storage_timezone OR NEW.window_minutes!=OLD.window_minutes
+            OR NEW.settling_seconds!=OLD.settling_seconds OR NEW.retry_seconds!=OLD.retry_seconds
+            OR NEW.configured_at_utc!=OLD.configured_at_utc OR NEW.scan_cursor_utc<OLD.scan_cursor_utc
+            OR NEW.reservation_count<OLD.reservation_count
+        BEGIN SELECT RAISE(ABORT, 'Collection configuration is immutable; review cutover'); END;
+        CREATE TRIGGER IF NOT EXISTS history_channel_delete BEFORE DELETE ON energy_history_channels
+        BEGIN SELECT RAISE(ABORT, 'Collection scope is sticky; pause instead'); END;
+        CREATE TRIGGER IF NOT EXISTS history_limit_update BEFORE UPDATE ON energy_history_limits
+        BEGIN SELECT RAISE(ABORT, 'History request budgets require review'); END;
+        CREATE TRIGGER IF NOT EXISTS history_limit_delete BEFORE DELETE ON energy_history_limits
+        BEGIN SELECT RAISE(ABORT, 'History request budgets require review'); END;
+        CREATE TRIGGER IF NOT EXISTS history_attempt_update BEFORE UPDATE ON energy_history_attempts
+        BEGIN SELECT RAISE(ABORT, 'History attempts are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_attempt_delete BEFORE DELETE ON energy_history_attempts
+        BEGIN SELECT RAISE(ABORT, 'History attempts are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_result_update BEFORE UPDATE ON energy_history_attempt_results
+        BEGIN SELECT RAISE(ABORT, 'History attempt results are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS history_result_delete BEFORE DELETE ON energy_history_attempt_results
+        BEGIN SELECT RAISE(ABORT, 'History attempt results are immutable'); END;
         CREATE TABLE IF NOT EXISTS migrations (
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
@@ -1634,15 +1704,21 @@ def _resolve_device_gid(c: sqlite3.Cursor, device_gid: str | None = None) -> str
     preferred_gid = _load_settings().get("primary_device_gid")
     if preferred_gid and preferred_gid != _GHOST_DEVICE:
         row = c.execute(
-            "SELECT 1 FROM readings WHERE device_gid = ? LIMIT 1",
-            (preferred_gid,),
+            """SELECT 1 FROM readings WHERE device_gid=?
+            UNION ALL SELECT 1 FROM latest_channel_snapshot s JOIN energy_history_channels h
+              ON h.device_gid=s.device_gid AND h.channel_name=s.channel_name
+              WHERE s.device_gid=? LIMIT 1""",
+            (preferred_gid, preferred_gid),
         ).fetchone()
         if row:
             return preferred_gid
 
     row = c.execute(
         """SELECT device_gid
-           FROM readings
+           FROM (SELECT device_gid,timestamp FROM readings
+                 UNION ALL SELECT s.device_gid,s.timestamp FROM latest_channel_snapshot s
+                 JOIN energy_history_channels h
+                   ON h.device_gid=s.device_gid AND h.channel_name=s.channel_name)
            WHERE device_gid != ?
            GROUP BY device_gid
            ORDER BY MAX(timestamp) DESC
@@ -1852,14 +1928,15 @@ def poll_and_store(vue, device_gids):
                 if isinstance(provider_moment, datetime) and provider_moment.tzinfo is not None:
                     provider_stamp = provider_moment.astimezone(timezone.utc).isoformat()
 
-                c.execute(
-                    """INSERT INTO readings
-                       (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents,
-                        measurement_seconds,measurement_source,source_timezone,provider_timestamp)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (now, gid, channelnum, channel_name, channel.usage, cost,
-                     60, 'emporia_minute', None, provider_stamp),
-                )
+                if not history_collection.owns_live_channel(conn, gid, channelnum, channel_name):
+                    c.execute(
+                        """INSERT INTO readings
+                           (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents,
+                            measurement_seconds,measurement_source,source_timezone,provider_timestamp)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (now, gid, channelnum, channel_name, channel.usage, cost,
+                         60, 'emporia_minute', None, provider_stamp),
+                    )
                 _upsert_latest_snapshot_with_conn(
                     conn,
                     device_gid=str(gid),
@@ -2218,6 +2295,13 @@ def _run_continuous():
             last_ok = finished
             consecutive_errors = 0
             write_poller_status(True, consecutive_errors=0)
+            if os.environ.get('EMPORIA_COMPLETED_HISTORY') == '1':
+                try:
+                    report = run_completed_collection(vue)
+                    if report['attempted']:
+                        logger.info('Completed-history acquisition: %s', report['outcomes'])
+                except Exception as exc:
+                    logger.warning('Completed-history scheduling failed: %s', type(exc).__name__)
         except Exception as e:
             consecutive_errors += 1
             err_str = f"{type(e).__name__}: {e}"
@@ -3104,6 +3188,135 @@ def publish_completed_history(capture: dict, content: bytes, *,
         return result
     finally:
         conn.close()
+
+
+def discover_completed_collection_channels(vue) -> dict:
+    """Record provider channel identities without archiving unproven live samples."""
+    gids, _ = get_devices_with_channels(vue)
+    usage = vue.get_device_list_usage(deviceGids=gids, instant=None,
+                                      scale=Scale.MINUTE.value, unit=Unit.KWH.value)
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            stamp = EnergyClock.stamp(datetime.now(timezone.utc))
+            for gid, device in usage.items():
+                record_channel_names(conn, gid, device.channels.items(), _normalize_channel_name, stamp)
+            channels = [dict(row) for row in conn.execute('''SELECT device_gid,channel_num,channel_name
+                FROM energy_channel_claims ORDER BY device_gid,channel_num,channel_name''')]
+    finally:
+        conn.close()
+    return {'channels': channels, 'readings_recorded': 0}
+
+
+def configure_completed_collection(device_gid: str, channel_num: str, start: datetime, *,
+                                   legacy_storage_timezone: str | None = None,
+                                   window_minutes: int = 60, settling_seconds: int = 300,
+                                   retry_seconds: int = 300, requests_hour: int,
+                                   requests_day: int, now: datetime | None = None) -> dict:
+    """Explicitly promote a reviewed channel to completed history; never adopt unowned data."""
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            history_collection.configure(conn, device_gid, channel_num, start, _utc_clock(conn),
+                legacy_storage_timezone=legacy_storage_timezone, window_minutes=window_minutes,
+                settling_seconds=settling_seconds, retry_seconds=retry_seconds,
+                requests_hour=requests_hour, requests_day=requests_day, now=now or datetime.now(timezone.utc))
+    finally:
+        conn.close()
+    return get_completed_collection_status()
+
+
+def set_completed_collection_enabled(device_gid: str, channel_num: str, enabled: bool) -> dict:
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            history_collection.set_enabled(conn, device_gid, channel_num, enabled)
+    finally:
+        conn.close()
+    return get_completed_collection_status()
+
+
+def get_completed_collection_status() -> dict:
+    conn = _connect()
+    try:
+        conn.execute('BEGIN')
+        return history_collection.status(conn)
+    finally:
+        conn.close()
+
+
+def run_completed_collection(vue, *, max_requests: int = 1, now: datetime | None = None) -> dict:
+    """Reserve durable work before GET, then commit evidence/projection/progress together.
+
+    Default poller acquisition is disabled. This function uses the already authenticated
+    SDK instance; no connection/transaction is held during cloud I/O. Reserve the SDK's
+    worst-case chart HTTP retry allowance (including its 401 replay), not just one call.
+    """
+    if type(max_requests) is not int or not 1 <= max_requests <= 100:
+        raise ValueError('Invalid history request limit')
+    retries = getattr(vue.auth, 'max_retry_attempts', None)
+    if type(retries) is not int or not 1 <= retries <= 10:
+        raise ValueError('Unknown or excessive SDK retry budget')
+
+    def moment():
+        return EnergyClock.instant(now) if now is not None else datetime.now(timezone.utc)
+
+    outcomes = []
+    for _ in range(max_requests):
+        conn = _connect()
+        try:
+            with conn:
+                conn.execute('BEGIN IMMEDIATE')
+                lease = history_collection.reserve(conn, moment(), _utc_clock(conn), request_weight=2 * retries)
+        finally:
+            conn.close()
+        if not lease:
+            break
+        try:
+            capture, content = capture_chart(vue, lease['device_gid'], lease['channel_num'],
+                EnergyClock.parse(lease['start_utc']), EnergyClock.parse(lease['end_utc']))
+        except Exception as exc:
+            conn = _connect()
+            try:
+                with conn:
+                    conn.execute('BEGIN IMMEDIATE')
+                    history_collection.finish(conn, lease, moment(), _utc_clock(conn), error_type=type(exc).__name__)
+            finally:
+                conn.close()
+            outcomes.append('acquisition_error')
+            continue
+        conn = _connect()
+        try:
+            with conn:
+                conn.execute('BEGIN IMMEDIATE')
+                clock = _utc_clock(conn)
+                job = history_collection.check_lease(conn, lease, moment(), clock)
+                request = capture.get('request', {})
+                for field in ('device_gid', 'channel_num'):
+                    if request.get(field) != job[field]:
+                        raise ValueError('Captured history scope differs from reserved job')
+                for field in ('start', 'end'):
+                    if EnergyClock.stamp(datetime.fromisoformat(request[field])) != job[field + '_utc']:
+                        raise ValueError('Captured history window differs from reserved job')
+                result = publish_chart(conn, capture, content, clock, RATE_CENTS,
+                    legacy_storage_timezone=None if clock else job['storage_timezone'],
+                    settling_seconds=job['settling_seconds'])
+                expected = int((EnergyClock.parse(job['end_utc']) - EnergyClock.parse(job['start_utc'])).total_seconds() // 60)
+                if result['expected_completed_buckets'] != expected:
+                    raise ValueError('Captured receipt cannot prove the reserved completed window')
+                _refresh_history_snapshots_with_conn(conn, result['device_gid'], {result['channel_name']})
+                outcome = history_collection.finish(conn, lease, moment(), clock, result)
+            outcomes.append(outcome)
+        except Exception as exc:
+            logger.warning('Completed-history publication outcome requires durable-state inspection: %s', type(exc).__name__)
+            outcomes.append('publication_outcome_unknown')
+            break
+        finally:
+            conn.close()
+    return {'attempted': len(outcomes), 'outcomes': outcomes, 'continuous_capture_verified': False}
 
 
 def collect_completed_history(vue, device_gid: str, channel_num: str,

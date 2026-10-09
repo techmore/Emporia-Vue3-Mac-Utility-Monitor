@@ -170,11 +170,88 @@ minutes: incompatible clients get no first CSV page, compatible caches retain
 3kWh/67.74 cents after resume. Real HTTP downloader and actual Swift reader tests
 cover legacy and UTC caches without modifying production or activating UTC.
 
-## Still Required For Collection
+## Durable Collection (Development 2.3.53)
 
-1. Schedule completed-window collection with durable per-channel cursors, bounded
-   API budgets/backfill, restart/retry recovery and explicit gap/conflict tracking.
-   The new explicit acquisition/publication path is not a continuous scheduler.
+`history_collection.py` schedules **explicitly configured** canonical channels.
+Nothing is configured or activated automatically. Legacy storage needs its reviewed
+zone and an aware, minute-aligned start. Configuration rejects unowned channel
+readings, unknown/renamed labels and split identities; do not erase data to bypass
+that gate. Immutable configuration/budgets require a reviewed cutover to change.
+The ordinary writable-UTC guard remains, including for the new CLI/poller.
+
+Use `scripts/collect_completed_history.py --database PRIVATE_DB discover` while
+the existing poller is stopped. This uses the normal authenticated SDK to retain
+provider discovery/live **labels only**, including Main labels missing in initial
+discovery. It does not archive receipt-time energy or guess labels from channel
+numbers. The operator CLI refuses a concurrent poller and unsafe/non-private DB
+files. Secrets/settings remain in the private data directory, not the package.
+
+For a reviewed disposable fixture, configure each channel explicitly:
+
+```bash
+venv/bin/python3 scripts/collect_completed_history.py --database PRIVATE_DB configure \
+  --device VERIFIED_GID --channel VERIFIED_CHANNEL --start AWARE_MINUTE_START \
+  --legacy-storage-timezone REVIEWED_ZONE --requests-hour REVIEWED_LIMIT \
+  --requests-day REVIEWED_LIMIT --confirm-completed-history-mode
+venv/bin/python3 scripts/collect_completed_history.py --database PRIVATE_DB status
+venv/bin/python3 scripts/collect_completed_history.py --database PRIVATE_DB run --max-requests 1
+```
+
+These placeholders are not production commands/approval. On a fresh private
+instance, create a private initialized database/data directory and supply normal
+Emporia credentials before discovery. For an existing instance, take and review
+the backup/source-quality plan first. Upgrade the collector and supported clients
+for `interval_v2` before acquisition. A legacy-to-UTC change cannot silently reuse
+old immutable collection configuration; its reviewed coordinator is still required.
+
+After private acceptance, the poller can run one bounded acquisition per successful
+live cycle only with **`EMPORIA_COMPLETED_HISTORY=1`**. Default is off. Explicit
+channel promotion immediately stops appending that channel's unproven live samples
+to canonical `readings`; its live snapshot/capabilities still update. Pausing with
+the CLI's `pause --device ... --channel ...` disables acquisition and invalidates
+in-flight leases, but never resumes mixing live receipt samples into history.
+`resume` preserves configuration and evidence. Other channels keep existing polling.
+
+Reservations persist before GET. One channel gets at most one live 15-minute lease;
+expiry allows recovery without refunding attempts. Capture/publication revalidates
+scope, policy and lease. Exact raw evidence, projection/journal/snapshot, outcome
+and cursor commit together. An uncertain publication reports an unknown outcome;
+inspect durable state before retry. Clock regression fails closed. SDK retry
+allowance is conservatively **2 times `max_retry_attempts`**, covering chart 401
+replays. Rolling-hour/day reservations include failures/crashes. These limits
+bound chart HTTP attempts, not live/discovery/Cognito traffic or a claimed vendor
+quota. If the SDK allowance exceeds the configured limit, fail before a request.
+
+Missing buckets are recorded gaps, not zero readings. Valid captures may advance
+`scan_cursor_utc`, but `verified_until_utc` stops at the earliest incomplete/review
+job. Transport failures do not advance either. Gap retries back off up to one day.
+Recent complete windows inside two hours are rechecked no sooner than 30 minutes;
+changed values retain immutable sources and accepted history, then require review.
+This bounded recheck is not proof of cloud finality or arbitrarily late correction.
+At most one in four busy channel slots is for repair/recheck; idle head slots can
+repair sooner. Channel rotation is persisted. Windows are at most six hours and
+each invocation at most 100 acquisitions; total rate still obeys durable budgets.
+
+`/api/completed-history/status` and CLI `status` expose configuration, scanned and
+verified prefixes, job counts and at most 100 recent jobs per channel. Discovery
+and configuration are operator actions, not remotely unauthenticated write routes.
+Status does not claim continuous capture or discard old gap/review jobs. Job/attempt
+and raw-evidence growth still needs a recoverable retention policy.
+
+Verification: run `venv/bin/python3 -m unittest discover -s tests -p test_history_collection.py -v`.
+Tests exercise restart/expired-worker recovery, retry/replay budgets, gaps/fills,
+late conflicts, per-channel isolation/fairness, immutable evidence, cancellation,
+clock/identity drift, source/cursor rollback, live/history separation, CLI privacy,
+actual temporary HTTP acquisition -> authenticated sync -> actual Swift offline
+totals, and private pre-opened UTC rehearsals. Fake-provider fixtures do not prove
+actual continuous cloud capture, production reconciliation or service deployment.
+
+## Still Required For Collection Acceptance
+
+1. Validate the opt-in durable scheduler against actual extended cloud capture and
+   restart/outage/backfill scenarios; review budgets, delay/recheck policy and
+   per-channel coverage before production activation. Synthetic/HTTP fixtures are
+   not proof of continuous production collection.
 2. Review and reconcile production unowned live/CSV history against verified
    original sources. Keep latest live display snapshots separate from canonical
    history; never drop unknown legacy observations to make the gate pass.

@@ -9,6 +9,8 @@ root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).reso
 assert (root / '.gitignore').is_file(), 'Missing runtime exclusion rules'
 assert (root / 'csv_projection.py').is_file(), 'Missing shared CSV/chart projection module'
 assert (root / 'completed_history.py').is_file(), 'Missing completed history publisher'
+for name in ('history_collection.py', 'scripts/collect_completed_history.py', 'tests/test_history_collection.py'):
+    assert (root / name).is_file(), f'Missing durable history collection file: {name}'
 assert (root / 'device_identity.py').is_file(), 'Missing canonical monitor identity module'
 for name in ('identity_reconciliation.py', 'verified_snapshot.py', 'scripts/reconcile_csv_identity.py'):
     assert (root / name).is_file(), f'Missing reviewed identity reconciliation file: {name}'

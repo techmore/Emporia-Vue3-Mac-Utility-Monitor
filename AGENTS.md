@@ -50,8 +50,17 @@ selector. Callers own connections/transactions. Source order is immutable across
 upgrades/retries. Only provider-supplied channel labels may bind history; empty,
 renamed or ambiguous labels need review. Keep chart buckets historical, not live
 power. Require explicit legacy storage-zone review, retain fold evidence without
-ambiguous wall keys and preserve ordinary UTC guards. No continuous scheduler or
-production legacy adoption is enabled. See `tests/test_completed_history.py`.
+ambiguous wall keys and preserve ordinary UTC guards. Production collection and
+legacy adoption are not enabled. See `tests/test_completed_history.py`.
+
+`history_collection.py` schedules explicitly configured channels with durable
+leases, worst-case chart retry budgets and separate scanned/verified progress.
+Evidence/projection/job/cursor completion shares one transaction; no DB handle
+stays open during cloud I/O. Promotion permanently separates live snapshots from
+canonical history, even when paused. Never promote unowned legacy data implicitly.
+The poller runs one acquisition only with `EMPORIA_COMPLETED_HISTORY=1`; default
+is off. Recent rechecks and gap repairs cannot starve head collection. DDL remains
+in `ensure_table`. See `scripts/collect_completed_history.py` and its tests.
 
 Chart-capable history requires protocol 3 with `measurement_model=interval_v2`
 before any journal page, even a supported CSV event. Immutable chart source order

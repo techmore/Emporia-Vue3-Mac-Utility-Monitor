@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.3.53 - Unreleased
+
+- Add opt-in durable per-channel completed-history collection with explicit
+  canonical scope, start/zone review and immutable request budgets/configuration.
+  Keep jobs, 15-minute leases and append-only attempt/results through restarts.
+  Charge worst-case SDK chart retries/401 replays against rolling-hour/day limits;
+  no refund on crash. Never hold a database transaction during cloud requests.
+- Commit exact source evidence, shared projection, job outcome and scan progress
+  atomically. Distinguish scanned from verified prefixes; null/absent history is
+  a retryable gap, conflicting or unowned evidence needs review, not deletion.
+  Recheck the recent two-hour window no sooner than 30 minutes; bound repair slots
+  so old gaps cannot starve current collection. Preserve original values/IDs/cents.
+- Explicit channel promotion keeps live display snapshots separate from canonical
+  history, even when acquisition is paused. Discover missing provider labels
+  without first archiving unproven samples. Select promoted live devices before
+  their first historical window. Unconfigured channels retain existing behavior.
+- Add private operator CLI and bounded status API. Poller acquisition requires
+  `EMPORIA_COMPLETED_HISTORY=1`; it is disabled by default and independent from
+  successful live-poll health. Verify recovery/lease/budget/clock/rename/rollback,
+  actual HTTP acquisition/cache/Swift totals and private UTC guards. No deployment,
+  automatic production adoption, source-retention policy or UTC cutover.
+
 ## 2.3.52 - Unreleased
 
 - Negotiate `interval_v2` before any chart-capable journal page, including CSV
