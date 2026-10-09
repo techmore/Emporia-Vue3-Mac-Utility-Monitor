@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.37 - 2026-10-08
+
+- Add a read-only UTC migration preflight for private exported reading identities.
+  Require explicit legacy source-zone assumptions, detect DST gaps/folds and
+  projected key collisions, and preserve microseconds. Test actual 23/25-hour
+  calendar bounds and fail closed on ambiguous boundaries. Include the tool and
+  migration gates in native/container source releases. Production energy storage
+  remains unchanged; this does not complete or automatically authorize #127.
+
 ## 2.3.36 - 2026-10-08
 
 - Add an optional recorded trend line to EcoQube history, retaining every raw

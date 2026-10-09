@@ -21,4 +21,6 @@ for name in ('web.py', 'energy.py', 'climate.py', 'climate_collect.py', 'extensi
     assert (root / name).is_file(), f'Missing release file: {name}'
 for name in ('aqara_trends.py', 'templates/aqara_trend_chart.html', 'static/aqara-labels.js'):
     assert (root / name).is_file(), f'Missing release file: {name}'
+for name in ('timestamp_model.py', 'scripts/audit_timestamps.py', 'docs/UTC_MIGRATION.md'):
+    assert (root / name).is_file(), f'Missing UTC preflight file: {name}'
 print(version)
