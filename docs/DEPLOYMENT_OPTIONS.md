@@ -62,6 +62,8 @@ privately; never paste tokens into this document or commit runtime settings.
 Match the original collector's timezone before migrating existing naive/local
 timestamps. A new guest's UTC default is not safe for this database. Longer-term
 UTC storage and explicit reporting-timezone migration need a separate plan.
+See [UTC preflight and migration gates](UTC_MIGRATION.md); a successful dry run
+does not authorize converting the live database or changing its timezone.
 Validate the generated units, then install only the intended services:
 
 ```bash
