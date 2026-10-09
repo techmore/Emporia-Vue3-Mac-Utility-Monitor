@@ -10,7 +10,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,6 +34,7 @@ import radon
 from extensions import HOUSE_CSS, register_extensions
 from panel_model import breaker_load
 from solar_model import hourly_generation_offset, solar_offset
+from timestamp_model import ISO_TIMESTAMP
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
@@ -1028,32 +1029,39 @@ def _format_hour(h: str) -> str:
     return f"{hour - 12} PM"
 
 
+def _timestamp_age_secs(last_ts: str) -> float | None:
+    if not isinstance(last_ts, str) or not ISO_TIMESTAMP.fullmatch(last_ts):
+        return None
+    try:
+        moment = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+        if moment.tzinfo is not None:
+            moment = moment.astimezone(timezone.utc)
+        # Keep legacy host-local semantics until the coordinated storage cutover.
+        now = datetime.now() if moment.tzinfo is None else datetime.now(timezone.utc)
+        return (now - moment).total_seconds()
+    except (ValueError, OverflowError):
+        return None
+
+
 def _status(last_ts: str):
     """Return (css_class, label, hours_old) from the most recent timestamp."""
     if last_ts == "N/A":
         return "dead", "No data", 999
-    try:
-        dt = datetime.fromisoformat(last_ts[:19])
-        h  = (datetime.now() - dt).total_seconds() / 3600
-        if h < 0.1:  return "live",  f"Live · {int(h*60)}m ago",  h
-        if h < 1:    return "live",  f"Live · {int(h*60)}m ago",  h
-        if h < 6:    return "stale", f"Stale · {h:.1f}h ago",     h
-        return "dead", f"Offline · {h:.0f}h ago", h
-    except Exception:
+    age = _timestamp_age_secs(last_ts)
+    if age is None or age < -60:
         return "dead", "Unknown", 999
+    h = max(0, age) / 3600
+    if h < 1: return "live", f"Live · {int(h*60)}m ago", h
+    if h < 6: return "stale", f"Stale · {h:.1f}h ago", h
+    return "dead", f"Offline · {h:.0f}h ago", h
 
 
 def _poller_status_snapshot() -> dict:
     status = energy.read_poller_status()
     last_ts = status.get("timestamp")
-    age_secs = None
-    if last_ts:
-        try:
-            age_secs = int((datetime.now() - datetime.fromisoformat(last_ts[:19])).total_seconds())
-        except Exception:
-            pass
-    status["age_secs"] = age_secs
-    status["poller_running"] = age_secs is not None and age_secs < 180
+    age = _timestamp_age_secs(last_ts)
+    status["age_secs"] = None if age is None else int(age)
+    status["poller_running"] = age is not None and -60 <= age < 180
     return status
 
 
@@ -3379,11 +3387,8 @@ _SKIP_NAMES  = {"Balance"}
 def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
     if not reading or not reading.get("timestamp"):
         return False
-    try:
-        age = (datetime.now() - datetime.fromisoformat(reading["timestamp"][:19])).total_seconds()
-        return -60 <= age < max_age_secs
-    except Exception:
-        return False
+    age = _timestamp_age_secs(reading["timestamp"])
+    return age is not None and -60 <= age < max_age_secs
 
 
 def _load_panel_display_settings() -> dict:

@@ -1,6 +1,7 @@
 # UTC migration - issue #127
 
-Status: preflight tooling only. Production still uses legacy naive/local energy
+Status: preflight tooling in production; transactional rehearsal and readiness
+compatibility in development. Production still uses legacy naive/local energy
 timestamps. Do not convert live data or change the collector timezone yet.
 This is not a completed UTC migration, and a clean preflight does not authorize one.
 
@@ -139,11 +140,22 @@ still-required live implementation:
    Stop only owned writers for the final cutover, verify backup/rollback, then
    confirm real collection, HTTP queries and Mac synchronization before closing #127.
 
+The development dashboard and native-menu API now preserve complete timestamps
+when determining reading and heartbeat age. Offset-aware timestamps are compared
+as UTC instants, including microseconds and both explicit repeated-hour offsets.
+Invalid values and future skew beyond the existing one-minute reading tolerance
+cannot make the poller or menu appear live. The status label clamps permitted
+small future skew to zero instead of displaying negative minutes. This changes
+no stored timestamps: naive values retain current host-local interpretation,
+which must still be replaced by persisted source/reporting timezone policy during
+cutover. Calendar totals, retention and native cache queries are not UTC-ready.
+
 ## Reproduction tests
 
 ```bash
 python3 -m unittest discover -s tests -p test_timestamp_model.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_dashboard_freshness.py -v
 ```
 
 Tests cover New York gaps/folds, explicit offsets, a half-hour DST transition,

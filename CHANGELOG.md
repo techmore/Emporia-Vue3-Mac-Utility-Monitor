@@ -8,6 +8,9 @@
   Reject the resulting artifact from ordinary app connections until the UTC
   writer/query/import/client integration is complete. Add byte-preserving,
   read-only maintenance connections. Not deployed; #127 remains open.
+- Preserve timezone offsets and microseconds in dashboard/native-menu freshness
+  and poller readiness checks. Reject malformed and excessively future-dated
+  timestamps; retain legacy local interpretation until storage cutover.
 
 ## 2.3.37 - 2026-10-08
 
