@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.48 - Unreleased
+
+- Add strict read-only completed-chart evidence validation and a private offline
+  audit CLI. Require explicit request/receipt timestamps and the returned server
+  anchor; exclude inclusive API end buckets and unsettled/partial intervals.
+  Preserve null gaps, signed energy and zero; reject malformed values and units.
+- Real read-only probes exposed different live/chart timestamp semantics and an
+  inclusive chart end bucket. Do not guess a universal previous-minute shift or
+  substitute the SDK's requested-start fallback for missing source provenance.
+- Keep production collection unchanged. General raw-source ledger integration,
+  completed history publication, CSV/live reconciliation and UTC cutover remain
+  open in #127/#135. No app installation, production mutation or deployment.
+
 ## 2.3.47 - Unreleased
 
 - Retain immutable original CSV bytes, hashes, headers, cells, source-local/UTC

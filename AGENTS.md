@@ -44,6 +44,12 @@ Keep delete/update/insert journal order safe for single-event cache pages. See
 `docs/CSV_IMPORT.md` and `tests/test_csv_projection.py`; this is not automatic
 historical repair or proof of continuous capture.
 
+`emporia_history.py` validates captured completed chart windows without a DB.
+Require returned `firstUsageInstant`; never substitute an echoed live `instant`
+or the SDK's requested-start fallback. Clip inclusive end buckets and preserve
+null gaps. The offline audit script does not publish readings; see
+`docs/EMPORIA_HISTORY_CONTRACT.md` before integrating a general source ledger.
+
 ---
 
 ## Build & Run Commands

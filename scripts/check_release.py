@@ -8,6 +8,8 @@ from pathlib import Path
 root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
 assert (root / '.gitignore').is_file(), 'Missing runtime exclusion rules'
 assert (root / 'csv_projection.py').is_file(), 'Missing CSV projection module'
+for name in ('emporia_history.py', 'scripts/audit_emporia_history.py', 'docs/EMPORIA_HISTORY_CONTRACT.md'):
+    assert (root / name).is_file(), f'Missing completed history evidence file: {name}'
 version = (root / 'VERSION').read_text().strip()
 assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Invalid VERSION'
 info = plistlib.loads((root / 'EnergyMonitorApp/Resources/Info.plist').read_bytes())
