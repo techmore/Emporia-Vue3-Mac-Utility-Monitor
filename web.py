@@ -4097,21 +4097,24 @@ def api_sync_readings():
     try:
         after = int(request.args.get("after", "0"))
         limit = int(request.args.get("limit", "500"))
+        protocol = int(request.args.get('protocol_version', '2'))
         expected_generation = request.args.get("generation_id")
         if expected_generation:
-            identity = energy.get_reading_changes(0, 1)
+            identity = energy.get_reading_changes(0, 1, protocol_version=protocol)
             if request.args.get("source_id") != identity["source_id"]:
                 return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
             if expected_generation != identity["generation_id"]:
                 return jsonify({"error": "Stream checkpoint changed", "reset_required": True,
                                 "source_id": identity["source_id"],
                                 "generation_id": identity["generation_id"]}), 409
-        page = energy.get_reading_changes(after, limit)
+        page = energy.get_reading_changes(after, limit, protocol_version=protocol)
         if expected_generation and expected_generation != page["generation_id"]:
             return jsonify({"error": "Stream checkpoint changed; retry"}), 409
         expected_source = request.args.get("source_id")
         if expected_source and expected_source != page["source_id"]:
             return jsonify({"error": "Collector identity changed; fresh sync required"}), 409
+    except energy.SyncUpgradeRequired:
+        return jsonify(error='Upgrade the client before downloading UTC history', required_protocol=3), 426
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     response = jsonify(page)
@@ -4337,7 +4340,7 @@ def api_menu_summary():
     return jsonify({
         "version": VERSION, "online": online, "current_watts": watts,
         "active_device_gid": gid,
-        "collector_source_id": energy.get_reading_changes(0, 1)["source_id"],
+        "collector_source_id": energy.get_reading_changes(0, 1, protocol_version=3)["source_id"],
         "cost_24h": total["total_cents"] / 100 if total and total["total_cents"] is not None else None,
         "month_cost": this_month["total_cents"] / 100 if this_month and this_month["total_cents"] is not None else None,
         "month_days_recorded": this_month["days_recorded"] if this_month else 0,

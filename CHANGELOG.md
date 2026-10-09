@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.3.44 - Unreleased
+
+- Negotiate energy sync protocol 3 with explicit timestamp/reporting-zone and
+  measurement contracts. Preserve protocol 2 for legacy collectors; reject old
+  clients before sending UTC rows. Validate canonical UTC timestamps, reject
+  silent format downgrades and isolate UTC rows from older native cache readers.
+- Guard snapshot publication against concurrent cache progress. Publish cache
+  rows, format and generation atomically without replacing unrelated sensor data.
+- Read UTC offline history using the collector reporting zone, actual elapsed
+  windows and offset-bearing fold labels. Preserve microsecond bounds, recorded
+  zeroes and missing bins; omit nonexistent spring hours and clip half-hour
+  transition bins. Fail closed on invalid policies and partial caches.
+- Private converted-artifact HTTP/download/native tests pass; ordinary live UTC
+  connections remain blocked. No production migration or deployment. #127/#135
+  stay open pending writer/import coordination and historical reconciliation.
+
 ## 2.3.43 - Unreleased
 
 - Restrict compaction to compatible evidenced Emporia minute-only groups. Preserve

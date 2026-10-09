@@ -167,6 +167,19 @@ and requires an `ENERGY_SYNC_TOKEN` of at least 32 characters, passed as a Beare
 header. It is disabled when the token is absent. Keep access behind the loopback
 SSH tunnel. Tokens must not be committed or put in URLs.
 
+Unreleased UTC development also supports energy protocol 3, requested with
+`protocol_version=3`. It declares timestamp format, reporting zone and measurement
+model; legacy protocol 2 remains the default for old clients. UTC inspection
+adapters refuse old clients with HTTP 426 rather than send ambiguous timestamps.
+The updated downloader requests 3 and accepts legacy collectors' protocol 2.
+UTC rows live in a separate cache namespace, with atomically saved format metadata.
+Format changes require a new stream generation and complete verified snapshot;
+concurrent cache progress prevents stale replacement. Native UTC cache history
+uses the declared reporting zone and preserves offsets/microseconds. This has
+passed private converted-artifact HTTP/download/offline-native tests, not live
+collector activation. Legacy local caches still require matching timezones;
+UTC writers/imports and the production cutover remain unfinished (#127/#135).
+
 The code is included in the release, but the actual SER8 connection and automatic
 downloads have not been configured or verified. `sync_history.py` downloads pages to isolated cache
 tables and advances the cursor atomically with each page. It refuses collector

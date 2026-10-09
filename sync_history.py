@@ -28,6 +28,8 @@ def fetch_page(origin: str, token: str, state: dict, *, stream: str = 'readings'
     if len(token) < 32:
         raise ValueError("ENERGY_SYNC_TOKEN must have at least 32 characters")
     query = {"after": state["cursor"], "limit": 500}
+    if stream == 'readings':
+        query['protocol_version'] = 3
     if state.get("source_id"):
         query["source_id"] = state["source_id"]
     if state.get("generation_id"):
@@ -149,7 +151,20 @@ def sync_once(origin: str, token: str, *, max_pages: int = 1000) -> dict:
                 destination.execute("ATTACH DATABASE ? AS snapshot", (str(staging),))
                 # A reset owns only energy cache tables, not other sensor history.
                 with destination:
-                    for table in ("sync_cached_readings", "sync_cache_state", "sync_cache_generation"):
+                    destination.execute('BEGIN IMMEDIATE')
+                    current = destination.execute('SELECT * FROM sync_cache_state WHERE singleton=1').fetchone()
+                    generation = destination.execute('SELECT generation_id FROM sync_cache_generation WHERE singleton=1').fetchone()
+                    policy = destination.execute('SELECT timestamp_format,reporting_timezone,measurement_model FROM sync_cache_format WHERE singleton=1').fetchone()
+                    expected_policy = {key: state[key] for key in ('timestamp_format', 'reporting_timezone', 'measurement_model')} if 'timestamp_format' in state else None
+                    if (not current or current['source_id'] != state['source_id']
+                            or current['cursor'] != state['cursor']
+                            or current['high_watermark'] != state['high_watermark']
+                            or current['synchronized_at'] != state['synchronized_at']
+                            or not generation or generation[0] != state['generation_id']
+                            or (dict(policy) if policy else None) != expected_policy):
+                        raise ValueError('Cache changed during snapshot download; retry from current state')
+                    for table in ("sync_cached_readings", "sync_cached_utc_readings",
+                                  "sync_cache_format", "sync_cache_state", "sync_cache_generation"):
                         destination.execute(f"DELETE FROM main.{table}")
                         destination.execute(f"INSERT INTO main.{table} SELECT * FROM snapshot.{table}")
             finally:

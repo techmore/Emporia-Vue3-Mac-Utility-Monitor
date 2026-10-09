@@ -296,3 +296,42 @@ and equivalent-offset elapsed retention bounds. These are actual compactor tests
 on private fixtures with an injected clock, not a writable UTC-policy collector:
 the ordinary connection guard remains intact. Raw sum preservation and cache
 round-trips do not prove that the underlying samples have non-overlapping coverage.
+
+Development 2.3.44 negotiates energy sync protocol 3. Its `time_policy` declares
+`timestamp_format`, `reporting_timezone` and `measurement_model`. Legacy storage
+declares `legacy_local_v1` with a null reporting zone rather than inventing source
+provenance; UTC declares `utc_v1`, a validated IANA reporting zone and `interval_v1`.
+Interval fields can remain unknown. Old protocol-2 clients receive HTTP 426 from
+UTC adapters before any reading rows. Legacy collectors retain protocol 2; the
+new downloader requests 3 and can accept an old collector's protocol-2 response.
+
+UTC downloaded rows use `sync_cached_utc_readings`, separate from the table queried
+by older native apps. Cache format is immutable within a stream generation; a
+format transition requires a new generation and complete private replacement.
+Reset publication compares the destination identity, generation, cursor,
+watermark, receipt and format under a write lock before replacing only energy
+cache tables. Concurrent progress causes a retry error, not lost cached updates.
+This implements client reset enforcement, not the live migration generation
+rotation coordinator; that still must be implemented before storage activation.
+
+The new native reader preserves canonical microseconds and bins UTC history in
+the declared reporting zone, independent of the laptop timezone. Hour labels
+retain offsets, spring gaps are omitted and clipped half-hour bins stay distinct.
+Recorded zero differs from missing history; raw stored cents remain unchanged.
+Legacy caches still require the same local timezone as their collector because
+their source zone is unknown. Modern completion receipts are aware UTC instants.
+
+Tests run an actual converted private artifact through a test-only read-only
+Flask adapter, authenticated localhost HTTP, the real Python downloader and the
+actual Swift offline reader after the server stops. Source/artifact hashes stay
+unchanged. Separate Swift tests cover New York folds/gaps, Lord Howe clipping,
+reporting midnight, microsecond end cutoffs, three host zones and invalid policies.
+The actual previous 2.3.43 reader returns unavailable for the UTC-only namespace.
+These are private fixture checks, not a live UTC writer or production deployment.
+The full local suite passes 436 tests. #127/#135 remain open; the connection guard
+and coordinated-cutover requirements above are unchanged.
+
+```bash
+venv/bin/python3 -m unittest discover -s tests -p test_sync_contract.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_native_history_cache.py -v
+```

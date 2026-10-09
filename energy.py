@@ -800,6 +800,24 @@ def ensure_table(path: str | Path | None = None):
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             generation_id TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS sync_cache_format (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            timestamp_format TEXT NOT NULL,
+            reporting_timezone TEXT,
+            measurement_model TEXT NOT NULL
+        );
+        -- Older native readers cannot accidentally interpret these as local wall times.
+        CREATE TABLE IF NOT EXISTS sync_cached_utc_readings (
+            reading_id INTEGER PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            device_gid TEXT NOT NULL,
+            channel_num INTEGER,
+            channel_name TEXT,
+            usage_kwh REAL,
+            cost_cents REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_cached_utc_device_channel_timestamp
+            ON sync_cached_utc_readings(device_gid, channel_name, timestamp);
         CREATE TABLE IF NOT EXISTS reading_stream_generation (
             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
             generation_id TEXT NOT NULL
@@ -860,7 +878,8 @@ def ensure_table(path: str | Path | None = None):
     """)
     # Add evidence without inferring duration/source for pre-existing rows.
     conn.execute("BEGIN IMMEDIATE")
-    for table in ('readings', 'latest_channel_snapshot', 'reading_changes', 'sync_cached_readings'):
+    for table in ('readings', 'latest_channel_snapshot', 'reading_changes',
+                  'sync_cached_readings', 'sync_cached_utc_readings'):
         columns = {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
         for field in MEASUREMENT_FIELDS:
             if field not in columns:
@@ -911,15 +930,24 @@ def ensure_table(path: str | Path | None = None):
     conn.close()
 
 
-def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
+class SyncUpgradeRequired(ValueError):
+    """Older clients must not receive a timestamp format they misinterpret."""
+
+
+def get_reading_changes(after: int = 0, limit: int = 500, *, protocol_version: int = 2) -> dict:
     """Return a bounded page and collector identity from one consistent read transaction."""
     if isinstance(after, bool) or not isinstance(after, int) or after < 0:
         raise ValueError("after must be a nonnegative integer")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
         raise ValueError("limit must be between 1 and 1000")
+    if type(protocol_version) is not int or protocol_version not in (2, 3):
+        raise ValueError('Unsupported sync protocol')
     conn = _connect()
     try:
         conn.execute("BEGIN")
+        clock = _utc_clock(conn)
+        if clock and protocol_version < 3:
+            raise SyncUpgradeRequired('UTC history requires an upgraded client')
         source_id = conn.execute("SELECT source_id FROM collector_identity").fetchone()[0]
         generation_id = conn.execute("SELECT generation_id FROM reading_stream_generation").fetchone()[0]
         watermark = conn.execute(
@@ -932,12 +960,19 @@ def get_reading_changes(after: int = 0, limit: int = 500) -> dict:
             "ORDER BY sequence LIMIT ?", (after, watermark, limit),
         ).fetchall()]
         next_cursor = rows[-1]["sequence"] if rows else after
-        return {
-            "protocol_version": 2, "source_id": source_id, "generation_id": generation_id, "changes": rows,
+        result = {
+            "protocol_version": protocol_version, "source_id": source_id, "generation_id": generation_id, "changes": rows,
             "after_cursor": after,
             "next_cursor": next_cursor, "high_watermark": watermark,
             "has_more": next_cursor < watermark,
         }
+        if protocol_version == 3:
+            result['time_policy'] = {
+                'timestamp_format': 'utc_v1' if clock else 'legacy_local_v1',
+                'reporting_timezone': clock.reporting_timezone if clock else None,
+                'measurement_model': 'interval_v1',
+            }
+        return result
     finally:
         conn.close()
 
@@ -948,16 +983,48 @@ def get_sync_cache_status() -> dict:
         row = conn.execute("""SELECT s.*, g.generation_id FROM sync_cache_state s
             LEFT JOIN sync_cache_generation g ON g.singleton=s.singleton
             WHERE s.singleton=1""").fetchone()
-        return dict(row) if row else {"source_id": None, "cursor": 0,
-                                     "high_watermark": 0, "synchronized_at": None, "generation_id": None}
+        state = dict(row) if row else {"source_id": None, "cursor": 0,
+                                      "high_watermark": 0, "synchronized_at": None, "generation_id": None}
+        policy = conn.execute('SELECT timestamp_format,reporting_timezone,measurement_model FROM sync_cache_format WHERE singleton=1').fetchone()
+        if policy:
+            state.update(dict(policy))
+        return state
     finally:
         conn.close()
 
 
+def _reading_sync_policy(page: dict) -> dict | None:
+    version = page.get('protocol_version')
+    if type(version) is not int or version not in (2, 3):
+        raise ValueError('Unsupported sync protocol')
+    policy = page.get('time_policy')
+    if version == 2:
+        if policy is not None:
+            raise ValueError('Protocol 2 cannot declare a new timestamp format')
+        return None
+    if not isinstance(policy, dict) or set(policy) != {'timestamp_format', 'reporting_timezone', 'measurement_model'}:
+        raise ValueError('Missing or unsupported sync format contract')
+    if policy['measurement_model'] != 'interval_v1':
+        raise ValueError('Unsupported measurement model')
+    if policy['timestamp_format'] == 'utc_v1':
+        if not isinstance(policy['reporting_timezone'], str):
+            raise ValueError('UTC sync requires a reporting timezone')
+        try:
+            EnergyClock(policy['reporting_timezone'])
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError('Invalid sync reporting timezone') from exc
+    elif policy['timestamp_format'] != 'legacy_local_v1' or policy['reporting_timezone'] is not None:
+        raise ValueError('Unsupported sync timestamp policy')
+    return dict(policy)
+
+
 def apply_reading_changes(page: dict) -> dict:
     """Apply a validated collector page and its cursor atomically to the isolated cache."""
-    if not isinstance(page, dict) or page.get("protocol_version") != 2:
+    if not isinstance(page, dict):
         raise ValueError("Unsupported sync protocol")
+    policy = _reading_sync_policy(page)
+    clock = EnergyClock(policy['reporting_timezone']) if policy and policy['timestamp_format'] == 'utc_v1' else None
+    cache_table = 'sync_cached_utc_readings' if clock else 'sync_cached_readings'
     source_id = page.get("source_id")
     if not isinstance(source_id, str) or len(source_id) != 32:
         raise ValueError("Invalid collector identity")
@@ -987,7 +1054,10 @@ def apply_reading_changes(page: dict) -> dict:
         if row["operation"] == "upsert":
             if not isinstance(row.get("timestamp"), str) or not isinstance(row.get("device_gid"), str):
                 raise ValueError("Invalid reading timestamp or device")
-            datetime.fromisoformat(row["timestamp"])
+            if clock:
+                clock.parse(row['timestamp'])
+            else:
+                datetime.fromisoformat(row["timestamp"])
             for key in ("usage_kwh", "cost_cents"):
                 value = row.get(key)
                 if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
@@ -1011,11 +1081,19 @@ def apply_reading_changes(page: dict) -> dict:
             raise ValueError("Stream generation changed; a fresh cache snapshot is required")
         if after != (state["cursor"] if state else 0):
             raise ValueError("Sync cursor changed; reload cache state and retry")
+        cached_policy = conn.execute('SELECT timestamp_format,reporting_timezone,measurement_model FROM sync_cache_format WHERE singleton=1').fetchone()
+        if cached_policy and dict(cached_policy) != policy:
+            raise ValueError('Sync format changed; a new generation and cache snapshot are required')
+        if state and not cached_policy and clock:
+            raise ValueError('UTC format requires a new cache snapshot, not a legacy-cache append')
+        if not state and (conn.execute('SELECT 1 FROM sync_cached_readings LIMIT 1').fetchone()
+                          or conn.execute('SELECT 1 FROM sync_cached_utc_readings LIMIT 1').fetchone()):
+            raise ValueError('Cache rows lack source/cursor identity; use a fresh cache snapshot')
         for row in changes:
             if row["operation"] == "delete":
-                conn.execute("DELETE FROM sync_cached_readings WHERE reading_id=?", (row["reading_id"],))
+                conn.execute(f"DELETE FROM {cache_table} WHERE reading_id=?", (row["reading_id"],))
             else:
-                conn.execute("""INSERT INTO sync_cached_readings(reading_id, timestamp,
+                conn.execute(f"""INSERT INTO {cache_table}(reading_id, timestamp,
                     device_gid, channel_num, channel_name, usage_kwh, cost_cents,
                     measurement_seconds,measurement_source,source_timezone,provider_timestamp)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1030,7 +1108,7 @@ def apply_reading_changes(page: dict) -> dict:
                     tuple(row.get(key) for key in ("reading_id", "timestamp", "device_gid",
                                                   "channel_num", "channel_name", "usage_kwh", "cost_cents",
                                                   *MEASUREMENT_FIELDS)))
-        synchronized_at = datetime.now().isoformat() if not page["has_more"] else (
+        synchronized_at = (EnergyClock.stamp(datetime.now(timezone.utc)) if policy else datetime.now().isoformat()) if not page["has_more"] else (
             state["synchronized_at"] if state else None
         )
         conn.execute("""INSERT INTO sync_cache_state VALUES (1, ?, ?, ?, ?)
@@ -1040,6 +1118,11 @@ def apply_reading_changes(page: dict) -> dict:
             (source_id, next_cursor, watermark, synchronized_at))
         conn.execute("""INSERT INTO sync_cache_generation VALUES (1, ?)
             ON CONFLICT(singleton) DO UPDATE SET generation_id=excluded.generation_id""", (generation_id,))
+        if policy:
+            conn.execute('''INSERT INTO sync_cache_format VALUES (1,?,?,?)
+                         ON CONFLICT(singleton) DO UPDATE SET timestamp_format=excluded.timestamp_format,
+                         reporting_timezone=excluded.reporting_timezone,measurement_model=excluded.measurement_model''',
+                         tuple(policy[key] for key in ('timestamp_format', 'reporting_timezone', 'measurement_model')))
         conn.commit()
     except Exception:
         conn.rollback()
