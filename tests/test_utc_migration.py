@@ -203,6 +203,7 @@ class UtcRehearsalTests(unittest.TestCase):
         self.snapshot.chmod(0o600)
         public = self.root / "public"
         public.mkdir(mode=0o755)
+        public.chmod(0o755)
         with self.assertRaisesRegex(ValueError, "private"):
             rehearse_utc_copy(self.snapshot, public/"copy.db", expected_sha256=self.hash,
                               legacy_timezone="UTC", reporting_timezone="UTC")
