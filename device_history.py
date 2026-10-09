@@ -1,6 +1,5 @@
 """Bounded comparison views of recorded Kasa and Comfort observations."""
 from datetime import datetime, timedelta, timezone
-import hashlib
 
 import energy
 
@@ -27,16 +26,9 @@ def bounds(window: str, end: str | None = None, now: datetime | None = None) -> 
 
 def color_slots(identifiers: list[str]) -> dict:
     """Assign different palette slots across the full catalog, before filtering."""
-    slots, used = {}, set()
-    for identifier in sorted(set(identifiers)):
-        slot = int(hashlib.sha256(identifier.encode()).hexdigest()[:8], 16) % 16
-        for _ in range(16):
-            if slot not in used:
-                break
-            slot = (slot + 1) % 16
-        slots[identifier] = slot
-        used.add(slot)
-    return slots
+    # Begin with strongly separated hues instead of hashing two units into
+    # different but visually similar blue/indigo palette entries.
+    return {identity: index % 16 for index, identity in enumerate(sorted(set(identifiers)))}
 
 
 def get_history(kind: str, window: str = '24h', end: str | None = None,

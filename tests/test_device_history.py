@@ -104,3 +104,5 @@ class DeviceHistoryTests(unittest.TestCase):
             device_history.bounds('24h', now=datetime(2026, 10, 9))
         self.assertEqual(len(set(device_history.color_slots(
             [str(index) for index in range(16)]).values())), 16)
+        self.assertEqual(device_history.color_slots(['upstairs', 'downstairs']),
+                         {'downstairs': 0, 'upstairs': 1})

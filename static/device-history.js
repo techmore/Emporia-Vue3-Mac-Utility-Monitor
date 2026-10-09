@@ -83,6 +83,8 @@
         const flush = () => {
           if (segment.length > 1) chart.append(svgNode('polyline', {
             points: segment.join(' '), fill: 'none', stroke: color(item), 'stroke-width': 2.5,
+            'stroke-dasharray': `${12 + item.color_index * 2} 6`,
+            'stroke-dashoffset': item.color_index * 5,
           }));
           segment = [];
         };
