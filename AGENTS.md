@@ -44,6 +44,15 @@ Keep delete/update/insert journal order safe for single-event cache pages. See
 `docs/CSV_IMPORT.md` and `tests/test_csv_projection.py`; this is not automatic
 historical repair or proof of continuous capture.
 
+`completed_history.py` acquires raw scoped chart windows and retains evidence in
+an append-only ledger; `csv_projection.publish_intervals` is the shared CSV/chart
+selector. Callers own connections/transactions. Source order is immutable across
+upgrades/retries. Only provider-supplied channel labels may bind history; empty,
+renamed or ambiguous labels need review. Keep chart buckets historical, not live
+power. Require explicit legacy storage-zone review, retain fold evidence without
+ambiguous wall keys and preserve ordinary UTC guards. No continuous scheduler or
+production legacy adoption is enabled. See `tests/test_completed_history.py`.
+
 `emporia_history.py` validates captured completed chart windows without a DB.
 Require returned `firstUsageInstant`; never substitute an echoed live `instant`
 or the SDK's requested-start fallback. Clip inclusive end buckets and preserve

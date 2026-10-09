@@ -21,6 +21,8 @@ import pyemvue
 import requests
 from pyemvue.enums import Scale, Unit
 
+from completed_history import capture_chart, publish_chart, record_channel_names, record_channels
+from completed_history import resolve_chart_scope as _resolve_chart_scope
 from csv_projection import identity as _csv_identity
 from csv_projection import publish_csv as _publish_csv
 from device_identity import bind_source, canonical_id, record_discovery, resolve_export
@@ -58,13 +60,13 @@ def _finite_measurement_number(value) -> bool:
 
 def _validate_measurement_evidence(row: dict) -> None:
     seconds, source = row.get('measurement_seconds'), row.get('measurement_source')
-    if source not in (None, 'emporia_minute', 'csv_energy', 'csv_power', 'compacted'):
+    if source not in (None, 'emporia_minute', 'emporia_chart', 'csv_energy', 'csv_power', 'compacted'):
         raise ValueError('Invalid measurement source')
     if seconds is not None:
         if (not _finite_measurement_number(seconds)
                 or seconds <= 0 or source in (None, 'compacted')):
             raise ValueError('Invalid measurement duration evidence')
-        if source == 'emporia_minute' and seconds != 60:
+        if source in ('emporia_minute', 'emporia_chart') and seconds != 60:
             raise ValueError('Emporia minute observations require a 60-second duration')
     zone = row.get('source_timezone')
     if zone is not None:
@@ -701,6 +703,59 @@ def ensure_table(path: str | Path | None = None):
         BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS csv_observations_immutable_delete BEFORE DELETE ON csv_source_observations
         BEGIN SELECT RAISE(ABORT, 'CSV source evidence is immutable'); END;
+        CREATE TABLE IF NOT EXISTS energy_channel_claims (
+            device_gid TEXT NOT NULL, channel_num TEXT NOT NULL, channel_name TEXT NOT NULL,
+            first_seen_utc TEXT NOT NULL, PRIMARY KEY (device_gid,channel_num,channel_name),
+            FOREIGN KEY (device_gid) REFERENCES device_identities(canonical_gid)
+        );
+        CREATE TRIGGER IF NOT EXISTS energy_channel_claim_update BEFORE UPDATE ON energy_channel_claims
+        BEGIN SELECT RAISE(ABORT, 'Channel discovery claim is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_channel_claim_delete BEFORE DELETE ON energy_channel_claims
+        BEGIN SELECT RAISE(ABORT, 'Channel discovery claim is immutable'); END;
+        CREATE TABLE IF NOT EXISTS energy_source_order (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
+            source_id TEXT NOT NULL, UNIQUE (kind,source_id)
+        );
+        CREATE TRIGGER IF NOT EXISTS energy_source_order_update BEFORE UPDATE ON energy_source_order
+        BEGIN SELECT RAISE(ABORT, 'Energy source order is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_order_delete BEFORE DELETE ON energy_source_order
+        BEGIN SELECT RAISE(ABORT, 'Energy source order is immutable'); END;
+        INSERT OR IGNORE INTO energy_source_order(kind,source_id)
+            SELECT 'csv',b.id FROM csv_source_batches b LEFT JOIN csv_source_observations o ON o.batch_id=b.id
+            WHERE NOT EXISTS (SELECT 1 FROM energy_source_order WHERE kind='csv' AND source_id=b.id)
+            GROUP BY b.id ORDER BY MIN(o.sequence),b.id;
+        CREATE TABLE IF NOT EXISTS energy_source_batches (
+            id TEXT PRIMARY KEY, kind TEXT NOT NULL, sha256 TEXT NOT NULL, content BLOB NOT NULL,
+            request_json TEXT NOT NULL, received_at_utc TEXT NOT NULL, device_gid TEXT NOT NULL,
+            channel_num TEXT NOT NULL, channel_name TEXT NOT NULL, source_timezone TEXT NOT NULL,
+            rate_cents REAL NOT NULL, settling_seconds INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_energy_source_device_channel ON energy_source_batches(device_gid,channel_name);
+        CREATE TABLE IF NOT EXISTS energy_source_observations (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, batch_id TEXT NOT NULL,
+            source_index INTEGER NOT NULL, channel_num TEXT NOT NULL, channel_name TEXT NOT NULL,
+            source_local_timestamp TEXT, source_utc_timestamp TEXT NOT NULL,
+            start_utc TEXT NOT NULL, end_utc TEXT NOT NULL, usage_kwh REAL NOT NULL,
+            cost_cents REAL NOT NULL, measurement_seconds REAL NOT NULL,
+            measurement_source TEXT NOT NULL, provider_timestamp TEXT NOT NULL,
+            UNIQUE (batch_id,source_index), FOREIGN KEY (batch_id) REFERENCES energy_source_batches(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_energy_source_observation ON energy_source_observations(batch_id,channel_name,start_utc,end_utc);
+        CREATE TABLE IF NOT EXISTS energy_reading_projection (
+            observation_id TEXT PRIMARY KEY, reading_id INTEGER NOT NULL UNIQUE,
+            FOREIGN KEY (observation_id) REFERENCES energy_source_observations(id),
+            FOREIGN KEY (reading_id) REFERENCES readings(id)
+        );
+        CREATE TRIGGER IF NOT EXISTS energy_projection_reading_delete AFTER DELETE ON readings
+        BEGIN DELETE FROM energy_reading_projection WHERE reading_id=OLD.id; END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_batch_update BEFORE UPDATE ON energy_source_batches
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_batch_delete BEFORE DELETE ON energy_source_batches
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_observation_update BEFORE UPDATE ON energy_source_observations
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS energy_source_observation_delete BEFORE DELETE ON energy_source_observations
+        BEGIN SELECT RAISE(ABORT, 'Energy source evidence is immutable'); END;
         CREATE TABLE IF NOT EXISTS migrations (
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
@@ -1691,7 +1746,9 @@ def get_devices_with_channels(vue):
     try:
         with conn:
             conn.execute('BEGIN IMMEDIATE')
-            record_discovery(conn, devices, datetime.now(timezone.utc).isoformat(timespec='microseconds'))
+            received = datetime.now(timezone.utc).isoformat(timespec='microseconds')
+            record_discovery(conn, devices, received)
+            record_channels(conn, device_info.values(), _normalize_channel_name, received)
     finally:
         conn.close()
     return device_gids, device_info
@@ -1741,6 +1798,8 @@ def poll_and_store(vue, device_gids):
         _, moment, cutoff, now = _query_window(conn, timedelta(days=DB_RETENTION_DAYS), None)
 
         for gid, device in usage_dict.items():
+            record_channel_names(conn, gid, device.channels.items(), _normalize_channel_name,
+                                 datetime.now(timezone.utc).isoformat(timespec='microseconds'))
             capability = {
                 "has_main": False,
                 "has_mains_a": False,
@@ -2990,6 +3049,59 @@ def _refresh_import_snapshot_with_conn(conn, device_gid: str) -> None:
     conn.execute("DELETE FROM latest_channel_snapshot WHERE device_gid=?", (device_gid,))
     for row in rows:
         _upsert_latest_snapshot_with_conn(conn, **dict(row))
+
+
+def _refresh_history_snapshots_with_conn(conn, device_gid: str, channels: set[str]) -> None:
+    """Keep newer/pruned live snapshots; historical buckets never become live power."""
+    for channel in channels:
+        row = conn.execute('''SELECT device_gid,channel_name,channel_num,usage_kwh,cost_cents,timestamp,
+            measurement_seconds,measurement_source,source_timezone,provider_timestamp
+            FROM readings WHERE device_gid=? AND channel_name=? ORDER BY timestamp DESC,id DESC LIMIT 1''',
+            (device_gid, channel)).fetchone()
+        if row:
+            _upsert_latest_snapshot_with_conn(conn, **dict(row))
+
+
+def publish_completed_history(capture: dict, content: bytes, *,
+                              legacy_storage_timezone: str | None = None,
+                              settling_seconds: int = 300) -> dict:
+    """Atomically retain captured chart evidence and project shared CSV/chart history.
+
+    This explicit acquisition/import path does not enable continuous collection,
+    adopt unowned live history, reprice accepted evidence or activate UTC storage.
+    Legacy publication requires a separately reviewed storage zone, not host time.
+    """
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            result = publish_chart(conn, capture, content, _utc_clock(conn), RATE_CENTS,
+                legacy_storage_timezone=legacy_storage_timezone, settling_seconds=settling_seconds)
+            _refresh_history_snapshots_with_conn(conn, result['device_gid'], {result['channel_name']})
+        return result
+    finally:
+        conn.close()
+
+
+def collect_completed_history(vue, device_gid: str, channel_num: str,
+                              start: datetime, end: datetime, *,
+                              legacy_storage_timezone: str | None = None,
+                              settling_seconds: int = 300) -> dict:
+    """Fetch one bounded raw chart window with the existing authenticated SDK client."""
+    if type(settling_seconds) is not int or not 0 <= settling_seconds <= 86400:
+        raise ValueError('Invalid settling delay')
+    conn = _connect()
+    try:
+        _resolve_chart_scope(conn, {'device_gid': device_gid, 'channel_num': channel_num})
+        if not _utc_clock(conn):
+            if not isinstance(legacy_storage_timezone, str):
+                raise ValueError('Legacy chart publication requires a reviewed storage timezone')
+            ZoneInfo(legacy_storage_timezone)
+    finally:
+        conn.close()
+    capture, content = capture_chart(vue, device_gid, channel_num, start, end)
+    return publish_completed_history(capture, content,
+        legacy_storage_timezone=legacy_storage_timezone, settling_seconds=settling_seconds)
 
 
 def import_emporia_csv(

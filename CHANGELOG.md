@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.3.51 - Unreleased
+
+- Retain exact completed chart response bytes, scoped request/receipt identity,
+  SHA256, original price basis and verified half-open minute observations in a
+  private append-only energy ledger. Fetch one bounded window via SDK-authenticated
+  raw GET; never use its missing-anchor fallback or reinterpret live samples.
+- Share one CSV/chart coverage/conflict selector and immutable source order.
+  Complete finer coverage replaces owned coarse rows without double counting;
+  partial/null windows retain coarse evidence, disagreements require review,
+  and unknown live/legacy coverage remains blocked. Preserve surviving IDs,
+  stored cents, original sources and single-event cache replacement order.
+- Persist provider-supplied channel identity claims from discovery/live polling;
+  do not guess names for unnamed channels. Unknown, renamed or ambiguous scope
+  fails closed. Require an explicit reviewed legacy storage zone; retain fold
+  evidence without publishing ambiguous wall keys. Ordinary UTC guards remain.
+- Verify retries/counters, original source immutability, actual acquisition,
+  response cleanup, transactional failure, UTC conversion and cache pages.
+  This explicit window path does not yet schedule continuous completed-history
+  collection, reconcile production live data or activate the SER8/UTC cutover.
+  #135/#140/#127 remain open; no production deployment or repricing.
+
 ## 2.3.50 - Unreleased
 
 - Add reviewed offline legacy CSV identity binding and append-only reversal.

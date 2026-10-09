@@ -1,4 +1,4 @@
-"""Append-only CSV evidence and transactional non-overlapping reading projection.
+"""Append-only CSV evidence and shared transactional non-overlapping projection.
 
 No connections or schema DDL live here. The data layer supplies its locked
 connection; original source-local evidence and canonical bounds never change.
@@ -156,7 +156,7 @@ def _apply_projection(conn, selected: list[dict], existing: list[dict], clock) -
     }
     for row in removed:
         conn.execute(
-            "DELETE FROM csv_reading_projection WHERE observation_id=?", (row["observation_id"],)
+            f"DELETE FROM {_membership_table(row)} WHERE observation_id=?", (row["observation_id"],)
         )
 
     def stamp_for(observation_id):
@@ -180,14 +180,14 @@ def _apply_projection(conn, selected: list[dict], existing: list[dict], clock) -
         values = (
             stamp,
             row["device_gid"],
-            None,
+            row.get("channel_num"),
             row["channel_name"],
             row["usage_kwh"],
             row["cost_cents"],
             row["measurement_seconds"],
             row["measurement_source"],
             row["source_timezone"],
-            None,
+            row.get("provider_timestamp"),
         )
         previous = by_stamp.get(stamp)
         if previous:
@@ -209,10 +209,11 @@ def _apply_projection(conn, selected: list[dict], existing: list[dict], clock) -
             ).lastrowid
             stats["inserted"] += 1
         conn.execute(
-            "INSERT INTO csv_reading_projection VALUES (?,?)", (observation_id, reading_id)
+            f"INSERT INTO {_membership_table(row)} VALUES (?,?)", (observation_id, reading_id)
         )
         stats["members"].append(
-            {"observation_id": observation_id, "reading_id": reading_id, "timestamp": stamp}
+            {"observation_id": observation_id, "reading_id": reading_id, "timestamp": stamp,
+             "projection_table": _membership_table(row)}
         )
     return stats
 
@@ -245,6 +246,46 @@ def publish_csv(conn, source: dict, observations: list[dict], clock) -> dict:
         if observations
         else 0
     )
+    record_source_order(conn, 'csv', batch_id)
+    return publish_intervals(conn, source["device_gid"], observations, clock,
+                             recorded=recorded, legacy_batch_id=batch_id)
+
+
+def _membership_table(row) -> str:
+    table = row.get("projection_table", "csv_reading_projection")
+    if table not in ("csv_reading_projection", "energy_reading_projection"):
+        raise ValueError("Unsupported projection ownership")
+    return table
+
+
+def record_source_order(conn, kind: str, source_id: str) -> None:
+    conn.execute('''INSERT INTO energy_source_order(kind,source_id) SELECT ?,?
+        WHERE NOT EXISTS (SELECT 1 FROM energy_source_order WHERE kind=? AND source_id=?)''',
+        (kind, source_id, kind, source_id))
+
+
+def _source_intervals(conn, gid, channel) -> list[dict]:
+    rows = [dict(row) for row in conn.execute(
+        """SELECT o.*,o.sequence observation_order,s.sequence source_order,
+            ? device_gid,b.source_timezone,'csv_reading_projection' projection_table
+        FROM csv_source_observations o JOIN csv_source_batches b ON b.id=o.batch_id
+        JOIN energy_source_order s ON s.kind='csv' AND s.source_id=b.id
+        WHERE o.batch_id IN (SELECT batch_id FROM csv_effective_devices WHERE device_gid=?)
+            AND o.channel_name=?""", (gid, gid, channel))]
+    rows.extend(dict(row) for row in conn.execute(
+        """SELECT o.*,o.sequence observation_order,s.sequence source_order,
+            b.device_gid,b.source_timezone,'energy_reading_projection' projection_table
+        FROM energy_source_observations o JOIN energy_source_batches b ON b.id=o.batch_id
+        JOIN energy_source_order s ON s.kind='emporia_chart_v1' AND s.source_id=b.id
+        WHERE b.device_gid=? AND o.channel_name=?""", (gid, channel)))
+    return rows
+
+
+def publish_intervals(conn, device_gid: str, observations: list[dict], clock, *,
+                      recorded: int, legacy_batch_id=None) -> dict:
+    """Shared CSV/chart selector; the caller owns evidence and the transaction."""
+    if not conn.in_transaction:
+        raise RuntimeError("Historical publication requires an existing transaction")
     result = {
         "imported": 0,
         "observations_recorded": recorded,
@@ -269,34 +310,21 @@ def publish_csv(conn, source: dict, observations: list[dict], clock) -> dict:
 
     for channel in sorted({row["channel_name"] for row in observations}):
         incoming = {row["id"] for row in observations if row["channel_name"] == channel}
-        raw = [
-            dict(row)
-            for row in conn.execute(
-            """SELECT o.*,o.sequence observation_order,? device_gid,b.source_timezone
-            FROM csv_source_observations o JOIN csv_source_batches b ON b.id=o.batch_id
-            WHERE o.batch_id IN (SELECT batch_id FROM csv_effective_devices WHERE device_gid=?)
-                AND o.channel_name=? ORDER BY o.sequence""",
-                (source["device_gid"], source["device_gid"], channel),
-            )
-        ]
-        existing = [
-            dict(row)
-            for row in conn.execute(
-                """SELECT p.observation_id,p.reading_id,r.timestamp
+        raw = _source_intervals(conn, device_gid, channel)
+        existing = [dict(row) for row in conn.execute(
+            """SELECT p.observation_id,p.reading_id,r.timestamp,'csv_reading_projection' projection_table
             FROM csv_reading_projection p JOIN readings r ON r.id=p.reading_id
-            WHERE r.device_gid=? AND r.channel_name=?""",
-                (source["device_gid"], channel),
-            )
-        ]
-        unmanaged = [
-            dict(row)
-            for row in conn.execute(
-                """SELECT r.* FROM readings r
-            LEFT JOIN csv_reading_projection p ON p.reading_id=r.id
-            WHERE r.device_gid=? AND r.channel_name=? AND p.reading_id IS NULL""",
-                (source["device_gid"], channel),
-            )
-        ]
+            WHERE r.device_gid=? AND r.channel_name=?
+            UNION ALL
+            SELECT p.observation_id,p.reading_id,r.timestamp,'energy_reading_projection'
+            FROM energy_reading_projection p JOIN readings r ON r.id=p.reading_id
+            WHERE r.device_gid=? AND r.channel_name=?""", (device_gid, channel, device_gid, channel))]
+        unmanaged = [dict(row) for row in conn.execute(
+            """SELECT r.* FROM readings r
+            LEFT JOIN csv_reading_projection c ON c.reading_id=r.id
+            LEFT JOIN energy_reading_projection p ON p.reading_id=r.id
+            WHERE r.device_gid=? AND r.channel_name=? AND c.reading_id IS NULL AND p.reading_id IS NULL""",
+            (device_gid, channel))]
         unknown = [row for row in raw if not _bounds(row)]
         known = [row for row in raw if _bounds(row)]
         unmanaged_intervals = [_unmanaged_bounds(row, clock) for row in unmanaged]
@@ -312,7 +340,7 @@ def publish_csv(conn, source: dict, observations: list[dict], clock) -> dict:
         blocked_ends = [right for _, right in blocked]
         if unknown:
             warn(channel, "source_interval_or_timezone_unresolved")
-            if not known and not unmanaged and all(row["batch_id"] == batch_id for row in unknown):
+            if not known and not unmanaged and all(row["batch_id"] == legacy_batch_id for row in unknown):
                 # Preserve first-source legacy behavior without claiming verified coverage.
                 first = {}
                 for row in unknown:
@@ -335,7 +363,7 @@ def publish_csv(conn, source: dict, observations: list[dict], clock) -> dict:
                 variants.setdefault(key, []).append(row)
             conflict = False
             for group in variants.values():
-                group.sort(key=lambda row: row["observation_order"])
+                group.sort(key=lambda row: (row["source_order"], row["observation_order"]))
                 canonical.append(group[0])
                 if any(
                     not _same_energy(row["usage_kwh"], group[0]["usage_kwh"]) for row in group[1:]
@@ -367,7 +395,8 @@ def publish_csv(conn, source: dict, observations: list[dict], clock) -> dict:
                 for row in selected
             ]
             if (
-                len(stamps) != len(set(stamps))
+                any(stamp is None for stamp in stamps)
+                or len(stamps) != len(set(stamps))
                 or any(stamp in occupied and occupied[stamp] not in owned_ids for stamp in stamps)
                 or unmanaged_stamps.intersection(stamps)
             ):
@@ -404,6 +433,6 @@ def publish_csv(conn, source: dict, observations: list[dict], clock) -> dict:
         )
     elif result["overlap_suppressed"] or result["superseded"]:
         result["message"] = (
-            "Source evidence retained; CSV projections use non-overlapping intervals. Existing live/history reconciliation remains separate."
+            "Source evidence retained; historical projections use non-overlapping intervals. Unknown live/legacy reconciliation remains separate."
         )
     return result
