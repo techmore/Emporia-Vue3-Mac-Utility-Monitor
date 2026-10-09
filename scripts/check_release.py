@@ -23,4 +23,6 @@ for name in ('aqara_trends.py', 'templates/aqara_trend_chart.html', 'static/aqar
     assert (root / name).is_file(), f'Missing release file: {name}'
 for name in ('timestamp_model.py', 'scripts/audit_timestamps.py', 'docs/UTC_MIGRATION.md'):
     assert (root / name).is_file(), f'Missing UTC preflight file: {name}'
+for name in ('utc_migration.py', 'scripts/rehearse_utc_migration.py'):
+    assert (root / name).is_file(), f'Missing UTC rehearsal file: {name}'
 print(version)

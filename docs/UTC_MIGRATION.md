@@ -71,6 +71,58 @@ the remaining gates. Keep exports and reports private.
 
 ## Required implementation before cutover
 
+Development work on `codex/utc-migration-integration` adds a transactional
+conversion rehearsal. It does **not** enable UTC production storage. Run it only
+from that reviewed development checkout, with the locked Python requirements:
+
+```bash
+umask 077
+mkdir -m 700 /private/utc-rehearsal
+venv/bin/python3 scripts/rehearse_utc_migration.py \
+  --snapshot /private/verified-archive.db \
+  --destination /private/utc-rehearsal/converted.utc-rehearsal.db \
+  --expected-sha256 VERIFIED_ARCHIVE_SHA256 \
+  --legacy-timezone America/New_York \
+  --reporting-timezone America/New_York > /private/utc-rehearsal/receipt.json
+```
+
+The archive and output must be private regular files; output directory must be
+0700. Existing targets, symlinks, source WAL/rollback sidecars and hash mismatches
+are rejected. The tool copies the archive before opening SQLite, initializes only
+that working copy, and refuses schema initialization that changes archived data.
+The app's normal import-time schema bootstrap is isolated in a temporary directory.
+
+One transaction converts energy readings, their latest snapshots, heartbeat
+events, capability/migration metadata, cache receipt times and original reading
+journal timestamps. Ambiguous or nonexistent times in **any** of those replicas
+abort the whole copy. Original timestamps and row keys remain in evidence tables;
+all non-timestamp column fingerprints must match, including stored kWh/cents and
+collector/generation IDs. Existing journal sequences remain; reading UPDATE
+triggers append exactly one canonical upsert per changed reading. Those appended
+events and SQLite autoincrement state are checked, not silently rebuilt.
+
+Only an integrity-checked, standalone copy is atomically published, without
+overwriting a target. The original archive hash must still match. Failures clean
+only this run's temporary copy. The output is **not deployable** and has
+`live_ready: false`; current development app connections reject it before
+switching journal mode. Inspection requires
+`energy._connect(path, allow_utc_rehearsal=True, read_only=True)`, which cannot write
+or change its file hash. Older app versions do not recognize this marker; never
+point them at the artifact. No collectors, credentials, settings or services are
+changed by the rehearsal.
+
+The October 8 private rehearsal converted all 100,237 readings and their energy
+timestamp replicas, retaining 201,918 original timestamp evidence entries. All 30
+non-timestamp table fingerprints and 1,168 local-calendar day/month energy/cost
+groups matched. Existing journal sequences were preserved and exactly 100,237
+canonical reading upserts appended. Both archive and artifact hashes remained
+unchanged during subsequent read-only inspection. These results use the declared
+New York source assumption, not independently established row provenance.
+Production remained on 2.3.37; development 2.3.38 is not released or deployed.
+
+This engine is an integration prerequisite, not a replacement for the following
+still-required live implementation:
+
 1. Establish and persist collector reporting timezone and legacy source provenance.
    Preserve original timestamps, IDs, kWh and stored cents in migration evidence.
    Quarantine unresolved rows rather than guessing DST folds or source zones.
@@ -91,9 +143,12 @@ the remaining gates. Keep exports and reports private.
 
 ```bash
 python3 -m unittest discover -s tests -p test_timestamp_model.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
 ```
 
 Tests cover New York gaps/folds, explicit offsets, a half-hour DST transition,
 an entirely skipped calendar day, microseconds, collisions, invalid identities,
-empty exports, bounded examples, redacted errors and CLI runs under different
-host timezones with no database creation or input-file changes.
+empty exports, bounded examples and redacted errors. Preflight CLI runs under
+different host timezones create no database or input changes. Rehearsal tests
+cover private atomic publication, source drift, nonregular input, schema-reseed
+rejection, data fingerprints, journal updates, read-only inspection and rollback.

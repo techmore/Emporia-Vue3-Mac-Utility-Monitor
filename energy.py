@@ -112,12 +112,33 @@ def _write_json_file(path: str | Path, data: dict) -> None:
     write_private_json(path, data)
 
 
-def _connect(path: str | Path | None = None) -> sqlite3.Connection:
-    """Open a WAL-mode SQLite connection with row_factory set."""
-    conn = sqlite3.connect(str(path) if path is not None else DB_PATH, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.row_factory = sqlite3.Row
+def _connect(path: str | Path | None = None, *,
+             allow_utc_rehearsal: bool = False, read_only: bool = False) -> sqlite3.Connection:
+    """Open WAL storage, or explicit read-only maintenance, with row_factory set."""
+    if type(allow_utc_rehearsal) is not bool or type(read_only) is not bool:
+        raise ValueError("Connection maintenance flags must be booleans")
+    target = str(path) if path is not None else DB_PATH
+    if read_only:
+        target = Path(target).expanduser().absolute().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(target, timeout=30, uri=read_only)
+    # Until every writer, query and client understands UTC, a converted rehearsal
+    # copy must not become a live collector or be interpreted as legacy local data.
+    try:
+        marked = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='utc_rehearsal'"
+        ).fetchone()
+        if marked and conn.execute("SELECT 1 FROM utc_rehearsal LIMIT 1").fetchone():
+            if not allow_utc_rehearsal or not read_only:
+                raise RuntimeError("UTC rehearsal database is not a supported live collector")
+        if read_only:
+            conn.execute("PRAGMA query_only=ON")
+        else:
+            conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.row_factory = sqlite3.Row
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
@@ -331,9 +352,9 @@ def get_weekly_power_pattern(device_gid: str | None = None, *, end: datetime | N
             'start': (boundary-timedelta(days=28)).isoformat(), 'end': boundary.isoformat()}
 
 
-def ensure_table():
+def ensure_table(path: str | Path | None = None):
     """Create the readings table and indexes if they don't exist yet."""
-    conn = _connect()
+    conn = _connect(path)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -359,6 +380,22 @@ def ensure_table():
         CREATE TABLE IF NOT EXISTS migrations (
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS utc_rehearsal (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            source_sha256 TEXT NOT NULL,
+            legacy_timezone TEXT NOT NULL,
+            reporting_timezone TEXT NOT NULL,
+            converted_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS utc_timestamp_evidence (
+            table_name TEXT NOT NULL,
+            row_key TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            original_timestamp TEXT NOT NULL,
+            utc_timestamp TEXT NOT NULL,
+            interpretation TEXT NOT NULL,
+            PRIMARY KEY (table_name, row_key, column_name)
         );
         CREATE TABLE IF NOT EXISTS poller_health_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

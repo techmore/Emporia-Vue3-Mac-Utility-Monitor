@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.38 - Unreleased
+
+- UTC integration in development: transactional conversion rehearsal on a new
+  private copy of a verified backup. Preserve original timestamp evidence,
+  non-time data, IDs and journal sequences; verify generated canonical upserts.
+  Reject the resulting artifact from ordinary app connections until the UTC
+  writer/query/import/client integration is complete. Add byte-preserving,
+  read-only maintenance connections. Not deployed; #127 remains open.
+
 ## 2.3.37 - 2026-10-08
 
 - Add a read-only UTC migration preflight for private exported reading identities.
