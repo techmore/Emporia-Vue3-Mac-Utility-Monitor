@@ -30,10 +30,19 @@
   device-scoped circuit comparisons; do not double-count adjacent boundaries.
 - Remove duplicated dashboard sections that made circuit detail return HTTP 500;
   retain its own chart and comparison cards. Correct polls/hour and recorded-zero
-  comparison display. A separate legacy-compatible hotfix is required for production.
+  comparison display. The legacy-compatible fix is merged separately in 2.3.38 (PR #137).
 - Track measurement-interval/provenance repair in #135: hourly imported/compacted
   energy must not be presented as minute-average watts. UTC time-label tests do
   not establish power accuracy; this remains a release/cutover gate.
+
+## 2.3.38 - 2026-10-08
+
+- Restore full circuit-detail pages and every period tab by removing copied
+  dashboard sections that referenced missing template values and returned HTTP 500.
+- Scope circuit charts and context comparisons to the same selected device.
+  Read comparison windows from one snapshot, retain recorded zeroes, and correct
+  the polls/hour label. Add actual route regression tests, including empty data
+  and escaped circuit names. No timestamp migration or database schema change.
 
 ## 2.3.37 - 2026-10-08
 
