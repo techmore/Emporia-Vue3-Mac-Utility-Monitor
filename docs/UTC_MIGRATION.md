@@ -172,9 +172,27 @@ transition-hour bins cannot invent independent weeks. The original 168-slot
 typical-week model remains a normal-week template, not a claim that every actual
 week lasts 168 hours.
 
+The next adapters cover rolling Main/circuit/mains-leg totals, hourly and daily
+Main charts, full circuit charts and 1/7/30-day circuit history, reporting-month
+comparison/projection, and observed-day trends. Rolling windows are elapsed UTC
+durations with a captured upper cutoff, not a fixed number of wall-clock dates.
+Stored costs and device isolation remain unchanged. The existing ghost-device
+compatibility alias still resolves to the selected real device rather than
+mixing in the ghost's zero readings.
+
+UTC hourly chart rows carry a canonical `bucket_utc`, explicit
+`reporting_timezone`, and an offset-bearing local label. Chart gap filling uses
+actual reporting-day bins: both repeated hours are distinct, spring-gap hours
+are omitted, and a clipped half-hour bin reaches the next local midnight rather
+than skipping it. Circuit history retains null missing buckets, recorded zeroes,
+partial-range flags and actual interval durations. Trend regression uses elapsed
+calendar days, so missing observations cannot compress a three-day change into
+one day. Daily averages remain averages of recorded days, not proof of complete
+capture or an inferred usage total for missing days.
+
 These adapters are exercised only through explicit read-only maintenance
 connections to private rehearsal copies. This is not permission to launch Flask
-against a converted artifact. The rest of the reporting/duration queries,
+against a converted artifact. Capture/context/peak/intraday queries,
 writers, imports, retention/compaction and native cache/sync paths are not yet
 UTC-ready; the ordinary connection guard remains until they are coordinated.
 
@@ -185,6 +203,7 @@ python3 -m unittest discover -s tests -p test_timestamp_model.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_utc_migration.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_dashboard_freshness.py -v
 venv/bin/python3 -m unittest discover -s tests -p test_utc_calendar_queries.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_utc_duration_queries.py -v
 ```
 
 Tests cover New York gaps/folds, explicit offsets, a half-hour DST transition,
@@ -209,3 +228,15 @@ comparisons. These are this snapshot's observations, not a performance guarantee
 or proof that the remaining app queries support UTC. Browser fixture checks
 verified 23/25 columns, explicit fold labels, contained 390px scrolling, and
 readable sticky circuit labels. No production source, data or services changed.
+
+The subsequent private duration-query checks independently aggregated the same
+100,237 archived readings pointwise. Seventy-two comparisons matched rolling
+totals, hourly/daily/month/year buckets, stored cents, trends and circuit-history
+totals/coverage across two effective devices and three requested identities,
+including the legacy ghost alias. Source and artifact hashes stayed unchanged.
+Maximum observed query times ranged from 0.010 to 0.032 seconds on this snapshot;
+these are measurements, not guarantees. Tests exercise actual host-timezone
+subprocesses, both DST folds, spring gaps, half-hour day-end clipping, exact
+microsecond bounds, query cleanup on invalid clocks and the real Trends chart
+script's offset-bearing labels. This does not verify production HTTP/native
+operation against UTC data, and does not authorize deployment.

@@ -31,6 +31,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 import energy
 import panel_photos
 import radon
+from energy_clock import EnergyClock
 from extensions import HOUSE_CSS, register_extensions
 from panel_model import breaker_load
 from solar_model import hourly_generation_offset, solar_offset
@@ -1101,6 +1102,19 @@ def _fill_gaps(rows: list[dict], key: str, hourly: bool = False) -> list[dict]:
     """Insert empty buckets (total_kwh None) so charts show unrecorded periods as gaps."""
     if len(rows) < 2:
         return rows
+    if hourly and rows[0].get("bucket_utc"):
+        zone = rows[0]["reporting_timezone"]
+        if any(row.get("reporting_timezone") != zone or not row.get("bucket_utc") for row in rows):
+            raise ValueError("Inconsistent UTC chart metadata")
+        clock = EnergyClock(zone)
+        by_key = {row["bucket_utc"]: row for row in rows}
+        bins = clock.buckets(clock.parse(rows[0]["bucket_utc"]),
+                             clock.parse(rows[-1]["bucket_utc"])+timedelta(microseconds=1),
+                             hourly=True)
+        return [by_key.get(row["key"]) or {
+            key: row["label"], "bucket_utc": row["key"], "reporting_timezone": zone,
+            "total_kwh": None, "total_cents": None,
+        } for row in bins]
     fmt, step = ("%Y-%m-%d %H:00", timedelta(hours=1)) if hourly else ("%Y-%m-%d", timedelta(days=1))
     by_key = {row[key]: row for row in rows}
     cursor = datetime.strptime(rows[0][key], fmt)
@@ -1795,7 +1809,7 @@ if (document.getElementById('dailyChart')) {
 
 if (document.getElementById('hourlyChart')) {
   oliveChart('hourlyChart',
-    hourly.map(d => d.hour.slice(11,16)),
+    hourly.map(d => d.hour.slice(11,16) + (d.bucket_utc ? ' ' + d.hour.slice(-6) : '')),
     hourly.map(d => d.total_kwh),
     'oklch(42% 0.055 110)');
 }
@@ -3038,7 +3052,7 @@ mkChart('trendChart',
   'oklch(35% 0.045 110)');
 
 mkChart('hourlyChart',
-  hourlyData.map(d=>d.hour.slice(11,16)),
+  hourlyData.map(d=>d.hour.slice(11,16) + (d.bucket_utc ? ' ' + d.hour.slice(-6) : '')),
   hourlyData.map(d=>d.total_kwh),
   'oklch(42% 0.055 110)');
 </script>

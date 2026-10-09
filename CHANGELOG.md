@@ -18,6 +18,12 @@
   Live activation remains blocked pending the remaining coordinated UTC paths.
 - Restore readable light text on the heatmap's dark sticky circuit labels while
   preserving the olive/stone theme and contained horizontal scrolling.
+- Continue UTC query integration: elapsed-time rolling totals, hourly/daily and
+  circuit history, reporting-month comparison/projection and observed-day trends.
+  Exclude future rows; retain stored cents, fold offsets and actual interval
+  lengths. Fill chart gaps along real UTC bins, not nonexistent wall hours, and
+  calculate trend slope across actual calendar-day gaps. These adapters remain
+  read-only rehearsal work; remaining writers/client paths still block cutover.
 
 ## 2.3.37 - 2026-10-08
 

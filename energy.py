@@ -171,9 +171,30 @@ def _utc_clock(conn) -> EnergyClock | None:
         raise RuntimeError("Inconsistent energy timestamp policy")
     clock = EnergyClock(policy["reporting_timezone"])
     for name, function in (("energy_day", clock.day_key), ("energy_month", clock.month_key),
+                           ("energy_year", clock.year_key),
                            ("energy_minute", clock.minute_key), ("energy_hour", clock.hour_key)):
         conn.create_function(name, 1, function, deterministic=True)
     return clock
+
+
+def _query_window(conn, duration: timedelta, now: datetime | None) -> tuple:
+    """Use elapsed-time windows; reporting-calendar grouping is separate."""
+    clock = _utc_clock(conn)
+    moment = now or (datetime.now(timezone.utc) if clock else datetime.now())
+    if clock:
+        moment = clock.instant(moment)
+    serialize = clock.stamp if clock else datetime.isoformat
+    return clock, moment, serialize(moment-duration), serialize(moment)
+
+
+def _chart_rows(rows, key: str, clock: EnergyClock | None) -> list[dict]:
+    result = [dict(row) for row in rows]
+    if clock and key in ("hour", "period"):
+        for row in result:
+            row["bucket_utc"] = row[key]
+            row["reporting_timezone"] = clock.reporting_timezone
+            row[key] = clock.local(clock.parse(row[key])).isoformat(timespec="minutes")
+    return result
 
 
 def backup_database(destination: str | Path) -> dict:
@@ -1695,155 +1716,167 @@ def _run_continuous():
         time.sleep(POLL_INTERVAL)
 
 
-def get_main_total(hours: int = 24, device_gid: str | None = None) -> dict | None:
+def get_main_total(hours: int = 24, device_gid: str | None = None, *,
+                   now: datetime | None = None) -> dict | None:
     """
     Return the Main channel total kWh and cost_cents for the last `hours` hours
     from the primary real device (551741).  Used for authoritative whole-house
     totals without double-counting individual circuits.
     """
     conn = _connect()
-    c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
+    try:
+        c = conn.cursor()
+        _, _, since, until = _query_window(conn, timedelta(hours=hours), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return None
+        c.execute(
+            """SELECT SUM(usage_kwh) as total_kwh, SUM(cost_cents) as total_cents,
+                      COUNT(*) as readings
+               FROM readings
+               WHERE channel_name = 'Main'
+                 AND device_gid = ?
+                 AND timestamp >= ? AND timestamp <= ?""",
+            (resolved_gid, since, until),
+        )
+        row = c.fetchone()
+        if row and row["total_kwh"] is not None:
+            return {"total_kwh": row["total_kwh"], "total_cents": row["total_cents"],
+                    "readings": row["readings"], "channel_name": "Main"}
         return None
-    c.execute(
-        """SELECT SUM(usage_kwh) as total_kwh, SUM(cost_cents) as total_cents,
-                  COUNT(*) as readings
-           FROM readings
-           WHERE channel_name = 'Main'
-             AND device_gid = ?
-             AND timestamp >= ?""",
-        (resolved_gid, since),
-    )
-    row = c.fetchone()
-    conn.close()
-    if row and row["total_kwh"] is not None:
-        return {"total_kwh": row["total_kwh"], "total_cents": row["total_cents"],
-                "readings": row["readings"], "channel_name": "Main"}
-    return None
-
-
-def get_summary(hours=24, device_gid: str | None = None):
-    conn = _connect()
-    c = conn.cursor()
-
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+    finally:
         conn.close()
-        return []
 
-    # Exclude the ghost device (device 81134 always reports 0 W, pollutes sums)
-    meta_placeholders = ",".join("?" for _ in META_CHANNELS)
-    c.execute(
-        f"""SELECT channel_name,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents,
-        COUNT(*) as readings
-        FROM readings
-        WHERE timestamp >= ?
-          AND device_gid = ?
-          AND channel_name NOT IN ({meta_placeholders})
-        GROUP BY channel_name
-        ORDER BY total_kwh DESC""",
-        (since, resolved_gid, *META_CHANNELS),
-    )
 
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
+def get_summary(hours=24, device_gid: str | None = None, *,
+                    now: datetime | None = None) -> list[dict]:
+    conn = _connect()
+    try:
+        c = conn.cursor()
+
+        _, _, since, until = _query_window(conn, timedelta(hours=hours), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
+
+        # Exclude the ghost device (device 81134 always reports 0 W, pollutes sums)
+        meta_placeholders = ",".join("?" for _ in META_CHANNELS)
+        c.execute(
+            f"""SELECT channel_name,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents,
+            COUNT(*) as readings
+            FROM readings
+            WHERE timestamp >= ? AND timestamp <= ?
+              AND device_gid = ?
+              AND channel_name NOT IN ({meta_placeholders})
+            GROUP BY channel_name
+            ORDER BY total_kwh DESC""",
+            (since, until, resolved_gid, *META_CHANNELS),
+        )
+
+        results = c.fetchall()
+        return [dict(row) for row in results]
+    finally:
+        conn.close()
 
 
 def get_channel_totals(
-    channel_names: list[str], hours: int = 24, device_gid: str | None = None
+    channel_names: list[str], hours: int = 24, device_gid: str | None = None, *,
+    now: datetime | None = None,
 ) -> list[dict]:
     if not channel_names:
         return []
 
     conn = _connect()
-    c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return []
+    try:
+        c = conn.cursor()
+        _, _, since, until = _query_window(conn, timedelta(hours=hours), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
 
-    placeholders = ",".join("?" for _ in channel_names)
-    c.execute(
-        f"""SELECT channel_name,
-                   SUM(usage_kwh) as total_kwh,
-                   SUM(cost_cents) as total_cents,
-                   COUNT(*) as readings
+        placeholders = ",".join("?" for _ in channel_names)
+        c.execute(
+            f"""SELECT channel_name,
+                       SUM(usage_kwh) as total_kwh,
+                       SUM(cost_cents) as total_cents,
+                       COUNT(*) as readings
+                FROM readings
+                WHERE timestamp >= ? AND timestamp <= ?
+                  AND device_gid = ?
+                  AND channel_name IN ({placeholders})
+                GROUP BY channel_name""",
+            (since, until, resolved_gid, *channel_names),
+        )
+        results = c.fetchall()
+        return [dict(row) for row in results]
+    finally:
+        conn.close()
+
+
+def get_hourly_data(days=7, device_gid: str | None = None, *,
+                    now: datetime | None = None) -> list[dict]:
+    conn = _connect()
+    try:
+        c = conn.cursor()
+
+        clock, _, since, until = _query_window(conn, timedelta(days=days), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
+
+        grouping = "energy_hour(timestamp)" if clock else "strftime('%Y-%m-%d %H:00', timestamp)"
+        c.execute(
+            f"""SELECT
+            {grouping} as hour,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents
             FROM readings
-            WHERE timestamp >= ?
+            WHERE timestamp >= ? AND timestamp <= ?
+              AND channel_name = 'Main'
               AND device_gid = ?
-              AND channel_name IN ({placeholders})
-            GROUP BY channel_name""",
-        (since, resolved_gid, *channel_names),
-    )
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
+            GROUP BY hour
+            ORDER BY hour""",
+            (since, until, resolved_gid),
+        )
 
-
-def get_hourly_data(days=7, device_gid: str | None = None):
-    conn = _connect()
-    c = conn.cursor()
-
-    since = (datetime.now() - timedelta(days=days)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+        results = c.fetchall()
+        return _chart_rows(results, "hour", clock)
+    finally:
         conn.close()
-        return []
-
-    c.execute(
-        """SELECT 
-        strftime('%Y-%m-%d %H:00', timestamp) as hour,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE timestamp >= ?
-          AND channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY hour
-        ORDER BY hour""",
-        (since, resolved_gid),
-    )
-
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
 
 
-def get_daily_data(days=30, device_gid: str | None = None):
+def get_daily_data(days=30, device_gid: str | None = None, *,
+                    now: datetime | None = None) -> list[dict]:
     conn = _connect()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    since = (datetime.now() - timedelta(days=days)).isoformat()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+        clock, _, since, until = _query_window(conn, timedelta(days=days), now)
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return []
+
+        grouping = "energy_day(timestamp)" if clock else "strftime('%Y-%m-%d', timestamp)"
+        c.execute(
+            f"""SELECT
+            {grouping} as day,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents
+            FROM readings
+            WHERE timestamp >= ? AND timestamp <= ?
+              AND channel_name = 'Main'
+              AND device_gid = ?
+            GROUP BY day
+            ORDER BY day""",
+            (since, until, resolved_gid),
+        )
+
+        results = c.fetchall()
+        return [dict(row) for row in results]
+    finally:
         conn.close()
-        return []
-
-    c.execute(
-        """SELECT 
-        strftime('%Y-%m-%d', timestamp) as day,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE timestamp >= ?
-          AND channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY day
-        ORDER BY day""",
-        (since, resolved_gid),
-    )
-
-    results = c.fetchall()
-    conn.close()
-    return [dict(row) for row in results]
 
 
 def get_latest(device_gid: str | None = None):
@@ -1880,47 +1913,32 @@ def get_latest(device_gid: str | None = None):
     return [dict(row) for row in results]
 
 
-def get_month_comparison(device_gid: str | None = None):
-    """Compare current month to previous month using Main channel only (avoids double-counting)."""
+def get_month_comparison(device_gid: str | None = None, *,
+                         now: datetime | None = None) -> dict:
+    """Current reporting month vs the previous month, using Main only."""
     conn = _connect()
-    c = conn.cursor()
-
-    now = datetime.now()
-    # First day of this month
-    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    # First day of last month
-    last_month_start = (this_month_start - timedelta(days=1)).replace(day=1)
-
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+    try:
+        clock, moment, _, until = _query_window(conn, timedelta(0), now)
+        local = clock.local(moment) if clock else moment
+        first_day = local.date().replace(day=1)
+        previous_day = (first_day-timedelta(days=1)).replace(day=1)
+        since = (clock.stamp(clock.day_bounds(previous_day)[0]) if clock else
+                 datetime.combine(previous_day, datetime.min.time()).isoformat())
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return {"this_month": None, "last_month": None}
+        grouping = "energy_month(timestamp)" if clock else "strftime('%Y-%m', timestamp)"
+        rows = conn.execute(
+            f"""SELECT {grouping} month, SUM(usage_kwh) total_kwh,
+                       SUM(cost_cents) total_cents FROM readings
+                WHERE timestamp>=? AND timestamp<=? AND channel_name='Main' AND device_gid=?
+                GROUP BY month""", (since, until, gid),
+        ).fetchall()
+        months = {row["month"]: dict(row) for row in rows}
+        return {"this_month": months.get(first_day.strftime("%Y-%m")),
+                "last_month": months.get(previous_day.strftime("%Y-%m"))}
+    finally:
         conn.close()
-        return {"this_month": None, "last_month": None}
-
-    c.execute(
-        """SELECT
-        strftime('%Y-%m', timestamp) as month,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE timestamp >= ?
-          AND channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY month""",
-        (last_month_start.isoformat(), resolved_gid),
-    )
-
-    results = c.fetchall()
-    conn.close()
-
-    months = {row["month"]: dict(row) for row in results}
-
-    this_month_key = now.strftime("%Y-%m")
-    last_month_key = last_month_start.strftime("%Y-%m")
-
-    return {
-        "this_month": months.get(this_month_key),
-        "last_month": months.get(last_month_key),
-    }
 
 
 def get_peak_usage(device_gid: str | None = None):
@@ -2071,71 +2089,66 @@ def get_peak_24h(device_gid: str | None = None) -> dict:
     return {"peak_watts": watts, "peak_time": time_label}
 
 
-def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
+def get_circuit_data(channel_name, period="day", device_gid: str | None = None, *,
+                     now: datetime | None = None) -> dict:
     conn = _connect()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    now = datetime.now()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return {"data": [], "total": {
+                "total_kwh": None,
+                "total_cents": None,
+                "readings": 0,
+                "first_reading": None,
+                "last_reading": None,
+            }}
+
+        duration, expression = {
+            "hour": (timedelta(hours=24), "strftime('%Y-%m-%d %H:00', timestamp)"),
+            "day": (timedelta(days=7), "strftime('%Y-%m-%d', timestamp)"),
+            "week": (timedelta(days=30), "strftime('%Y-%m-%d', timestamp)"),
+            "month": (timedelta(days=365), "strftime('%Y-%m', timestamp)"),
+            "year": (timedelta(days=365*3), "strftime('%Y', timestamp)"),
+        }.get(period, (timedelta(days=7), "strftime('%Y-%m-%d', timestamp)"))
+        clock, _, since, until = _query_window(conn, duration, now)
+        group_by = ({"hour": "energy_hour(timestamp)", "month": "energy_month(timestamp)",
+                     "year": "energy_year(timestamp)"}.get(period, "energy_day(timestamp)")
+                    if clock else expression)
+
+        c.execute(
+            f"""SELECT {group_by} as period,
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents
+            FROM readings
+            WHERE channel_name = ? AND timestamp >= ? AND timestamp <= ? AND device_gid = ?
+            GROUP BY period
+            ORDER BY period""",
+            (channel_name, since, until, resolved_gid),
+        )
+
+        results = c.fetchall()
+
+        # Also get total
+        c.execute(
+            """SELECT
+            SUM(usage_kwh) as total_kwh,
+            SUM(cost_cents) as total_cents,
+            COUNT(*) as readings,
+            MIN(timestamp) as first_reading,
+            MAX(timestamp) as last_reading
+            FROM readings
+            WHERE channel_name = ? AND timestamp >= ? AND timestamp <= ? AND device_gid = ?""",
+            (channel_name, since, until, resolved_gid),
+        )
+
+        total = dict(c.fetchone())
+
+        return {"data": _chart_rows(results, "period", clock if period == "hour" else None),
+                "total": total}
+    finally:
         conn.close()
-        return {"data": [], "total": {
-            "total_kwh": None,
-            "total_cents": None,
-            "readings": 0,
-            "first_reading": None,
-            "last_reading": None,
-        }}
-
-    if period == "hour":
-        since = (now - timedelta(hours=24)).isoformat()
-        group_by = "strftime('%Y-%m-%d %H:00', timestamp)"
-    elif period == "day":
-        since = (now - timedelta(days=7)).isoformat()
-        group_by = "strftime('%Y-%m-%d', timestamp)"
-    elif period == "week":
-        since = (now - timedelta(days=30)).isoformat()
-        group_by = "strftime('%Y-%m-%d', timestamp)"
-    elif period == "month":
-        since = (now - timedelta(days=365)).isoformat()
-        group_by = "strftime('%Y-%m', timestamp)"
-    elif period == "year":
-        since = (now - timedelta(days=365 * 3)).isoformat()
-        group_by = "strftime('%Y', timestamp)"
-    else:
-        since = (now - timedelta(days=7)).isoformat()
-        group_by = "strftime('%Y-%m-%d', timestamp)"
-
-    c.execute(
-        f"""SELECT {group_by} as period,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE channel_name = ? AND timestamp >= ? AND device_gid = ?
-        GROUP BY period
-        ORDER BY period""",
-        (channel_name, since, resolved_gid),
-    )
-
-    results = c.fetchall()
-
-    # Also get total
-    c.execute(
-        """SELECT 
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents,
-        COUNT(*) as readings,
-        MIN(timestamp) as first_reading,
-        MAX(timestamp) as last_reading
-        FROM readings
-        WHERE channel_name = ? AND timestamp >= ? AND device_gid = ?""",
-        (channel_name, since, resolved_gid),
-    )
-
-    total = dict(c.fetchone())
-    conn.close()
-
-    return {"data": [dict(row) for row in results], "total": total}
 
 
 def get_circuit_history(
@@ -2147,9 +2160,10 @@ def get_circuit_history(
     dense minute sampling in both equal-length periods. This is a sampling guard,
     not a guarantee of coverage for imported history of unknown intervals.
     """
-    now = now or datetime.now()
     conn = _connect()
     try:
+        clock, now, _, until = _query_window(conn, timedelta(0), now)
+        serialize = clock.stamp if clock else datetime.isoformat
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return None
@@ -2157,19 +2171,20 @@ def get_circuit_history(
             """SELECT timestamp, usage_kwh FROM readings
                WHERE device_gid=? AND channel_name=? AND timestamp<=?
                ORDER BY timestamp DESC LIMIT 1""",
-            (gid, channel_name, now.isoformat()),
+            (gid, channel_name, until),
         ).fetchone()
         if latest is None:
             return None
 
         def totals(start: datetime, end: datetime) -> dict:
+            minute = "energy_minute(timestamp)" if clock else "substr(timestamp,1,16)"
             return dict(conn.execute(
-                """SELECT SUM(usage_kwh) total_kwh, SUM(cost_cents) total_cents,
-                          COUNT(*) readings, COUNT(DISTINCT substr(timestamp,1,16)) sampled_minutes,
+                f"""SELECT SUM(usage_kwh) total_kwh, SUM(cost_cents) total_cents,
+                          COUNT(*) readings, COUNT(DISTINCT {minute}) sampled_minutes,
                           MIN(timestamp) first_reading, MAX(timestamp) last_reading
                    FROM readings WHERE device_gid=? AND channel_name=?
                    AND timestamp>=? AND timestamp<? AND usage_kwh IS NOT NULL""",
-                (gid, channel_name, start.isoformat(), end.isoformat()),
+                (gid, channel_name, serialize(start), serialize(end)),
             ).fetchone())
 
         windows = []
@@ -2180,32 +2195,44 @@ def get_circuit_history(
             dense = all(row['sampled_minutes'] >= days * 1440 * 0.8 for row in (current, previous))
             change = _delta_pct(current['total_kwh'], previous['total_kwh']) if dense else None
             grouping = "%Y-%m-%d %H:00" if days == 1 else "%Y-%m-%d"
+            expression = ("energy_hour(timestamp)" if days == 1 else "energy_day(timestamp)") if clock else "strftime(?, timestamp)"
+            parameters = (gid, channel_name, serialize(start), until)
             buckets = {
                 row['period']: dict(row) for row in conn.execute(
-                    """SELECT strftime(?, timestamp) period, SUM(usage_kwh) total_kwh,
+                    f"""SELECT {expression} period, SUM(usage_kwh) total_kwh,
                               COUNT(*) readings FROM readings
                        WHERE device_gid=? AND channel_name=? AND timestamp>=?
                        AND timestamp<? AND usage_kwh IS NOT NULL
                        GROUP BY period ORDER BY period""",
-                    (grouping, gid, channel_name, start.isoformat(), now.isoformat()),
+                    parameters if clock else (grouping, *parameters),
                 ).fetchall()
             }
-            cursor = start.replace(minute=0, second=0, microsecond=0) if days == 1 else start.replace(hour=0, minute=0, second=0, microsecond=0)
-            step = timedelta(hours=1) if days == 1 else timedelta(days=1)
             series = []
-            while cursor < now:
-                label = cursor.strftime(grouping)
-                series.append({
-                    **buckets.get(label, {'period': label, 'total_kwh': None, 'readings': 0}),
-                    'partial_bucket': cursor < start or cursor + step > now,
-                })
-                cursor += step
+            if clock:
+                for bucket in clock.buckets(start, now, hourly=days == 1):
+                    row = dict(buckets.get(bucket['key'], {'total_kwh': None, 'readings': 0}))
+                    row.update(period=bucket['label'],
+                               partial_bucket=bucket['start'] < start or bucket['end'] > now,
+                               bucket_utc=clock.stamp(bucket['start']),
+                               interval_minutes=(bucket['end']-bucket['start']).total_seconds()/60)
+                    series.append(row)
+            else:
+                cursor = start.replace(minute=0, second=0, microsecond=0) if days == 1 else start.replace(hour=0, minute=0, second=0, microsecond=0)
+                step = timedelta(hours=1) if days == 1 else timedelta(days=1)
+                while cursor < now:
+                    label = cursor.strftime(grouping)
+                    series.append({
+                        **buckets.get(label, {'period': label, 'total_kwh': None, 'readings': 0}),
+                        'partial_bucket': cursor < start or cursor + step > now,
+                    })
+                    cursor += step
             windows.append({
                 **current, 'days': days, 'previous_kwh': previous['total_kwh'],
                 'change_pct': change, 'comparison_sampled': dense,
                 'series': series,
             })
-        age = (now - datetime.fromisoformat(latest['timestamp'])).total_seconds()
+        latest_moment = clock.parse(latest['timestamp']) if clock else datetime.fromisoformat(latest['timestamp'])
+        age = (now - latest_moment).total_seconds()
         return {
             'channel_name': channel_name, 'device_gid': gid,
             'last_reading': latest['timestamp'],
@@ -2216,29 +2243,25 @@ def get_circuit_history(
         conn.close()
 
 
-def get_monthly_projection(device_gid: str | None = None):
-    """Most recent month's total using Main channel only (avoids double-counting)."""
+def get_monthly_projection(device_gid: str | None = None, *,
+                           now: datetime | None = None) -> dict | None:
+    """Most recent recorded reporting month, using Main only and excluding future rows."""
     conn = _connect()
-    c = conn.cursor()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
+    try:
+        clock, _, _, until = _query_window(conn, timedelta(0), now)
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return None
+        grouping = "energy_month(timestamp)" if clock else "strftime('%Y-%m', timestamp)"
+        row = conn.execute(
+            f"""SELECT {grouping} month, SUM(usage_kwh) total_kwh,
+                       SUM(cost_cents) total_cents FROM readings
+                WHERE channel_name='Main' AND device_gid=? AND timestamp<=?
+                GROUP BY month ORDER BY month DESC LIMIT 1""", (gid, until),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
         conn.close()
-        return None
-
-    c.execute("""SELECT
-        strftime('%Y-%m', timestamp) as month,
-        SUM(usage_kwh) as total_kwh,
-        SUM(cost_cents) as total_cents
-        FROM readings
-        WHERE channel_name = 'Main'
-          AND device_gid = ?
-        GROUP BY month
-        ORDER BY month DESC
-        LIMIT 1""", (resolved_gid,))
-
-    result = c.fetchone()
-    conn.close()
-    return dict(result) if result else None
 
 
 def _delta_pct(a, b):
@@ -2370,72 +2393,76 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
     }
 
 
-def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
+def get_trend(days_back: int = 14, device_gid: str | None = None, *,
+              now: datetime | None = None) -> dict:
     """
     Return daily totals for the last `days_back` days plus a simple
     linear trend slope (positive = usage rising, negative = falling).
-    Also returns the 7-day rolling average and the best/worst days.
+    Also returns the observed daily average and the best/worst recorded days.
     """
     conn = _connect()
-    c = conn.cursor()
-    resolved_gid = _resolve_device_gid(c, device_gid)
-    if not resolved_gid:
-        conn.close()
-        return {
-            "daily": [],
-            "slope": None,
-            "avg_kwh": None,
-            "best_day": None,
-            "worst_day": None,
-        }
+    try:
+        c = conn.cursor()
+        resolved_gid = _resolve_device_gid(c, device_gid)
+        if not resolved_gid:
+            return {
+                "daily": [],
+                "slope": None,
+                "avg_kwh": None,
+                "best_day": None,
+                "worst_day": None,
+            }
 
-    since = (datetime.now() - timedelta(days=days_back)).isoformat()
-    c.execute(
-        """SELECT strftime('%Y-%m-%d', timestamp) as day,
-                  SUM(usage_kwh) as total_kwh,
-                  SUM(cost_cents) as total_cents
-           FROM readings
-           WHERE channel_name = 'Main' AND timestamp >= ? AND device_gid = ?
-           GROUP BY day
-           ORDER BY day""",
-        (since, resolved_gid),
-    )
-    daily = [dict(r) for r in c.fetchall()]
-    conn.close()
+        clock, _, since, until = _query_window(conn, timedelta(days=days_back), now)
+        grouping = "energy_day(timestamp)" if clock else "strftime('%Y-%m-%d', timestamp)"
+        c.execute(
+            f"""SELECT {grouping} as day,
+                      SUM(usage_kwh) as total_kwh,
+                      SUM(cost_cents) as total_cents
+               FROM readings
+               WHERE channel_name = 'Main' AND timestamp >= ? AND timestamp <= ? AND device_gid = ?
+               GROUP BY day
+               ORDER BY day""",
+            (since, until, resolved_gid),
+        )
+        daily = [dict(r) for r in c.fetchall()]
 
-    if len(daily) < 2:
+        if len(daily) < 2:
+            return {
+                "daily": daily,
+                "slope": None,
+                "avg_kwh": None,
+                "best_day": None,
+                "worst_day": None,
+            }
+
+        # Preserve elapsed calendar days when capture has gaps.
+        n = len(daily)
+        first_day = datetime.fromisoformat(daily[0]["day"]).date()
+        xs = [(datetime.fromisoformat(row["day"]).date()-first_day).days for row in daily]
+        ys = [d["total_kwh"] for d in daily]
+        x_mean = sum(xs) / n
+        y_mean = sum(ys) / n
+        denom = sum((x - x_mean) ** 2 for x in xs)
+        slope = (
+            sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(n)) / denom
+            if denom
+            else 0
+        )
+
+        avg_kwh = y_mean
+        best_day = min(daily, key=lambda d: d["total_kwh"])
+        worst_day = max(daily, key=lambda d: d["total_kwh"])
+
         return {
             "daily": daily,
-            "slope": None,
-            "avg_kwh": None,
-            "best_day": None,
-            "worst_day": None,
+            "slope": round(slope, 4),  # kWh/day change
+            "avg_kwh": round(avg_kwh, 3),
+            "best_day": best_day,
+            "worst_day": worst_day,
         }
-
-    # Simple least-squares slope over the day index
-    n = len(daily)
-    xs = list(range(n))
-    ys = [d["total_kwh"] for d in daily]
-    x_mean = sum(xs) / n
-    y_mean = sum(ys) / n
-    denom = sum((x - x_mean) ** 2 for x in xs)
-    slope = (
-        sum((xs[i] - x_mean) * (ys[i] - y_mean) for i in range(n)) / denom
-        if denom
-        else 0
-    )
-
-    avg_kwh = y_mean
-    best_day = min(daily, key=lambda d: d["total_kwh"])
-    worst_day = max(daily, key=lambda d: d["total_kwh"])
-
-    return {
-        "daily": daily,
-        "slope": round(slope, 4),  # kWh/day change
-        "avg_kwh": round(avg_kwh, 3),
-        "best_day": best_day,
-        "worst_day": worst_day,
-    }
+    finally:
+        conn.close()
 
 
 def _clean_csv_channel_name(col: str) -> str:

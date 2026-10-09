@@ -63,6 +63,9 @@ class EnergyClock:
     def month_key(self, value: str) -> str:
         return self.day_key(value)[:7]
 
+    def year_key(self, value: str) -> str:
+        return self.day_key(value)[:4]
+
     def minute_key(self, value: str) -> str:
         return self.parse(value).replace(second=0, microsecond=0).isoformat()
 
@@ -71,6 +74,28 @@ class EnergyClock:
         start = self.day_bounds(self.local(moment).date())[0]
         elapsed_hours = int((moment-start).total_seconds() // 3600)
         return self.stamp(start+timedelta(hours=elapsed_hours))
+
+    def buckets(self, start: datetime, end: datetime, *, hourly: bool) -> list[dict]:
+        """Calendar bins intersecting [start, end), retaining actual UTC boundaries."""
+        start, end = self.instant(start), self.instant(end)
+        if end <= start:
+            return []
+        cursor, boundary = self.day_bounds(self.local(start).date())
+        if hourly:
+            cursor += timedelta(hours=int((start-cursor).total_seconds() // 3600))
+        result = []
+        while cursor < end:
+            following = min(cursor+timedelta(hours=1), boundary) if hourly else boundary
+            result.append({
+                "key": self.stamp(cursor) if hourly else self.local(cursor).date().isoformat(),
+                "label": self.local(cursor).isoformat(timespec="minutes") if hourly else
+                         self.local(cursor).date().isoformat(),
+                "start": cursor, "end": following,
+            })
+            cursor = following
+            if cursor == boundary:
+                _, boundary = self.day_bounds(self.local(cursor).date())
+        return result
 
     def hour_grid(self, moment: datetime, days: int = 7) -> dict:
         start, end = self.complete_days(moment, days)
