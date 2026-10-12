@@ -1,0 +1,14 @@
+/* Scoped to Energy Monitor; palette mirrors Sources/Theme.swift. */
+.energy-monitor { background-color: #1f2117; color: #eef0e6; }
+.energy-monitor .energy-muted { color: #a7ae8b; font-size: 11px; }
+.energy-monitor .energy-title { font-family: serif; font-size: 22px; font-weight: 500; }
+.energy-monitor .energy-card { background-color: #2b2e21; border: 1px solid #464a34; border-radius: 12px; padding: 9px; }
+.energy-monitor .energy-value { font-family: serif; font-size: 17px; font-variant-numeric: tabular-nums; }
+.energy-monitor .energy-hero { background-color: #1f2117; color: #eef0e6; border-radius: 10px; padding: 10px; }
+.energy-monitor .energy-hero .energy-value { font-size: 22px; }
+.energy-monitor button.energy-circuit { background: #2b2e21; color: #eef0e6; border: 1px solid #464a34; border-radius: 8px; padding: 6px 8px; font-size: 11px; }
+.energy-monitor button.energy-circuit:hover { background: #1f2117; border-color: #8a9269; }
+.energy-monitor button.energy-circuit:focus-visible { outline: 2px solid #8a9269; outline-offset: 1px; }
+.energy-monitor .energy-warn { border-color: #b07d2a; }
+.energy-monitor .energy-danger { border-color: #c0392b; }
+.energy-monitor drawingarea.energy-card { color: #8a9269; }
