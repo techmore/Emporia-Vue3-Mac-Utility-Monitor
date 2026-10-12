@@ -18,7 +18,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         display_box.tooltip_text = "Energy Monitor";
         menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 6) {
             margin_top = 12, margin_bottom = 6, margin_start = 12, margin_end = 12,
-            width_request = 320
+            width_request = 420
         };
         menu.add_css_class ("energy-monitor");
         menu.add_css_class ("energy-menu");
@@ -124,30 +124,54 @@ public class EnergyIndicator : Wingpanel.Indicator {
                 section.add_css_class ("energy-section");
                 readings.append (section);
                 var slots = root.get_array_member ("breaker_slots");
+                var panel = new Gtk.Grid () { column_homogeneous = true, column_spacing = 5, row_spacing = 4 };
+                readings.append (panel);
+                // Slot coordinates preserve physical odd-left/even-right positions,
+                // including gaps: never pack only monitored circuits sequentially.
+                int last_slot = root.has_member ("panel_slots") ? (int) root.get_int_member ("panel_slots") : 0;
+                for (uint i = 0; i < uint.min (slots.get_length (), 96); i++) {
+                    int slot = (int) slots.get_object_element (i).get_int_member ("slot");
+                    if (slot > 0 && slot <= 96) last_slot = int.max (last_slot, slot);
+                }
+                last_slot = int.min (int.max (last_slot, 0), 96);
+                for (int slot = 1; slot <= last_slot; slot++) {
+                    var empty = new Gtk.Label ("%02d  ·  Unassigned".printf (slot)) { xalign = 0, hexpand = true };
+                    empty.add_css_class ("energy-muted");
+                    empty.add_css_class ("energy-empty-slot");
+                    panel.attach (empty, (slot - 1) % 2, (slot - 1) / 2);
+                }
                 for (uint i = 0; i < uint.min (slots.get_length (), 96); i++) {
                     var circuit = slots.get_object_element (i);
                     var channel = string_member (circuit, "channel_name");
+                    int slot = (int) circuit.get_int_member ("slot");
+                    if (slot <= 0 || slot > 96) continue;
                     if (channel == "") continue;
-                    var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+                    var card = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
+                    var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4);
                     box.append (new Gtk.Label ("%02d  %s".printf ((int) circuit.get_int_member ("slot"),
                         string_member (circuit, "display_name", channel))) {
-                        xalign = 0, hexpand = true, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 23
+                        xalign = 0, hexpand = true, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 17
                     });
-                    var watts = new Gtk.Label (live ? metric (circuit, "watts", "%.0f W") : "—") { xalign = 1 };
+                    card.append (box);
+                    var detail = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+                    var watts = new Gtk.Label (live ? metric (circuit, "watts", "%.0f W") : "—") { xalign = 0, hexpand = true };
                     watts.add_css_class ("energy-circuit-value");
-                    box.append (watts);
+                    detail.append (watts);
                     var rating = new Gtk.Label (metric (circuit, "amps", "%.0f A")) { width_chars = 4, xalign = 1 };
                     rating.add_css_class ("energy-muted");
-                    box.append (rating);
+                    detail.append (rating);
                     var arrow = new Gtk.Image.from_icon_name ("go-next-symbolic") { pixel_size = 12 };
                     box.append (arrow);
-                    var button = new Gtk.Button () { child = box, has_frame = false };
+                    card.append (detail);
+                    var button = new Gtk.Button () { child = card, has_frame = false, hexpand = true };
                     button.add_css_class ("energy-circuit");
                     button.tooltip_text = "View recorded history for " + string_member (circuit, "display_name", channel);
                     string load_state = string_member (circuit, "load_state");
                     if (load_state == "warn" || load_state == "danger") button.add_css_class ("energy-" + load_state);
                     button.clicked.connect (() => { launch ({"--history", channel}); });
-                    readings.append (button);
+                    var placeholder = panel.get_child_at ((slot - 1) % 2, (slot - 1) / 2);
+                    if (placeholder != null) panel.remove (placeholder);
+                    panel.attach (button, (slot - 1) % 2, (slot - 1) / 2);
                 }
             }
         } catch (Error e) {

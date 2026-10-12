@@ -15,7 +15,9 @@ sync implementation.
 
 The native menu and history windows mirror `EnergyMonitorApp/Sources/Theme.swift`:
 olive/stone light and dark palettes, serif numeric readings, dark service-feed card,
-rounded metric cards and compact circuit buttons. Styles are scoped to this client;
+rounded metric cards and compact circuit buttons. Circuits follow physical breaker
+positions in two columns (odd slots left, even slots right), with unassigned positions
+preserved instead of shifting subsequent circuits. Styles are scoped to this client;
 they do not recolor other panel indicators. Desktop GTK light/dark preferences are
 followed. The embedded dashboard already uses the same palette from the collector.
 
