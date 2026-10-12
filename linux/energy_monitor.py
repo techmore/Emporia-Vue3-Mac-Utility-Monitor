@@ -274,6 +274,10 @@ class EnergyMonitor(Gtk.Application):
                                        default_width=640, default_height=470)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                       margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+        window.add_css_class("energy-monitor")
+        window.set_titlebar(Gtk.HeaderBar())
+        title = Gtk.Label(label=channel, xalign=0, ellipsize=3)
+        title.add_css_class("energy-history-title")
         status = Gtk.Label(label="Loading recorded history…", xalign=0, wrap=True)
         period = Gtk.DropDown.new_from_strings(["1 day", "7 days", "30 days"])
         totals = Gtk.Label(xalign=0, wrap=True)
@@ -285,7 +289,7 @@ class EnergyMonitor(Gtk.Application):
         refresh.connect("clicked", lambda *_: self.fetch_history(channel))
         buttons.append(refresh)
         buttons.append(full)
-        for child in (status, period, totals, chart, buttons):
+        for child in (title, status, period, totals, chart, buttons):
             box.append(child)
         window.set_child(box)
         data = {"record": None, "cached": True}

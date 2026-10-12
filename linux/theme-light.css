@@ -12,3 +12,10 @@
 .energy-monitor .energy-warn { border-color: #b07d2a; }
 .energy-monitor .energy-danger { border-color: #c0392b; }
 .energy-monitor drawingarea.energy-card { color: #575d3d; }
+
+.energy-monitor.energy-menu { border-radius: 12px; padding: 10px; }
+.energy-monitor .energy-caption { font-size: 10px; letter-spacing: 0.3px; }
+.energy-monitor .energy-section { font-size: 10px; font-weight: 600; letter-spacing: 1px; }
+.energy-monitor .energy-hero .energy-value { font-size: 30px; }
+.energy-monitor .energy-circuit-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.energy-monitor .energy-history-title { font-family: serif; font-size: 24px; }
