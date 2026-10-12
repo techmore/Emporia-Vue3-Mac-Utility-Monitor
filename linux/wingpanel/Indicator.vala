@@ -16,9 +16,9 @@ public class EnergyIndicator : Wingpanel.Indicator {
         power = new Gtk.Label ("");
         display_box.append (power);
         display_box.tooltip_text = "Energy Monitor";
-        menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 6) {
+        menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) {
             margin_top = 12, margin_bottom = 6, margin_start = 12, margin_end = 12,
-            width_request = 420
+            width_request = 390
         };
         menu.add_css_class ("energy-monitor");
         menu.add_css_class ("energy-menu");
@@ -79,7 +79,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private Gtk.Widget metric_card (string name, string value, bool hero = false) {
-        var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 3) { hexpand = true };
+        var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 1) { hexpand = true };
         var caption = new Gtk.Label (name) { xalign = 0 };
         caption.add_css_class ("energy-caption");
         box.append (caption);
@@ -124,7 +124,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
                 section.add_css_class ("energy-section");
                 readings.append (section);
                 var slots = root.get_array_member ("breaker_slots");
-                var panel = new Gtk.Grid () { column_homogeneous = true, column_spacing = 5, row_spacing = 4 };
+                var panel = new Gtk.Grid () { column_homogeneous = true, column_spacing = 5, row_spacing = 2 };
                 readings.append (panel);
                 // Slot coordinates preserve physical odd-left/even-right positions,
                 // including gaps: never pack only monitored circuits sequentially.
@@ -146,11 +146,11 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     int slot = (int) circuit.get_int_member ("slot");
                     if (slot <= 0 || slot > 96) continue;
                     if (channel == "") continue;
-                    var card = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
+                    var card = new Gtk.Box (Gtk.Orientation.VERTICAL, 1);
                     var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4);
                     box.append (new Gtk.Label ("%02d  %s".printf ((int) circuit.get_int_member ("slot"),
                         string_member (circuit, "display_name", channel))) {
-                        xalign = 0, hexpand = true, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 17
+                        xalign = 0, hexpand = true, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 16
                     });
                     card.append (box);
                     var detail = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);

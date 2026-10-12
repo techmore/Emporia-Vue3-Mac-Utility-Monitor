@@ -213,7 +213,7 @@ class EnergyMonitor(Gtk.Application):
             if (text.length > 4194304) throw new Error('Oversized summary');
             window.webkit.messageHandlers.energy.postMessage(JSON.stringify({ok:true,data:JSON.parse(text)}));
           } catch (_) { window.webkit.messageHandlers.energy.postMessage(JSON.stringify({ok:false})); }
-        })();"""
+        })(); null;"""
         self.web.evaluate_javascript(script, -1, None, self.origin, None, self.script_done, None)
         return GLib.SOURCE_CONTINUE
 
@@ -324,7 +324,7 @@ class EnergyMonitor(Gtk.Application):
             if (text.length > 4194304) throw new Error('Oversized history');
             window.webkit.messageHandlers.history.postMessage(JSON.stringify({channel:%s,data:JSON.parse(text)}));
           } catch (_) { window.webkit.messageHandlers.history.postMessage(JSON.stringify({channel:%s,error:true})); }
-        })();""" % (json.dumps(endpoint), json.dumps(channel), json.dumps(channel))
+        })(); null;""" % (json.dumps(endpoint), json.dumps(channel), json.dumps(channel))
         self.web.evaluate_javascript(script, -1, None, self.origin, None, None, None)
 
     def receive_history(self, manager, value):

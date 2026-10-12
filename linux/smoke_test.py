@@ -65,7 +65,9 @@ def main():
                 app.quit()
             return False
         GLib.timeout_add_seconds(3, history)
-        GLib.timeout_add_seconds(6, check)
+        GLib.timeout_add_seconds(4, lambda: (app.refresh(), False)[1])
+        GLib.timeout_add_seconds(5, lambda: (app.refresh(), False)[1])
+        GLib.timeout_add_seconds(8, check)
         app.run(['energy-monitor', '--background'])
         server.shutdown()
         assert result == ['passed'], 'GUI integration failed'
