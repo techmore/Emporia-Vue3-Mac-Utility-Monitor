@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import energy
 import web
+from werkzeug.middleware.proxy_fix import ProxyFix
 from panel_model import breaker_load
 from runtime_store import write_private_json
 
@@ -46,6 +47,39 @@ class ReleaseHardeningTests(unittest.TestCase):
                 response = client.post('/api/settings/config', json={'rate_cents': 12}, headers=headers)
                 self.assertEqual(response.status_code, 403)
             write.assert_not_called()
+
+    def test_public_origin_requires_https_and_preserves_same_origin_protection(self):
+        previous_wsgi = web.app.wsgi_app
+        web.app.wsgi_app = ProxyFix(previous_wsgi, x_for=0, x_proto=1, x_host=1,
+                                    x_port=0, x_prefix=0)
+        try:
+            with patch.object(web, 'PUBLIC_ORIGIN', 'https://energy.stoverparc.org'):
+                client = web.app.test_client()
+                headers = {'Host': '127.0.0.1:5051',
+                           'X-Forwarded-Host': 'energy.stoverparc.org',
+                           'X-Forwarded-Proto': 'https'}
+                self.assertEqual(client.get('/api/version', headers=headers).status_code, 200)
+                self.assertEqual(client.get('/api/version', headers={
+                    **headers, 'X-Forwarded-Proto': 'http',
+                }).status_code, 403)
+                with patch.object(energy, '_write_json_file') as write:
+                    response = client.post('/api/settings/config', json={'rate_cents': 12},
+                                           headers={**headers,
+                                                    'Origin': 'https://attacker.example'})
+                    self.assertEqual(response.status_code, 403)
+                    write.assert_not_called()
+        finally:
+            web.app.wsgi_app = previous_wsgi
+
+    def test_public_origin_configuration_must_be_exact_https_origin(self):
+        for invalid in ('http://energy.stoverparc.org',
+                        'https://energy.stoverparc.org/settings',
+                        'https://user@energy.stoverparc.org',
+                        'https://energy.stoverparc.org:8443'):
+            with self.subTest(origin=invalid), patch.dict(os.environ,
+                                                         {'ENERGY_PUBLIC_ORIGIN': invalid}):
+                with self.assertRaises(ValueError):
+                    web._public_origin_from_environment()
 
     def test_mutations_require_json_objects(self):
         client = web.app.test_client()

@@ -26,6 +26,7 @@ from flask import (
     stream_with_context,
 )
 from jinja2 import select_autoescape
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import energy
@@ -44,24 +45,47 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = "127.0.0.1"
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5051"))
 
+
+def _public_origin_from_environment() -> str | None:
+    """Return one explicitly trusted HTTPS origin; never infer it from a request."""
+    configured = os.environ.get("ENERGY_PUBLIC_ORIGIN", "").strip()
+    if not configured:
+        return None
+    parsed = urlsplit(configured)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        raise ValueError("ENERGY_PUBLIC_ORIGIN must be an HTTPS origin without a path")
+    if parsed.port not in (None, 443):
+        raise ValueError("ENERGY_PUBLIC_ORIGIN must use the standard HTTPS port")
+    return f"https://{parsed.hostname.lower()}"
+
+
+PUBLIC_ORIGIN = _public_origin_from_environment()
+if PUBLIC_ORIGIN:
+    # The service remains loopback-only; trust exactly one reverse-proxy hop.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=0, x_proto=1, x_host=1, x_port=0, x_prefix=0)
+
 VERSION = Path(__file__).with_name("VERSION").read_text().strip()
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None, "built_at": 0}
 
 
 @app.before_request
 def validate_local_request():
-    """Keep the local service local, and reject cross-origin mutation requests."""
+    """Keep local-only by default; optionally accept one trusted HTTPS proxy origin."""
     if request.path == '/api/panel-photos' and request.method == 'POST':
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
     if request.path.startswith(('/api/kasa/', '/api/mitsubishi')):
         request.max_content_length = 8192
     if request.path == '/api/aqara/local/label':
         request.max_content_length = 8192
-    if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
+    request_origin = request.host_url.rstrip("/")
+    local_host = urlsplit(request_origin).hostname in {"localhost", "127.0.0.1", "::1"}
+    public_host = bool(PUBLIC_ORIGIN and request_origin == PUBLIC_ORIGIN)
+    if not local_host and not public_host:
         return jsonify({"error": "Local host required"}), 403
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         origin = request.headers.get("Origin")
-        if (origin and origin.rstrip("/") != request.host_url.rstrip("/")) or request.headers.get("Sec-Fetch-Site") == "cross-site":
+        if (origin and origin.rstrip("/") != request_origin) or request.headers.get("Sec-Fetch-Site") == "cross-site":
             return jsonify({"error": "Same-origin request required"}), 403
         if request.path not in {"/api/import-csv", "/api/panel-photos"}:
             if not request.is_json:
