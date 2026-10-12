@@ -31,6 +31,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         title.add_css_class ("energy-title");
         status = new Gtk.Label ("Waiting for collector connection") { xalign = 0, wrap = true };
         status.add_css_class ("energy-muted");
+        status.add_css_class ("energy-timestamp");
         menu.append (title);
         menu.append (status);
         readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
