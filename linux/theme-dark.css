@@ -1,10 +1,10 @@
 /* Scoped to Energy Monitor; palette mirrors Sources/Theme.swift. */
 .energy-monitor { background-color: #1f2117; color: #eef0e6; }
 .energy-monitor .energy-muted { color: #a7ae8b; font-size: 10px; }
-.energy-monitor .energy-title { font-family: serif; font-size: 16px; font-weight: 500; }
-.energy-monitor .energy-card { background-color: #2b2e21; border: 1px solid #464a34; border-radius: 12px; padding: 6px; }
+.energy-monitor .energy-title { font-family: serif; font-size: 13px; font-weight: 500; }
+.energy-monitor .energy-card { background-color: #2b2e21; border: 1px solid #464a34; border-radius: 12px; padding: 4px; }
 .energy-monitor .energy-value { font-family: serif; font-size: 15px; font-variant-numeric: tabular-nums; }
-.energy-monitor .energy-hero { background-color: #1f2117; color: #eef0e6; border-radius: 10px; padding: 7px; }
+.energy-monitor .energy-hero { background-color: #1f2117; color: #eef0e6; border-radius: 10px; padding: 3px 6px; }
 .energy-monitor .energy-hero .energy-value { font-size: 20px; }
 .energy-monitor button.energy-circuit { background: #2b2e21; color: #eef0e6; border: 1px solid #464a34; border-radius: 8px; padding: 3px 6px; font-size: 10px; }
 .energy-monitor button.energy-circuit:hover { background: #1f2117; border-color: #8a9269; }
@@ -13,13 +13,14 @@
 .energy-monitor .energy-danger { border-color: #c0392b; }
 .energy-monitor drawingarea.energy-card { color: #8a9269; }
 
-.energy-monitor.energy-menu { border-radius: 12px; padding: 4px; }
+.energy-monitor.energy-menu { border-radius: 12px; padding: 2px; }
 .energy-monitor .energy-caption { font-size: 10px; letter-spacing: 0.3px; }
 .energy-monitor .energy-section { font-size: 10px; font-weight: 600; letter-spacing: 1px; }
-.energy-monitor .energy-hero .energy-value { font-size: 23px; }
+.energy-monitor .energy-hero .energy-value { font-size: 20px; }
 .energy-monitor .energy-circuit-value { font-weight: 600; font-variant-numeric: tabular-nums; }
 .energy-monitor .energy-history-title { font-family: serif; font-size: 24px; }
 
 .energy-monitor .energy-empty-slot { padding: 8px 6px; }
 
 .energy-monitor .energy-timestamp { font-size: 9px; }
+.energy-monitor .energy-hero .energy-caption { font-size: 9px; }

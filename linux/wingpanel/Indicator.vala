@@ -16,8 +16,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
         power = new Gtk.Label ("");
         display_box.append (power);
         display_box.tooltip_text = "Energy Monitor";
-        menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) {
-            margin_top = 5, margin_bottom = 4, margin_start = 6, margin_end = 6,
+        menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 3) {
+            margin_top = 3, margin_bottom = 3, margin_start = 6, margin_end = 6,
             width_request = 390
         };
         menu.add_css_class ("energy-monitor");
@@ -27,13 +27,17 @@ public class EnergyIndicator : Wingpanel.Indicator {
         load_theme ();
         Gtk.Settings.get_default ().notify["gtk-application-prefer-dark-theme"].connect (() => { load_theme (); });
         Gtk.Settings.get_default ().notify["gtk-theme-name"].connect (() => { load_theme (); });
-        var title = new Gtk.Label ("Energy Monitor") { xalign = 0 };
+        var title = new Gtk.Label ("Energy Monitor") { xalign = 0, hexpand = true };
         title.add_css_class ("energy-title");
-        status = new Gtk.Label ("Waiting for collector connection") { xalign = 0, wrap = true };
+        status = new Gtk.Label ("Waiting for collector connection") {
+            xalign = 1, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 30
+        };
         status.add_css_class ("energy-muted");
         status.add_css_class ("energy-timestamp");
-        menu.append (title);
-        menu.append (status);
+        var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+        header.append (title);
+        header.append (status);
+        menu.append (header);
         readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
         var scroll = new Gtk.ScrolledWindow () {
             child = readings, hscrollbar_policy = Gtk.PolicyType.NEVER,
@@ -111,13 +115,22 @@ public class EnergyIndicator : Wingpanel.Indicator {
             if (separator >= 0 && stamp.length >= separator + 6) stamp = stamp.substring (separator + 1, 5);
             status.tooltip_text = string_member (root, "last_reading", "No recorded reading");
             status.label = live ? "Live · Updated " + stamp :
-                string_member (root, "connection", "Collector unavailable") + "\n" + string_member (root, "last_reading", "No cached readings");
+                string_member (root, "connection", "Collector unavailable") + " · " + string_member (root, "last_reading", "No cached readings");
             if (!live && status.label.has_prefix ("Connected")) status.label = "Collector readings are stale";
             while (readings.get_first_child () != null) readings.remove (readings.get_first_child ());
-            var hero = (Gtk.Box) metric_card ("MINUTE-AVERAGE POWER", live ? metric (root, "current_watts", "%.0f W") : "—", true);
+            var hero = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10) { hexpand = true };
+            hero.add_css_class ("energy-hero");
+            var number = new Gtk.Label (live ? metric (root, "current_watts", "%.0f W") : "—") { xalign = 0 };
+            number.add_css_class ("energy-value");
+            hero.append (number);
+            var side = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { valign = Gtk.Align.CENTER, hexpand = true };
+            var hero_caption = new Gtk.Label ("MINUTE-AVERAGE POWER") { xalign = 0 };
+            hero_caption.add_css_class ("energy-caption");
+            side.append (hero_caption);
             var cost = new Gtk.Label (live ? metric (root, "cost_per_hour", "$%.3f / hour") : "Live readings unavailable") { xalign = 0 };
             cost.add_css_class ("energy-caption");
-            hero.append (cost);
+            side.append (cost);
+            hero.append (side);
             readings.append (hero);
             var grid = new Gtk.Grid () { column_spacing = 6, row_spacing = 6, column_homogeneous = true };
             grid.attach (metric_card ("RECORDED · 24 HOURS", metric (root, "recorded_kwh", "%.2f kWh")), 0, 0);
@@ -125,7 +138,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
             grid.attach (metric_card ("RECORDED MONTH COST", metric (root, "month_cost", "$%.2f")), 0, 1, 2);
             readings.append (grid);
             if (root.has_member ("breaker_slots")) {
-                var section = new Gtk.Label ("CIRCUITS") { xalign = 0, margin_top = 8, margin_bottom = 2 };
+                var section = new Gtk.Label ("CIRCUITS") { xalign = 0, margin_top = 5, margin_bottom = 1 };
                 section.add_css_class ("energy-section");
                 readings.append (section);
                 var slots = root.get_array_member ("breaker_slots");
