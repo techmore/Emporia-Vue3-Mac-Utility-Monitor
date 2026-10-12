@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.43 - 2026-10-12
+
+- Add opt-in trusted-proxy support for one explicitly configured HTTPS public
+  origin. Flask remains loopback-only; local-only behavior remains the default.
+- Preserve strict same-origin mutation checks behind the proxy and reject
+  untrusted hosts, insecure forwarded schemes, and malformed public origins.
+- Public deployment still requires an authenticated reverse proxy and a
+  separate allowlisted OAuth session; the application does not expose itself.
+
 ## 2.3.42 - 2026-10-09
 
 - Choose strongly separated initial history colors rather than hashing two
