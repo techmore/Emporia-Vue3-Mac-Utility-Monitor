@@ -17,7 +17,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         display_box.append (power);
         display_box.tooltip_text = "Energy Monitor";
         menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) {
-            margin_top = 12, margin_bottom = 6, margin_start = 12, margin_end = 12,
+            margin_top = 5, margin_bottom = 4, margin_start = 6, margin_end = 6,
             width_request = 390
         };
         menu.add_css_class ("energy-monitor");
@@ -106,7 +106,11 @@ public class EnergyIndicator : Wingpanel.Indicator {
             if (previous == fingerprint) return;
             previous = fingerprint;
             power.label = live ? metric (root, "current_watts", "%.0f W") : "";
-            status.label = live ? "Live · " + string_member (root, "last_reading") :
+            string stamp = string_member (root, "last_reading");
+            int separator = stamp.index_of ("T");
+            if (separator >= 0 && stamp.length >= separator + 6) stamp = stamp.substring (separator + 1, 5);
+            status.tooltip_text = string_member (root, "last_reading", "No recorded reading");
+            status.label = live ? "Live · Updated " + stamp :
                 string_member (root, "connection", "Collector unavailable") + "\n" + string_member (root, "last_reading", "No cached readings");
             if (!live && status.label.has_prefix ("Connected")) status.label = "Collector readings are stale";
             while (readings.get_first_child () != null) readings.remove (readings.get_first_child ());
