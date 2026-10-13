@@ -68,3 +68,6 @@ panel-photos/
 mitsubishi-private.json
 mitsubishi-status.json
 mitsubishi-module.lock
+
+# Raw Emporia data exports contain household usage data; never commit them.
+data-export-*/
