@@ -9,6 +9,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import climate
+import device_history
 import energy
 import kasa_history
 import kasa_monitor
@@ -65,6 +66,19 @@ def register_extensions(app, render, common) -> None:
         except Exception:
             app.logger.warning('Comfort module request failed')
             return jsonify({'error': 'module_unavailable'}), 502
+
+    @blueprint.get('/api/<kind>/history')
+    def device_comparison_history(kind):
+        if kind not in ('kasa', 'mitsubishi'):
+            return jsonify({'error': 'History module not found'}), 404
+        if (set(request.args) - {'window', 'end'} or any(
+                len(request.args.getlist(key)) > 1 for key in request.args)):
+            return jsonify({'error': 'Use one window and optional timezone-aware end'}), 400
+        try:
+            return jsonify(device_history.get_history(
+                kind, request.args.get('window', '24h'), request.args.get('end')))
+        except (ValueError, TypeError, OverflowError):
+            return jsonify({'error': 'Invalid history window or end timestamp'}), 400
 
     @blueprint.get('/kasa')
     def kasa_page():

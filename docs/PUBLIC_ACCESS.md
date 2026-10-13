@@ -1,16 +1,26 @@
 # Public HTTPS deployment gates
 
-## Verified state (2026-10-08)
+## Verified state (2026-10-12)
 
 SER8's Incus instance serves the reviewed collector on guest loopback port 5051,
 reached privately through host loopback 15033. The collector continues
 independently of the Mac SSH tunnel. The energy.stoverparc.org HTTPS probe
-failed its TLS handshake, and the active Caddyfile has no route for this host.
-The Caddyfile is root-owned; the collector SSH user has no passwordless sudo.
+still fails its TLS handshake, although DNS resolves to the same public address
+as the existing site. The active Caddy configuration has no route for this
+hostname. It is root-owned, and the collector SSH user has no passwordless
+sudo. The public service is therefore not deployed or reachable yet. The
+desktop currently has private LAN access; that is not an offsite solution.
 
 Creating DNS alone does not install a proxy route or issue a certificate.
 Do not publish the backend without authentication: its dashboard is not an
 authenticated public application, and includes settings and device controls.
+
+Release 2.3.43 adds application-side support for a single explicitly configured
+HTTPS origin through one trusted reverse-proxy hop. This is opt-in using
+`ENERGY_PUBLIC_ORIGIN=https://energy.stoverparc.org`; with the variable unset,
+the local-only host policy is unchanged. The Flask listener remains on
+`127.0.0.1`. This setting is not authentication and must not be enabled until
+the proxy protects the complete dashboard and all browser APIs.
 
 ## Required implementation
 
@@ -18,13 +28,15 @@ authenticated public application, and includes settings and device controls.
    issuance for energy.stoverparc.org without changing other hosted sites.
 2. Configure an identity-provider-backed access gateway with an explicit user
    allowlist. Protect every dashboard route, not just the landing page.
-3. Add an opt-in trusted-proxy configuration to the application. Currently
-   web.validate_local_request rejects non-loopback Host values. Preserve this
-   default and test HTTPS same-origin writes before permitting the public host.
-   Never blindly rewrite Host or Origin to bypass these checks.
-4. Design separate revocable machine authentication for desktop sync. An OAuth
+3. Set `ENERGY_PUBLIC_ORIGIN` only in the dashboard service's private
+   environment file after the authenticated proxy is installed. The app trusts
+   exactly one forwarded host and scheme; ensure only the local Caddy proxy can
+   reach the loopback upstream. Do not set this on a directly exposed listener.
+   HTTPS same-origin writes remain required; arbitrary hosts and HTTP are
+   rejected.
+4. Keep separate revocable machine authentication for desktop sync. An OAuth
    browser cookie must not be required for unattended sync. Existing sync bearer
-   authorization must remain enforced; do not strip or replace that header.
+   authorization must remain enforced; the proxy must preserve `Authorization`.
 5. Keep Flask bound to 127.0.0.1. Keep credentials and private keys out of Git,
    proxy access logs, and deployment output. Disable public device-control
    endpoints until authorization and CSRF protection are verified.
@@ -41,7 +53,18 @@ authenticated public application, and includes settings and device controls.
 - Reconnection catches up without duplicate readings or fabricated live values.
 - Proxy reload does not interrupt other hosted services.
 
-Until these gates pass, retain the existing private SSH connection and cached
-history. Public deployment is not complete. The private SSH tunnel watchdog
-is installed and verified; see CONNECTION_RECOVERY.md. Its transport recovery
-does not provide public authentication or establish fresh sensor measurements.
+The history and radon sync routes may bypass browser login only at the proxy
+because the application independently requires the existing
+`ENERGY_SYNC_TOKEN`. No other path may bypass login. Keep sync tokens out of URLs
+and logs.
+
+Add `https://energy.stoverparc.org/oauth2/callback` to the Google OAuth client
+used by a dedicated energy OAuth proxy. Do not reuse a host-only cookie from a
+different subdomain, broaden the allowed account list, or put OAuth client
+secrets in this repository. Verify OAuth callback and denial flows in a normal
+browser before changing the desktop collector origin to
+`https://energy.stoverparc.org`.
+
+Until all gates pass from an offsite network, retain the working private path
+and cached history. Public deployment is not complete; the private tunnel does
+not provide public authentication or establish fresh sensor measurements.

@@ -257,6 +257,42 @@
   energy must not be presented as minute-average watts. UTC time-label tests do
   not establish power accuracy; this remains a release/cutover gate.
 
+## 2.3.43 - 2026-10-12
+
+- Add opt-in trusted-proxy support for one explicitly configured HTTPS public
+  origin. Flask remains loopback-only; local-only behavior remains the default.
+- Preserve strict same-origin mutation checks behind the proxy and reject
+  untrusted hosts, insecure forwarded schemes, and malformed public origins.
+- Public deployment still requires an authenticated reverse proxy and a
+  separate allowlisted OAuth session; the application does not expose itself.
+
+## 2.3.42 - 2026-10-09
+
+- Choose strongly separated initial history colors rather than hashing two
+  HVAC units into similar blue hues. Add distinct dashed trace patterns so
+  exact overlaps reveal underlying series; legend selection still isolates units.
+
+## 2.3.41 - 2026-10-09
+
+- Add Kasa and Mitsubishi comparison histories for 4 hours, 24 hours, 7, 14 and
+  30 days, with colored device overlays, selectable metrics, prior windows,
+  accessible tables and CSV exports. Aggregate in SQLite into bounded buckets.
+- Show Comfort temperatures in Fahrenheit by default, heating/cooling setpoints,
+  mode history and vendor schedule/adapter diagnostics from verified API fields.
+- Distinguish missing data from zero; estimate enabled time only across adjacent
+  successful observations within three minutes. Do not infer HVAC power or
+  compressor runtime, or invent historical observations before collection began.
+
+## 2.3.40 - 2026-10-09
+
+- Add a private systemd update-check timer for Linux collectors. Compare the
+  deployed HTTP version against both stable GitHub releases and immutable merged
+  main source, so an older published release does not hide newer source updates.
+- Persist bounded, read-only check results and explicit failed/partial states;
+  run twice daily with missed-check recovery after restart. Updates are reported
+  without changing application code or collector data automatically.
+- Install and verify the checker in SER8's existing energy-monitor container.
+
 ## 2.3.39 - 2026-10-08
 
 - Retire the unproven startup divide-by-60 correction; preserve historical values

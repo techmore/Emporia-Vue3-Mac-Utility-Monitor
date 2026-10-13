@@ -26,6 +26,7 @@ from flask import (
     stream_with_context,
 )
 from jinja2 import select_autoescape
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import energy
@@ -46,24 +47,47 @@ app.jinja_env.autoescape = select_autoescape(
 FLASK_HOST = "127.0.0.1"
 FLASK_PORT = int(os.environ.get("FLASK_PORT", "5051"))
 
+
+def _public_origin_from_environment() -> str | None:
+    """Return one explicitly trusted HTTPS origin; never infer it from a request."""
+    configured = os.environ.get("ENERGY_PUBLIC_ORIGIN", "").strip()
+    if not configured:
+        return None
+    parsed = urlsplit(configured)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        raise ValueError("ENERGY_PUBLIC_ORIGIN must be an HTTPS origin without a path")
+    if parsed.port not in (None, 443):
+        raise ValueError("ENERGY_PUBLIC_ORIGIN must use the standard HTTPS port")
+    return f"https://{parsed.hostname.lower()}"
+
+
+PUBLIC_ORIGIN = _public_origin_from_environment()
+if PUBLIC_ORIGIN:
+    # The service remains loopback-only; trust exactly one reverse-proxy hop.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=0, x_proto=1, x_host=1, x_port=0, x_prefix=0)
+
 VERSION = Path(__file__).with_name("VERSION").read_text().strip()
 _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_gid": None, "common": None, "context": None, "built_at": 0}
 
 
 @app.before_request
 def validate_local_request():
-    """Keep the local service local, and reject cross-origin mutation requests."""
+    """Keep local-only by default; optionally accept one trusted HTTPS proxy origin."""
     if request.path == '/api/panel-photos' and request.method == 'POST':
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
     if request.path.startswith(('/api/kasa/', '/api/mitsubishi')):
         request.max_content_length = 8192
     if request.path == '/api/aqara/local/label':
         request.max_content_length = 8192
-    if urlsplit(request.host_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
+    request_origin = request.host_url.rstrip("/")
+    local_host = urlsplit(request_origin).hostname in {"localhost", "127.0.0.1", "::1"}
+    public_host = bool(PUBLIC_ORIGIN and request_origin == PUBLIC_ORIGIN)
+    if not local_host and not public_host:
         return jsonify({"error": "Local host required"}), 403
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         origin = request.headers.get("Origin")
-        if (origin and origin.rstrip("/") != request.host_url.rstrip("/")) or request.headers.get("Sec-Fetch-Site") == "cross-site":
+        if (origin and origin.rstrip("/") != request_origin) or request.headers.get("Sec-Fetch-Site") == "cross-site":
             return jsonify({"error": "Same-origin request required"}), 403
         if request.path not in {"/api/import-csv", "/api/panel-photos"}:
             if not request.is_json:
@@ -190,7 +214,42 @@ BASE_CSS = """
   --amber:      #b07d2a;
   --chart1:     var(--olive-600);
   --chart2:     #5ba4b5;
+  --history-color-1: #345f93;
+  --history-color-2: #ad4738;
+  --history-color-3: #287c78;
+  --history-color-4: #9b6a18;
+  --history-color-5: #647a30;
+  --history-color-6: #98506c;
+  --history-color-7: #3f839f;
+  --history-color-8: #b45d23;
+  --history-color-9: #376a43;
+  --history-color-10: #76634c;
+  --history-color-11: #b23758;
+  --history-color-12: #425397;
+  --history-color-13: #7d7930;
+  --history-color-14: #24657d;
+  --history-color-15: #8d483d;
+  --history-color-16: #555e65;
 }
+
+.history-comparison { margin-top:16px; }
+.history-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin:12px 0; }
+.history-toolbar label { display:grid; gap:4px; font-size:.75rem; }
+.history-toolbar select,.history-toolbar input { max-width:210px; }
+.history-legend { display:flex; flex-wrap:wrap; gap:8px 16px; margin:12px 0; }
+.history-legend-item { display:flex; align-items:center; gap:6px; font-size:.8rem; cursor:pointer; }
+.history-legend-item input { width:auto; }
+.history-swatch { display:inline-block; width:22px; height:4px; border-radius:2px; }
+.history-plot svg { display:block; width:100%; min-height:180px; }
+.history-summaries { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.history-device-summary { padding:12px; background:var(--surface2); border-top:3px solid var(--accent); border-radius:6px; }
+.history-summary-value { font-size:1.2rem; font-weight:600; }
+.history-data { margin-top:12px; }
+.history-table-scroll { overflow:auto; max-height:360px; }
+.comfort-card-main { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.comfort-temperature { font-size:2rem; font-weight:600; font-variant-numeric:tabular-nums; }
+.comfort-details { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+@media(max-width:600px) { .history-toolbar>* { flex:1 1 40%; } .history-summaries { grid-template-columns:1fr; } }
 
 html { scroll-behavior: smooth; }
 

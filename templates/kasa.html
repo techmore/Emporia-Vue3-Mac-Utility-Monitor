@@ -32,6 +32,7 @@
   </div></section>
   {% else %}<div class="card">No devices registered yet.</div>{% endfor %}
 
+  {% with history_kind='kasa', history_title='Device history & comparisons' %}{% include 'device_history.html' %}{% endwith %}
 </div>
 <script>
 (() => {

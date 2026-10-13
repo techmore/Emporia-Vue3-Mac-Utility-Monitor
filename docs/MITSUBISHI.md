@@ -1,8 +1,8 @@
 # Optional Mitsubishi Comfort Module
 
 Issue #64. Supports read-only Comfort v3 cloud discovery and snapshots. The
-PAC-USWHS002-WF-2 uses Comfort, but this application's access has not yet been
-verified with the owner's account. Protocol is community-documented, not a
+PAC-USWHS002-WF-2 uses Comfort. Read-only access has been verified on SER8
+with the owner's account and its Upstairs and Downstairs zones. Protocol is community-documented, not a
 vendor-supported public API. No new dependency is introduced.
 
 ## Add and Remove
@@ -70,3 +70,17 @@ Sources: [Comfort v3 protocol](https://github.com/dlarrick/pykumo/blob/master/Cl
    a working saved connection.
 
 Fixture tests cover these boundaries but do not establish physical telemetry.
+
+## Comparison History
+
+The HVAC page overlays units in distinct colors for 4 hours, 24 hours, 7, 14
+or 30 days. Select room temperature, heating/cooling setpoint, humidity or
+enabled state; temperatures default to Fahrenheit. Move to prior windows or
+choose an ending time. Toggle units in the legend and export selected data to CSV.
+
+Buckets are averages of recorded cloud queries, not physical measurement times.
+Missing buckets break lines. Enabled-time estimates cover only successive valid
+queries at most three minutes apart and do not establish compressor runtime.
+Diagnostics show available vendor schedule, hold, sensor and update metadata;
+unsupported fan/vane/outdoor readings are not fabricated. Earlier snapshots may
+lack new metadata. Historical periods grow from the retained observations.

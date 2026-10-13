@@ -137,3 +137,18 @@ single-device read-only probe also returned an HS220's OFF state on October 8.
 This establishes network communication, not successful physical control. Before
 closing issue #66, approve one noncritical light, verify its actual operation and
 restore the initial state. Restart/reboot and off-network control remain separate gates.
+
+## Long-Term Comparisons
+
+The Kasa page overlays recorded devices for 4 hours, 24 hours, 7, 14 or 30 days.
+Each device has a distinct legend color (up to 16 registered devices); toggles
+allow focused comparisons. Select observed ON percentage, dimmer setting or
+query latency, browse previous windows and export selected buckets to CSV.
+The existing collector continues recording at its configured interval; SER8
+uses ten seconds. Retention is controlled by DB_RETENTION_DAYS (365 by default).
+
+ON percentage is the fraction of successful observations reporting ON, not
+energy consumption. Estimated ON hours only bridge successful adjacent queries
+within three minutes. Failed queries and longer gaps are uncovered; blank periods
+do not mean OFF. Dimmer setting is not measured brightness or power. Tables and
+charts summarize bounded buckets; no unrecorded days or weeks are invented.
