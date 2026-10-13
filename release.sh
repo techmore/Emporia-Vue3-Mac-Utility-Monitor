@@ -33,7 +33,7 @@ for name in .gitignore README.md CHANGELOG.md COLLECTOR_CLIENT.md LICENSE AGENTS
   csv_projection.py completed_history.py history_collection.py device_identity.py identity_reconciliation.py verified_snapshot.py emporia_history.py runtime_store.py panel_model.py timestamp_model.py energy_clock.py utc_migration.py climate.py extensions.py climate_collect.py sync_history.py radon.py ecosense.py ecosense_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_trends.py aqara_matter_collect.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py device_history.py; do
   cp "$SCRIPT_DIR/$name" "$STAGE/"
 done
-for name in setup tests scripts docs templates static; do
+for name in setup tests scripts docs templates static linux; do
   cp -R "$SCRIPT_DIR/$name" "$STAGE/"
 done
 cp -R "$APP_DIR/Sources" "$APP_DIR/Resources" "$APP_DIR/project.yml" "$BUNDLE" "$STAGE/EnergyMonitorApp/"
