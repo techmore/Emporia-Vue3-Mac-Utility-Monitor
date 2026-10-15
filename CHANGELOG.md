@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.47 - 2026-10-15
+
+- Allow Home 3D selectors to shrink within their labels, fixing horizontal
+  overflow when the visual editor is expanded on narrow mobile screens.
+
 ## 2.3.46 - 2026-10-15
 
 - Place recorded Aqara, climate and EcoQube sensors in the visual floor plan;

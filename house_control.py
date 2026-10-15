@@ -350,6 +350,7 @@ HOUSE_CONTROL_CSS = """
 .home3d button {cursor:pointer;}
 .home3d button:disabled {opacity:.5;cursor:default;}
 .home3d label {display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:.85rem;}
+.home3d label select {min-width:0;flex:1;}
 .home3d-toolbar {justify-content:flex-start;margin:14px 0;}
 .home3d-layout {display:grid;grid-template-columns:minmax(0,2fr) minmax(230px,1fr);gap:14px;}
 .home3d-stage {height:480px;position:relative;overflow:hidden;padding:0;}
