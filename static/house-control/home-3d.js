@@ -12906,7 +12906,7 @@ function Ku() {
 	t.replaceChildren(), Q("mains-section").hidden = !$.mains?.length;
 	for (let e of $.mains || []) {
 		let n = Gu("article", "", "home3d-sensor");
-		n.append(Gu("strong", e.name), Gu("span", Mu(e.watts, "watts")), Gu("small", `${Mu(e.kwh_24h, "kwh_24h")} · ${Mu(e.cost_24h, "cost_24h")} recorded / 24h`), Gu("small", `Measured: ${e.timestamp}${e.watts == null ? " · live power unavailable" : ""}`), Gu("small", e.source || "SER8 recorded data")), t.append(n);
+		n.append(Gu("strong", e.name), Gu("span", Mu(e.watts, "watts")), Gu("small", `${Mu(e.kwh_24h, "kwh_24h")} · ${Mu(e.cost_24h, "cost_24h")} recorded / 24h`), Gu("small", `Measured: ${e.timestamp}${e.watts == null ? " · live power unavailable" : ""}`), Gu("small", e.source || "SER8 recorded data")), e.observed_minutes != null && n.append(Gu("small", `Coverage: ${e.observed_minutes}/${e.expected_minutes} minutes · ${e.complete ? "complete 24 hours" : "partial recorded total"}`)), t.append(n);
 	}
 	let n = Q("rooms");
 	n.replaceChildren();

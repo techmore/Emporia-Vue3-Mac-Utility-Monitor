@@ -60,6 +60,8 @@ function renderState() {
       node('small',`${format(row.kwh_24h,'kwh_24h')} · ${format(row.cost_24h,'cost_24h')} recorded / 24h`),
       node('small',`Measured: ${row.timestamp}${row.watts==null?' · live power unavailable':''}`),
       node('small',row.source || 'SER8 recorded data'));
+    if(row.observed_minutes!=null) card.append(node('small',
+      `Coverage: ${row.observed_minutes}/${row.expected_minutes} minutes · ${row.complete?'complete 24 hours':'partial recorded total'}`));
     mains.append(card);
   }
   const container = $('rooms');

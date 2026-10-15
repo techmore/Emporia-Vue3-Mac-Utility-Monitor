@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import energy
 import preview_mains as mains
 
 
@@ -18,10 +19,17 @@ class PreviewMainsTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        database = patch.object(energy, 'DB_PATH', str(self.root / 'energy.db'))
+        database.start()
+        self.addCleanup(database.stop)
+        energy.ensure_table()
         self.snapshot = {'device_gid': '551741', 'captured_at': datetime.now(timezone.utc).isoformat(),
                          'rows': [{'channel_name': name, 'usage_kwh': value,
                                    'timestamp': datetime.now(timezone.utc).isoformat(), 'age_seconds': 60}
                                   for name, value in (('Main', .008), ('Mains_A', .003), ('Mains_B', .005))]}
+        stamp = (datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)).isoformat()
+        self.snapshot.update(intervals=[{'channel_name': row['channel_name'], 'usage_kwh': row['usage_kwh'],
+                                         'timestamp': stamp} for row in self.snapshot['rows']], rate_cents=22.58)
         self.command = ['ssh', '-T', 'host', 'incus exec energy-monitor -- python3 -']
 
     def test_auth_stays_remote_and_phase_fetch_is_throttled(self):
@@ -33,7 +41,7 @@ class PreviewMainsTests(unittest.TestCase):
         self.assertIn('/opt/existing/venv/bin/python3', run.call_args.args[0][-1])
         script = run.call_args.kwargs['input']
         self.assertIn('token_storage_file=None', script)
-        self.assertIn("'channel':channel", script)
+        self.assertIn("'channel': channel", script)
         self.assertNotIn('write_text', script)
         self.assertNotIn('sqlite3', script)
         self.assertEqual((self.root / 'mains-cache.json').stat().st_mode & 0o777, 0o600)
@@ -71,7 +79,7 @@ class PreviewMainsTests(unittest.TestCase):
 
     def test_remote_program_validates_measurement_units_and_cadence(self):
         compile(mains.REMOTE_SCRIPT, '<remote-mains>', 'exec')
-        self.assertIn("'scale':'1MIN','energyUnit':'KilowattHours'", mains.REMOTE_SCRIPT)
+        self.assertIn("'scale': '1MIN', 'energyUnit': 'KilowattHours'", mains.REMOTE_SCRIPT)
         self.assertIn("data['firstUsageInstant']", mains.REMOTE_SCRIPT)
         self.assertIn("get('has_data')", mains.REMOTE_SCRIPT)
 
@@ -89,7 +97,7 @@ class PreviewMainsTests(unittest.TestCase):
                 data = {'devices': [{'device_gid': 551741, 'channels': channels}]}
             else:
                 calls.append(params)
-                data = {'firstUsageInstant': '2026-10-15T14:32:00Z',
+                data = {'firstUsageInstant': params['start'],
                         'usageList': [0.003084773050110197, 0.0029958173073662653, 0.003000787438286675]}
             return SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
 
@@ -102,7 +110,7 @@ class PreviewMainsTests(unittest.TestCase):
         snapshot = mains.validate(json.loads(output.getvalue()), '551741')
         self.assertEqual([p['channel'] for p in calls], ['Mains', 'Mains_A', 'Mains_B'])
         self.assertTrue(all(p['scale'] == '1MIN' and p['energyUnit'] == 'KilowattHours' for p in calls))
-        self.assertEqual(snapshot['rows'][1]['timestamp'], '2026-10-15T14:34:00+00:00')
+        self.assertEqual(snapshot['rows'][1]['timestamp'], calls[1]['end'])
         self.assertEqual(snapshot['rows'][1]['usage_kwh'], 0.003000787438286675)
         self.assertIsNone(login[0]['token_storage_file'])
         self.assertNotIn('remote-only', output.getvalue())

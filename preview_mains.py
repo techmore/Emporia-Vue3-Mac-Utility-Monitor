@@ -4,50 +4,33 @@ import math
 import re
 import shlex
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from runtime_store import write_private_json
 
 # Executed through the existing collector virtualenv; never stored on SER8.
 # Tokens stay in remote process memory. No token-storage callback/file is set.
-REMOTE_SCRIPT = r'''
-import json,requests
-from datetime import datetime,timedelta,timezone
+REMOTE_SCRIPT = Path(__file__).with_name('emporia_mains.py').read_text() + r'''
+import json
 from pathlib import Path
 from pyemvue import PyEmVue
 keys=json.loads(Path('/var/lib/energy-monitor/collector/keys.json').read_text())
 vue=PyEmVue()
 vue.login(id_token=keys['id_token'],access_token=keys['access_token'],
  refresh_token=keys['refresh_token'],token_storage_file=None)
-headers={'Authorization':vue.auth.tokens['id_token']}
-base='https://api.emporiaenergy.com'
-def get(path,params=None):
- r=requests.get(base+path,headers=headers,params=params,timeout=(5,10))
- r.raise_for_status()
- return r.json()
-device=next(d for d in get('/v1/customers/devices')['devices'] if str(d['device_gid'])==GID)
-channels={c['channel_id']:c for c in device['channels']}
-end=datetime.now(timezone.utc).replace(second=0,microsecond=0)-timedelta(minutes=1)
-rows=[]
-for channel in ('Mains','Mains_A','Mains_B','Mains_C'):
- if not channels.get(channel,{}).get('has_data'):continue
- data=get('/v1/migrated/app-api/chart-usage',{
-  'deviceGid':GID,'channel':channel,'start':(end-timedelta(minutes=2)).isoformat(),
-  'end':end.isoformat(),'scale':'1MIN','energyUnit':'KilowattHours'})
- values=data['usageList']
- if not isinstance(values,list) or len(values)>4:raise ValueError('Invalid chart window')
- if not values:continue
- stamp=datetime.fromisoformat(data['firstUsageInstant'].replace('Z','+00:00'))+timedelta(minutes=len(values)-1)
- rows.append({'channel_name':'Main' if channel=='Mains' else channel,
-  'usage_kwh':values[-1],'timestamp':stamp.isoformat(),
-  'age_seconds':(datetime.now(timezone.utc)-stamp).total_seconds()})
-print(json.dumps({'device_gid':GID,'captured_at':datetime.now(timezone.utc).isoformat(),
- 'rows':rows},allow_nan=False))
+end=utc(END) if 'END' in globals() else datetime.now(timezone.utc).replace(second=0,microsecond=0)-timedelta(minutes=1)
+start=utc(START) if 'START' in globals() else end-timedelta(minutes=2)
+snapshot=collect(vue,GID,start,end)
+settings=json.loads(Path('/var/lib/energy-monitor/collector/settings.json').read_text())
+snapshot['rate_cents']=float(settings.get('rate_cents',11.04))
+print(json.dumps(snapshot,allow_nan=False))
 '''
 
 
 def validate(snapshot: dict, gid: str) -> dict:
-    if not isinstance(snapshot, dict) or set(snapshot) != {'device_gid', 'captured_at', 'rows'}:
+    if not isinstance(snapshot, dict) or set(snapshot) not in ({'device_gid', 'captured_at', 'rows'},
+            {'device_gid', 'captured_at', 'rows', 'intervals', 'rate_cents'}):
         raise ValueError('Invalid mains response')
     if snapshot['device_gid'] != gid or datetime.fromisoformat(snapshot['captured_at']).tzinfo is None:
         raise ValueError('Invalid mains panel/time')
@@ -81,7 +64,8 @@ def refresh(root, command: list[str], remote_python: str, gid: str) -> None:
     try:
         previous = json.loads(path.read_text())
         age = (now - datetime.fromisoformat(previous['attempted_at'])).total_seconds()
-        if previous.get('device_gid') == gid and 0 <= age < 60:
+        if (previous.get('device_gid') == gid and 0 <= age < 60
+                and (previous.get('history_logged') or not previous.get('ok'))):
             return
     except (OSError, ValueError, TypeError, KeyError):
         previous = {}
@@ -90,12 +74,21 @@ def refresh(root, command: list[str], remote_python: str, gid: str) -> None:
         # Replace only the interpreter in the already validated incus command.
         remote = shlex.split(command[-1])
         remote[-2] = remote_python
+        import energy
+        end = now.replace(second=0, microsecond=0) - timedelta(minutes=1)
+        start = energy.mains_history_start(gid, end)
         result = subprocess.run(command[:-1] + [shlex.join(remote)],
-                                input='GID=' + repr(gid) + '\n' + REMOTE_SCRIPT,
+                                input='GID=' + repr(gid) + '\nSTART=' + repr(start.isoformat()) +
+                                '\nEND=' + repr(end.isoformat()) + '\n' + REMOTE_SCRIPT,
                                 capture_output=True, text=True, timeout=70, check=True)
-        if len(result.stdout) > 65536:
+        if len(result.stdout) > 2 * 1024 * 1024:
             raise ValueError('Mains response too large')
-        cache.update(validate(json.loads(result.stdout), gid), ok=True)
+        snapshot = validate(json.loads(result.stdout), gid)
+        if 'intervals' not in snapshot:
+            raise ValueError('Mains response is missing history')
+        energy.store_mains_intervals(gid, snapshot['intervals'], snapshot['rate_cents'])
+        cache.update({key: snapshot[key] for key in ('device_gid', 'captured_at', 'rows')},
+                     ok=True, history_logged=True)
     except Exception:
         # Never log stderr/token-bearing exceptions from the authentication client.
         cache['error'] = 'Cloud mains unavailable; circuit and sensor feed remains independent'

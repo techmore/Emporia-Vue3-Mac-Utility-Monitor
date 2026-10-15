@@ -24,7 +24,7 @@ for name in ('device_history.py', 'templates/device_history.html', 'static/devic
 for name in ('timestamp_model.py', 'scripts/audit_timestamps.py', 'docs/UTC_MIGRATION.md'):
     assert (root / name).is_file(), f'Missing UTC preflight file: {name}'
 assert (root / 'docs/CSV_IMPORT.md').is_file(), 'Missing CSV import/reconciliation guide'
-for name in ('house_control.py', 'preview_sensor_sync.py', 'preview_mains.py', 'scripts/run_home3d_preview.py',
+for name in ('house_control.py', 'preview_sensor_sync.py', 'preview_mains.py', 'emporia_mains.py', 'scripts/run_home3d_preview.py',
              'templates/home_3d.html', 'static/house-control/home-3d.js',
              'static/house-control/LICENSES.txt', 'docs/HOUSE_CONTROL.md'):
     assert (root / name).is_file(), f'Missing Home 3D release file: {name}'

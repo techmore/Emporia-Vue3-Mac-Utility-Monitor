@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.53 - 2026-10-15
+
+- Share bounded actual mains chart collection between the branch poller and local
+  preview; backfill up to 24 hours and overlap incremental/recovery requests.
+- Store explicit UTC minute intervals idempotently with original usage rates,
+  independently of legacy CSV/history compaction and without double-counting Main.
+- Show real rolling phase energy/cost totals with observed-minute coverage and
+  explicit partial-history labels. Never invent data for missing/null intervals.
+- Keep preview writes local and production read-only; handle phase failures without
+  rolling back branch readings. Accept current and legacy PyEmVue token-file keys.
+
 ## 2.3.52 - 2026-10-15
 
 - Make the isolated preview navigation badge follow the live SER8 feed instead of

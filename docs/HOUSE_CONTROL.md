@@ -143,7 +143,7 @@ reuses its existing trusted SSH key. It never disables host-key checking or appr
 unknown keys. This can be used with a configured Tailscale peer while a LAN address
 is unavailable; it changes only the local preview's connection target.
 
-### Actual Mains Legs (Preview Only)
+### Actual Mains Legs and Recorded History
 
 The SER8 collector's legacy usage-list request reports `Main`, branch circuits and
 `Balance`, but not individual mains legs. The modern usage-list and bulk timeseries
@@ -166,18 +166,40 @@ Use the existing collector virtualenv path for the deployed release; no remote
 installation is required. `preview_mains.py` sends a bounded read-only program via
 SSH stdin. Authentication stays in remote memory with token-file writes disabled;
 no credentials are returned, copied to the Mac, or logged. The program requests a
-two-minute chart window ending at the previous minute for Main and monitored legs,
+bounded chart window ending at the previous minute for Main and monitored legs,
 at most once per minute. Values use the chart's actual first interval timestamp
 and sample index, never the fetch time. Zero remains zero; null/stale stays unknown.
-The Mac stores only a private `mains-cache.json`, independently of the DB feed and
-local geometry/placements. Cloud failure cannot overwrite sensor/circuit caches.
+The Mac stores a private latest-value `mains-cache.json` plus real UTC minute
+intervals in its isolated `energy.db`, independently of the DB feed and local
+geometry/placements. Cloud failure cannot overwrite sensor/circuit caches.
 
 Main and legs use the same chart window; no equal splitting or inferred branch
 assignment is used. Watts are one-minute average estimates, not instantaneous
-measurements. Phase 24-hour totals remain unavailable because this supplement does
-not fabricate or backfill missing production phase history. Source production
-files, DB, credentials, services and deployed version remain unchanged. Correcting
-the production collector requires a separate tested deployment, outside this preview.
+measurements. On first use the shared `emporia_mains.py` collector fetches at most
+1440 actual minute buckets per monitored channel (24 hours), using verified
+nonoverlapping chunks of at most 720 minutes. Later fetches overlap
+five minutes and catch up after outages, capped at 24 hours per request. Nulls are
+not stored as zero. `mains_intervals` uses UTC interval starts, explicit 60-second
+duration and a device/channel/start primary key: overlapping requests revise a
+bucket without adding energy twice. Rates are stored with first ingestion (source
+SER8 rate in the preview), so repeated requests do not silently reprice history.
+
+Rolling totals use completed intervals within UTC [now-minute - 24h, now-minute).
+Coverage is displayed as observed/1440 minutes; incomplete histories are explicitly
+partial, not projected or zero-filled. A and B are never added to Main in totals.
+Old CSV rows and legacy mixed-resolution history are not included in these totals.
+The new table is not subject to legacy hourly compaction and uses DB_RETENTION_DAYS.
+Outages longer than 24 hours require separate historical backfill; data outside the
+bounded recovery window is not invented. Earlier null gaps can remain partial.
+
+On this branch `energy.poll_and_store` also invokes the shared collector for real
+Main-bearing devices after committing branch readings. `EMPORIA_MAINS_HISTORY=0`
+disables this optional collection. Its failures do not roll back branch data;
+phase history is independently queryable with `energy.get_mains_history(gid)`.
+The legacy poller login now accepts both actual snake_case PyEmVue token files and
+older camelCase files. Source production files, DB, credentials, services and
+deployed version remain unchanged. Enabling the branch collector on SER8 still
+requires a separate tested deployment, outside this preview.
 
 Reference: [official Emporia web app](https://web.emporiaenergy.com/).
 

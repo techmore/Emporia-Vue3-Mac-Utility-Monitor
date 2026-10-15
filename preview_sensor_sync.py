@@ -215,6 +215,8 @@ def power_snapshot(now: datetime | None = None) -> dict:
             'breaker_slots': [{'channel_name': name, 'display_name': name, 'watts': watts(row)}
                               for name, row in latest.items() if name not in meta]}
     totals = {row['channel_name']: row for row in power['summary']}
+    import energy
+    history = energy.get_mains_history(power['active_device_gid'], now)
     mains = []
     for name, label in (('Main', 'Total'), ('Mains_A', 'Leg A'), ('Mains_B', 'Leg B'), ('Mains_C', 'Leg C')):
         if name not in latest or (name == 'Mains_C' and power['mains_c_no_ct'] and name not in cloud_names):
@@ -227,6 +229,8 @@ def power_snapshot(now: datetime | None = None) -> dict:
         if name in cloud_names and name != 'Main':
             # The collector has no rolling phase history; do not attach old CSV totals.
             mains[-1].update(kwh_24h=None, cost_24h=None)
+        if name in history:
+            mains[-1].update(history[name])
     return {'menu': menu, 'summary': [row for row in power['summary'] if row['channel_name'] not in meta],
             'mains': mains, 'captured_at': power['captured_at']}
 
