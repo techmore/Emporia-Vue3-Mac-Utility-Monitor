@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.52 - 2026-10-15
+
+- Make the isolated preview navigation badge follow the live SER8 feed instead of
+  the copied local history's age. Browser fetch failures also clear feed connectivity.
+  Normal production navigation and collection are unchanged.
+
 ## 2.3.51 - 2026-10-15
 
 - Diagnose stale mains legs: usage-list APIs omit individual phase channels, leaving

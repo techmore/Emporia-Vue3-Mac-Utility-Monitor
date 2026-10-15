@@ -12898,7 +12898,10 @@ function Gu(e, t, n) {
 }
 function Ku() {
 	let e = Q("metric").value;
-	Q("status").textContent = `${$.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${Mu($.current_watts, "watts")} · Last reading: ${$.last_reading || "none"}`, $.sensor_sync && (Q("status").textContent = `Local preview · SER8 feed ${$.sensor_sync.ok ? "connected" : "unavailable; retained values are stale"} · Whole home: ${Mu($.current_watts, "watts")} · Power ${$.online ? "recent" : "stale or unavailable"} · Last reading: ${$.last_reading || "none"} · Last refresh: ${$.sensor_sync.last_success || "none"}`);
+	if (Q("status").textContent = `${$.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${Mu($.current_watts, "watts")} · Last reading: ${$.last_reading || "none"}`, $.sensor_sync) {
+		let e = $.sensor_sync.ok && $.online, t = document.getElementById("nav-status-label"), n = document.getElementById("nav-status-dot");
+		t && (t.textContent = e ? "SER8 live" : "SER8 power stale or unavailable"), n && (n.className = `status-dot ${e ? "live" : "stale"}`), Q("status").textContent = `Local preview · SER8 feed ${$.sensor_sync.ok ? "connected" : "unavailable; retained values are stale"} · Whole home: ${Mu($.current_watts, "watts")} · Power ${$.online ? "recent" : "stale or unavailable"} · Last reading: ${$.last_reading || "none"} · Last refresh: ${$.sensor_sync.last_success || "none"}`;
+	}
 	let t = Q("mains");
 	t.replaceChildren(), Q("mains-section").hidden = !$.mains?.length;
 	for (let e of $.mains || []) {
@@ -12961,6 +12964,10 @@ async function Xu() {
 			...$,
 			online: !1,
 			current_watts: null,
+			sensor_sync: $.sensor_sync ? {
+				...$.sensor_sync,
+				ok: !1
+			} : void 0,
 			mains: $.mains?.map((e) => ({
 				...e,
 				watts: null

@@ -43,6 +43,11 @@ function renderState() {
   $('status').textContent = `${state.online ? 'Collector live' : 'Collector offline or readings stale'} · `
     + `Whole home: ${format(state.current_watts, 'watts')} · Last reading: ${state.last_reading || 'none'}`;
   if(state.sensor_sync) {
+    const live=state.sensor_sync.ok && state.online;
+    const label=document.getElementById('nav-status-label');
+    const dot=document.getElementById('nav-status-dot');
+    if(label) label.textContent=live?'SER8 live':'SER8 power stale or unavailable';
+    if(dot) dot.className=`status-dot ${live?'live':'stale'}`;
     $('status').textContent = `Local preview · SER8 feed ${state.sensor_sync.ok?'connected':'unavailable; retained values are stale'}`
       + ` · Whole home: ${format(state.current_watts,'watts')} · Power ${state.online?'recent':'stale or unavailable'}`
       + ` · Last reading: ${state.last_reading || 'none'} · Last refresh: ${state.sensor_sync.last_success || 'none'}`;
@@ -142,6 +147,7 @@ async function refresh() {
     if (expectedGeneration !== generation) return;
     if (state) {
       state = { ...state, online: false, current_watts: null,
+        sensor_sync: state.sensor_sync ? {...state.sensor_sync,ok:false} : undefined,
         mains: state.mains?.map(row=>({...row,watts:null})),
         sensors: state.sensors.map(row=>({...row,stale:true})),
         rooms: state.rooms.map(room => ({ ...room, watts: null, reporting_circuits: 0 })) };

@@ -181,6 +181,10 @@ the production collector requires a separate tested deployment, outside this pre
 
 Reference: [official Emporia web app](https://web.emporiaenergy.com/).
 
+In live preview mode the navigation badge follows SER8 transport and recent power,
+not the copied local historical database. Individual environmental sensors can still
+be stale independently of the power feed; their measurement timestamps remain visible.
+
 Upstream: https://github.com/0xProbabillity/house-control
 Pinned commit: `1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9` (MIT).
 Unmodified source modules and SHA-256 provenance are in
