@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument('--sensors-host', help='Read-only SSH destination for the existing SER8 collector')
     parser.add_argument('--container', default='energy-monitor')
     parser.add_argument('--host-key-alias', help='Existing trusted SSH key name for an alternate address')
+    parser.add_argument('--remote-python', help='Existing collector Python for opt-in read-only cloud mains')
     args = parser.parse_args()
     root = args.data.resolve()
     if not (root / 'energy.db').is_file() or not 1024 <= args.port <= 65535:
@@ -94,6 +95,8 @@ def main() -> None:
             ]
             if args.host_key_alias:
                 command += ['--host-key-alias', args.host_key_alias]
+            if args.remote_python:
+                command += ['--remote-python', args.remote_python]
             with open(root / 'sensor-sync.log', 'a') as log:
                 worker = subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT,
                                           stdin=subprocess.DEVNULL)

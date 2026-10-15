@@ -53,7 +53,8 @@ function renderState() {
     const card=node('article','','home3d-sensor');
     card.append(node('strong',row.name),node('span',format(row.watts,'watts')),
       node('small',`${format(row.kwh_24h,'kwh_24h')} · ${format(row.cost_24h,'cost_24h')} recorded / 24h`),
-      node('small',`Measured: ${row.timestamp}${row.watts==null?' · live power unavailable':''}`));
+      node('small',`Measured: ${row.timestamp}${row.watts==null?' · live power unavailable':''}`),
+      node('small',row.source || 'SER8 recorded data'));
     mains.append(card);
   }
   const container = $('rooms');

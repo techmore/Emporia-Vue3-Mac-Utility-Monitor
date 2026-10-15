@@ -190,3 +190,20 @@ class PreviewSensorSyncTests(unittest.TestCase):
         self.assertEqual(exported['power']['active_device_gid'], 'source-panel')
         self.assertEqual(exported['power']['summary'][0]['total_kwh'], .2)
         self.assertEqual(sync.validate_power(exported['power']), exported['power'])
+
+    def test_actual_cloud_legs_replace_imports_without_splitting_total_or_touching_plan(self):
+        self.cache_power()
+        before = self.plan.read_bytes()
+        now = datetime.now(timezone.utc)
+        cloud = [{'channel_name': name, 'usage_kwh': value, 'timestamp': now.isoformat(),
+                  'age_seconds': 60} for name, value in
+                 (('Main', .008), ('Mains_A', .003), ('Mains_B', .005))]
+        with patch('preview_mains.readings', return_value=cloud):
+            state = sync.power_snapshot(now)
+        self.assertEqual([r['watts'] for r in state['mains']], [480, 180, 300])
+        self.assertEqual(state['menu']['current_watts'], 480)
+        self.assertIsNone(state['mains'][1]['kwh_24h'])
+        self.assertEqual(self.plan.read_bytes(), before)
+        cloud[1]['age_seconds'] = 200
+        with patch('preview_mains.readings', return_value=cloud):
+            self.assertIsNone(sync.power_snapshot(now)['mains'][1]['watts'])

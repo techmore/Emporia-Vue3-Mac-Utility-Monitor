@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.3.51 - 2026-10-15
+
+- Diagnose stale mains legs: usage-list APIs omit individual phase channels, leaving
+  CSV-imported readings untouched while aggregate Main continues updating.
+- Add an opt-in, read-only phase-chart supplement to the isolated preview using
+  the existing remote virtualenv; credentials stay on SER8 with no token-file writes.
+- Display actual timestamped Main/Leg A/B one-minute averages, respect no-data C,
+  throttle requests, and reject stale/malformed/cross-panel responses. No fabricated
+  splits or rolling leg totals; production and local floor plans stay unchanged.
+
 ## 2.3.50 - 2026-10-15
 
 - Refresh live circuits, service mains and rolling 24-hour energy/cost aggregates

@@ -193,6 +193,11 @@ def power_snapshot(now: datetime | None = None) -> dict:
     age = (now - datetime.fromisoformat(power['captured_at'])).total_seconds() if power['captured_at'] else float('inf')
     connected = sync_status()['ok'] and 0 <= age <= 90
     latest = {row['channel_name']: row for row in power['latest']}
+    from preview_mains import readings
+    cloud = readings(preview_root(), power['active_device_gid'], now)
+    cloud_names = {row['channel_name'] for row in cloud}
+    for row in cloud:
+        latest[row['channel_name']] = dict(row, age_seconds=row['age_seconds'] - age)
 
     def fresh(row):
         return bool(connected and row and row['age_seconds'] is not None
@@ -212,12 +217,16 @@ def power_snapshot(now: datetime | None = None) -> dict:
     totals = {row['channel_name']: row for row in power['summary']}
     mains = []
     for name, label in (('Main', 'Total'), ('Mains_A', 'Leg A'), ('Mains_B', 'Leg B'), ('Mains_C', 'Leg C')):
-        if name not in latest or (name == 'Mains_C' and power['mains_c_no_ct']):
+        if name not in latest or (name == 'Mains_C' and power['mains_c_no_ct'] and name not in cloud_names):
             continue
         total = totals.get(name, {})
         mains.append({'channel_name': name, 'name': label, 'watts': watts(latest[name]),
                       'timestamp': latest[name]['timestamp'], 'kwh_24h': total.get('total_kwh'),
-                      'cost_24h': total['total_cents'] / 100 if total.get('total_cents') is not None else None})
+                      'cost_24h': total['total_cents'] / 100 if total.get('total_cents') is not None else None,
+                      'source': 'Emporia phase chart (1-minute average)' if name in cloud_names else 'SER8 recorded data'})
+        if name in cloud_names and name != 'Main':
+            # The collector has no rolling phase history; do not attach old CSV totals.
+            mains[-1].update(kwh_24h=None, cost_24h=None)
     return {'menu': menu, 'summary': [row for row in power['summary'] if row['channel_name'] not in meta],
             'mains': mains, 'captured_at': power['captured_at']}
 
@@ -227,7 +236,8 @@ def power_catalog() -> dict[str, set[str]]:
     return {panel['active_device_gid']: {row['channel_name'] for row in panel['breaker_slots']}}
 
 
-def refresh(host: str, container: str, host_key_alias: str | None = None) -> dict:
+def refresh(host: str, container: str, host_key_alias: str | None = None,
+            remote_python: str | None = None) -> dict:
     root = preview_root()
     if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.@-]{0,250}', host):
         raise ValueError('Invalid SSH destination')
@@ -262,6 +272,10 @@ def refresh(host: str, container: str, host_key_alias: str | None = None) -> dic
         logging.warning('Preview sensor refresh failed: %s', type(exc).__name__)
         status['error'] = 'SER8 refresh failed; last received observations retained'
     write_private_json(status_path, status)
+    if status['ok'] and remote_python:
+        from preview_mains import refresh as refresh_mains
+        power = json.loads((root / 'power-cache.json').read_text())
+        refresh_mains(root, command, remote_python, power['active_device_gid'])
     return status
 
 
@@ -279,6 +293,7 @@ def main() -> None:
     parser.add_argument('--host', required=True)
     parser.add_argument('--container', default='energy-monitor')
     parser.add_argument('--host-key-alias', help='Reuse a verified SSH host key for an alternate address')
+    parser.add_argument('--remote-python', help='Opt in to cloud phase reads using an existing remote virtualenv')
     parser.add_argument('--interval', type=int, default=30)
     parser.add_argument('--once', action='store_true')
     args = parser.parse_args()
@@ -286,7 +301,7 @@ def main() -> None:
         parser.error('Refresh interval must be at least 15 seconds')
     preview_root()
     while True:
-        status = refresh(args.host, args.container, args.host_key_alias)
+        status = refresh(args.host, args.container, args.host_key_alias, args.remote_python)
         logging.info('Preview sensor refresh: %s', 'ok' if status['ok'] else 'unavailable')
         if args.once:
             if not status['ok']:

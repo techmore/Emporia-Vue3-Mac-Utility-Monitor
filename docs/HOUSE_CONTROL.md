@@ -143,6 +143,44 @@ reuses its existing trusted SSH key. It never disables host-key checking or appr
 unknown keys. This can be used with a configured Tailscale peer while a LAN address
 is unavailable; it changes only the local preview's connection target.
 
+### Actual Mains Legs (Preview Only)
+
+The SER8 collector's legacy usage-list request reports `Main`, branch circuits and
+`Balance`, but not individual mains legs. The modern usage-list and bulk timeseries
+also omit the legs. Consequently its `Mains_A`/`Mains_B` rows can remain old CSV
+imports even while `Main` is current. This is a collection gap, not a panel CSS bug.
+
+Verified against the official Emporia web app and live panel on 2026-10-15:
+`GET /v1/customers/devices` identifies mains channels with `has_data`;
+`GET /v1/migrated/app-api/chart-usage` accepts the explicit `Mains_A`/`Mains_B`
+identifiers (not branch numbers or `A`/`B`). It requires the `Authorization` header,
+not the legacy client's `authtoken` header. `Mains_C` reports no data on this panel.
+
+To supplement the isolated preview, add this option to its existing launch command:
+
+```bash
+--remote-python /opt/energy-monitor/releases/2.3.43/venv/bin/python3
+```
+
+Use the existing collector virtualenv path for the deployed release; no remote
+installation is required. `preview_mains.py` sends a bounded read-only program via
+SSH stdin. Authentication stays in remote memory with token-file writes disabled;
+no credentials are returned, copied to the Mac, or logged. The program requests a
+two-minute chart window ending at the previous minute for Main and monitored legs,
+at most once per minute. Values use the chart's actual first interval timestamp
+and sample index, never the fetch time. Zero remains zero; null/stale stays unknown.
+The Mac stores only a private `mains-cache.json`, independently of the DB feed and
+local geometry/placements. Cloud failure cannot overwrite sensor/circuit caches.
+
+Main and legs use the same chart window; no equal splitting or inferred branch
+assignment is used. Watts are one-minute average estimates, not instantaneous
+measurements. Phase 24-hour totals remain unavailable because this supplement does
+not fabricate or backfill missing production phase history. Source production
+files, DB, credentials, services and deployed version remain unchanged. Correcting
+the production collector requires a separate tested deployment, outside this preview.
+
+Reference: [official Emporia web app](https://web.emporiaenergy.com/).
+
 Upstream: https://github.com/0xProbabillity/house-control
 Pinned commit: `1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9` (MIT).
 Unmodified source modules and SHA-256 provenance are in
