@@ -15,6 +15,7 @@ jobs:
       - name: Rebuild committed Home 3D assets
         run: |
           npm ci --ignore-scripts --prefix frontend/house-control
+          node scripts/test_home3d_editor.mjs
           npm run build --prefix frontend/house-control
           git diff --exit-code -- static/house-control
 

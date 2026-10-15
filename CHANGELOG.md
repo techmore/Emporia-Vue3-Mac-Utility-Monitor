@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.45 - 2026-10-15
+
+- Add a browser floor-plan editor with room drawing, snapped dragging, resizing,
+  furniture/opening placement, keyboard fields, and undo/redo. Saved geometry
+  updates the 3D view; drafts warn before navigation and remain local until saved.
+- Preserve circuit mappings for retained room IDs; confirm room deletion and
+  remove only mappings to deleted rooms on save. Revision checks still protect
+  concurrent edits.
+
 ## 2.3.44 - 2026-10-15
 
 - Add a Home 3D preview using pinned MIT-licensed house-control floor-plan and

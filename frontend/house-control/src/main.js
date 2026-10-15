@@ -1,4 +1,6 @@
 import { createView } from './view.js';
+import { createEditor } from './editor.js';
+import { retainRoomBindings } from './plan-edit.js';
 
 const $ = id => document.getElementById(`home3d-${id}`);
 const format = (value, metric) => value == null ? 'Unknown' : metric === 'watts'
@@ -6,6 +8,15 @@ const format = (value, metric) => value == null ? 'Unknown' : metric === 'watts'
     ? `${value.toFixed(2)} kWh` : `$${value.toFixed(2)}`;
 let config, state, view, timer, dirty = false, busy = false, needsReload = false, signature;
 let generation = 0;
+const editorRoot = document.getElementById('home3d-editor');
+const editor = createEditor(editorRoot, {
+  onSave: async plan => {
+    const ok = await save(plan, retainRoomBindings(collectBindings(), plan));
+    if (!ok) editorRoot.querySelector('[data-editor="status"]').textContent = $('save-status').textContent;
+    return ok;
+  },
+  onDirty: value => { $('save').disabled = value || needsReload || !dirty; },
+});
 
 async function api(path, options = {}) {
   const response = await fetch(`/api/house-control/${path}`, {
@@ -74,7 +85,7 @@ function renderMappings() {
     select.value = circuit.room_id || '';
     select.addEventListener('change', () => {
       dirty = true;
-      $('save').disabled = needsReload;
+      $('save').disabled = needsReload || editor.dirty;
       $('save-status').textContent = 'Unsaved room mappings';
     });
     label.append(select);
@@ -91,6 +102,7 @@ async function refresh() {
     if (expectedGeneration !== generation) return;
     if (next.revision !== config.revision || mappingSignature(next) !== signature) {
       needsReload = true;
+      editor.block(true);
       $('save').disabled = true;
       $('save-status').textContent = 'The saved plan or panel circuits changed. Reload the saved plan before editing.';
     }
@@ -123,6 +135,8 @@ async function load() {
   $('name').textContent = `${config.plan.name}${config.example ? ' · Example layout, not your measured home' : ''}`;
   $('save-status').textContent = '';
   renderMappings();
+  editor.setConfig(config);
+  editorRoot.hidden = false;
   view?.dispose(); view = null;
   $('render-error').hidden = true;
   try { view = createView($('canvas'), $('labels'), config.plan, selectRoom); }
@@ -141,13 +155,15 @@ async function save(plan, bindings) {
       body: JSON.stringify({ plan, bindings, revision: config.revision }) });
     await load();
     $('save-status').textContent = 'Saved';
+    return true;
   } catch (error) {
     $('save-status').textContent = error.message;
     $('save').disabled = needsReload || !dirty;
+    return false;
   }
 }
 
-$('save').addEventListener('click', () => {
+function collectBindings() {
   const visible = new Set(state.circuits.map(row => row.channel_name));
   const bindings = config.bindings.filter(binding => binding.device_gid !== state.active_device_gid
     || !visible.has(binding.channel_name));
@@ -155,13 +171,14 @@ $('save').addEventListener('click', () => {
     if (select.value) bindings.push({ device_gid: state.active_device_gid,
       channel_name: select.dataset.channel, room_id: select.value });
   }
-  save(config.plan, bindings);
-});
+  return bindings;
+}
+$('save').addEventListener('click', () => save(config.plan, collectBindings()));
 $('metric').addEventListener('change', () => { if (state) renderState(); });
 $('reset').addEventListener('click', () => view?.reset());
 $('refresh').addEventListener('click', refresh);
 $('reload').addEventListener('click', () => {
-  if (!dirty || confirm('Discard unsaved room mappings and reload?')) load().catch(error => { $('status').textContent = error.message; });
+  if ((!dirty && !editor.dirty) || confirm('Discard unsaved floor-plan and mapping changes and reload?')) load().catch(error => { $('status').textContent = error.message; });
 });
 $('import').addEventListener('change', async event => {
   const file = event.target.files[0];
@@ -180,6 +197,7 @@ $('export').addEventListener('click', () => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+window.addEventListener('beforeunload', event => { if (dirty || editor.dirty) { event.preventDefault(); event.returnValue = ''; } });
 window.addEventListener('pagehide', () => { clearInterval(timer); view?.dispose(); view = null; });
 window.addEventListener('pageshow', event => { if (event.persisted) start(); });
 async function start() {

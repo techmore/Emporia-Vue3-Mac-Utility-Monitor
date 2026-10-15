@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { drawnRoom, moveItem, resizeRoom, retainRoomBindings } from '../frontend/house-control/src/plan-edit.js';
+const room = drawnRoom([4,4],[1.1,1.2],'r');
+assert.deepEqual(room.rect,[1,1.25,3,2.75]);
+const plan={rooms:[room],furniture:[{pos:[1,1]}],openings:[{from:[99,0],to:[100,0]}]};
+moveItem(plan,'rooms',0,.3,-.3);
+assert.deepEqual(room.rect,[1.25,1,3,2.75]);
+resizeRoom(room,-5,100);
+assert.deepEqual(room.rect,[1.25,1,.5,50]);
+moveItem(plan,'openings',0,50,1.2);
+assert.deepEqual(plan.openings[0],{from:[99,1.25],to:[100,1.25]});
+assert.deepEqual(retainRoomBindings([{room_id:'r'},{room_id:'deleted'}],plan),[{room_id:'r'}]);
+console.log('Editor drag, resize, snapping, bounds and mapping preservation checks passed');

@@ -274,7 +274,18 @@ HOUSE_CONTROL_CSS = """
 .home3d-room[aria-pressed=true] {border-color:var(--olive-600);background:var(--olive-100);}
 .home3d-setup {padding:16px;margin-top:14px;}
 .home3d-setup summary {cursor:pointer;font-weight:600;}
+.home3d-editor-layout {display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:16px;margin:16px 0;}
+.home3d-editor-canvas {display:block;width:100%;height:400px;background:var(--surface);border:1px solid var(--border);touch-action:none;}
+.editor-room {fill:var(--olive-100);stroke:var(--olive-600);stroke-width:.06;}
+.editor-name {font-size:.32px;text-anchor:middle;dominant-baseline:middle;fill:var(--text);pointer-events:none;}
+.editor-furniture {fill:var(--stone-300);stroke:var(--text-light);stroke-width:.05;}
+.editor-opening {stroke:var(--olive-800);stroke-width:.18;}
+.editor-handle {fill:var(--olive-800);stroke:var(--surface);stroke-width:.04;cursor:nwse-resize;}
+.selected .editor-room,.selected .editor-furniture {stroke:var(--olive-950);stroke-width:.12;}
+.home3d-inspector label {margin:10px 0;}
+.home3d-inspector input {width:110px;padding:6px;background:var(--surface);color:var(--text);border:1px solid var(--border);}
+[data-editor=draw][aria-pressed=true] {background:var(--olive-200);}
 #home3d-mappings {display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:14px 0;}
 #home3d-mappings select {max-width:55%;}
-@media(max-width:760px) {.home3d-layout{grid-template-columns:1fr;}.home3d-stage{height:350px;}.home3d-toolbar label{width:100%;}.home3d-label{font-size:.65rem;max-width:130px;}}
+@media(max-width:760px) {.home3d-layout,.home3d-editor-layout{grid-template-columns:1fr;}.home3d-stage{height:350px;}.home3d-toolbar label{width:100%;}.home3d-label{font-size:.65rem;max-width:130px;}}
 """

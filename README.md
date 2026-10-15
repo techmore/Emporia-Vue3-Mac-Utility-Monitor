@@ -10,7 +10,7 @@ The optional [Home 3D preview](docs/HOUSE_CONTROL.md) integrates house-control's
 floor-plan renderer with explicit circuit-to-room mappings and recorded energy
 and usage-cost overlays. It uses the existing collector in Mac or Linux browsers.
 
-![Dashboard](https://img.shields.io/badge/version-2.3.44-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.3.45-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 

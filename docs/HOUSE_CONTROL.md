@@ -38,8 +38,22 @@ installation backups, never in Git or release artifacts.
 
 ## Integration boundary
 
+### Visual editing
+
+Expand **Edit floor plan visually**. Draw a room by dragging on the top-down
+plan, or Add room and edit its dimensions. Drag a room to move it, drag its
+corner to resize, and use the selection list/fields for keyboard access.
+Arrow keys on the focused plan move the selected item in 0.25-meter steps.
+Add furniture/openings, choose their type and position, and use Undo/Redo for
+draft changes. Openings must lie on walls to appear in 3D; they and furniture
+move independently of rooms. Save floor plan updates the 3D model and saves
+current circuit selections for retained rooms. Room IDs survive renaming and
+moving. Deleting a room requires confirmation and removes its mappings on save.
+Reload discards drafts only after confirmation. Browser navigation warns about
+unsaved edits. The geometry editor works without WebGL.
+
 This first branch implements the read-only data/visualization milestone of #148.
-It does not import house-control's native app, visual editor, vendor clients,
+It does not import house-control's native app, vendor clients,
 device commands, scenes, AI links/MCP server or Mac/iPhone sync. Existing Kasa,
 Mitsubishi, Aqara and EcoQube pages continue to operate independently. No public
 endpoint or extra authentication exemption is introduced; the existing Flask
