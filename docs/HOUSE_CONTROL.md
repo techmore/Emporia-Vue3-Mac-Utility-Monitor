@@ -89,7 +89,7 @@ host/origin policy and deployment gateway apply to all new routes.
 
 ## Upstream and rebuild
 
-### Local preview with live SER8 sensors
+### Local preview with live SER8 telemetry
 
 Use `scripts/run_home3d_preview.py` only with a copied database in a separate
 private directory. Never point it at the collector's working data directory.
@@ -113,13 +113,35 @@ Python query of `/var/lib/energy-monitor/collector/energy.db`. Other installatio
 need an explicitly adapted read-only exporter; this is not a universal discovery tool.
 
 Every 30 seconds it copies latest Aqara/Matter, climate and radon observations and
-labels in one local transaction. It preserves measurement timestamps and zero values.
-Circuit history remains a snapshot. Failed/incomplete snapshots preserve the last
+labels, plus source-panel circuit/mains readings and rolling 24-hour kWh/cost
+aggregates from one read-only source database transaction. Sensor cache writes are
+transactional; the validated power cache is atomically published separately.
+It preserves measurement timestamps and zero values. Bulk historical readings are
+not mirrored; the preview's room energy and cost overlays use refreshed source
+aggregates, never the old local history snapshot. Failed/incomplete snapshots preserve the last
 cache; the UI marks all sensors stale during a transport failure or if the worker
 has not succeeded for 90 seconds. It retries automatically and never fabricates a
 fresh measurement time. Removed devices with local placements remain removable.
 Only the preview sensor caches are replaced, not historical production readings.
 The runner stops its worker when terminated; logs/status remain in the preview directory.
+
+Power additionally requires a fresh SER8 poller heartbeat and source measurement
+(under 180 seconds), with at most 90 seconds since a successful transfer. A successful
+transfer alone never makes an old measurement live. Stale power is shown as unknown;
+retained recorded 24-hour totals remain labeled historical with the last refresh time.
+Total, Leg A/B and an actually monitored Leg C are displayed independently. Main
+is never summed with its own legs, absent legs are never fabricated, and no-CT Leg C
+is omitted. Watt values retain the existing app's one-minute interval-derived estimate,
+not a claim of instantaneous measurement (see #135). Source measurement ages are
+calculated on SER8, avoiding interpretation of its legacy naive timestamps as Mac time.
+Known panel/circuit identities for mapping come from this source cache, so newly
+reported circuits do not require a bulk history download. Floor-plan revisions are
+independent of incoming readings, protecting unsaved layout edits during refreshes.
+
+If a verified host has an alternate address, `--host-key-alias EXISTING_KNOWN_HOST`
+reuses its existing trusted SSH key. It never disables host-key checking or approves
+unknown keys. This can be used with a configured Tailscale peer while a LAN address
+is unavailable; it changes only the local preview's connection target.
 
 Upstream: https://github.com/0xProbabillity/house-control
 Pinned commit: `1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9` (MIT).

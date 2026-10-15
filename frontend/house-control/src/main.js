@@ -43,8 +43,18 @@ function renderState() {
   $('status').textContent = `${state.online ? 'Collector live' : 'Collector offline or readings stale'} · `
     + `Whole home: ${format(state.current_watts, 'watts')} · Last reading: ${state.last_reading || 'none'}`;
   if(state.sensor_sync) {
-    $('status').textContent = `Local preview · SER8 sensor feed ${state.sensor_sync.ok?'connected':'unavailable; retained values are stale'}`
-      + ` · Last successful refresh: ${state.sensor_sync.last_success || 'none'} · Circuit history is a snapshot.`;
+    $('status').textContent = `Local preview · SER8 feed ${state.sensor_sync.ok?'connected':'unavailable; retained values are stale'}`
+      + ` · Whole home: ${format(state.current_watts,'watts')} · Power ${state.online?'recent':'stale or unavailable'}`
+      + ` · Last reading: ${state.last_reading || 'none'} · Last refresh: ${state.sensor_sync.last_success || 'none'}`;
+  }
+  const mains=$('mains');mains.replaceChildren();
+  $('mains-section').hidden=!state.mains?.length;
+  for(const row of state.mains || []) {
+    const card=node('article','','home3d-sensor');
+    card.append(node('strong',row.name),node('span',format(row.watts,'watts')),
+      node('small',`${format(row.kwh_24h,'kwh_24h')} · ${format(row.cost_24h,'cost_24h')} recorded / 24h`),
+      node('small',`Measured: ${row.timestamp}${row.watts==null?' · live power unavailable':''}`));
+    mains.append(card);
   }
   const container = $('rooms');
   container.replaceChildren();
@@ -131,6 +141,7 @@ async function refresh() {
     if (expectedGeneration !== generation) return;
     if (state) {
       state = { ...state, online: false, current_watts: null,
+        mains: state.mains?.map(row=>({...row,watts:null})),
         sensors: state.sensors.map(row=>({...row,stale:true})),
         rooms: state.rooms.map(room => ({ ...room, watts: null, reporting_circuits: 0 })) };
       renderState();

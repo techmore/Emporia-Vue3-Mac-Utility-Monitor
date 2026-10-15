@@ -1,6 +1,7 @@
 <div class="page home3d">
   <header class="home3d-head"><div><h1>Home 3D</h1><p id="home3d-name">Loading floor plan...</p></div><span class="home3d-badge">Preview · no device control</span></header>
   <p id="home3d-status" role="status">Connecting to the collector...</p>
+  <section class="card home3d-setup" id="home3d-mains-section" hidden aria-label="Live service mains"><h2>Service mains</h2><p>Interval-derived power estimates from the collector. Total and individual measured legs are separate readings, never added together. Missing readings stay unknown.</p><div id="home3d-mains"></div></section>
   <div class="home3d-toolbar">
     <label>Room overlay <select id="home3d-metric"><option value="watts">Estimated power now</option><option value="kwh_24h">Recorded energy · 24h</option><option value="cost_24h">Recorded usage cost · 24h</option></select></label>
     <button id="home3d-reset" type="button">Reset view</button><button id="home3d-refresh" type="button">Refresh</button><button id="home3d-reload" type="button">Reload saved plan</button>

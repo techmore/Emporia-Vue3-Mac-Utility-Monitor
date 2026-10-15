@@ -28,6 +28,20 @@ class PreviewSensorSyncTests(unittest.TestCase):
         self.snapshot['aqara_local_observations'] = [dict(zip(sync.TABLES['aqara_local_observations'],
             ('aqara-1', datetime.now(timezone.utc).isoformat(), 'Real sensor', '', 20, 0, 80, 1, 'matter_event'), strict=True))]
         self.snapshot['aqara_local_labels'] = [{'device_id': 'aqara-1', 'name': 'Barn'}]
+        self.snapshot['power'] = {
+            'active_device_gid': 'live-panel', 'captured_at': datetime.now(timezone.utc).isoformat(),
+            'poller_ok': True, 'mains_c_no_ct': True, 'latest': [], 'summary': [],
+        }
+        for name, value in [('Main', .1), ('Mains_A', .04), ('Mains_B', .06),
+                            ('Mains_C', 0), ('Kitchen', 0), ('Missing', None)]:
+            self.snapshot['power']['latest'].append({
+                'device_gid': 'live-panel', 'channel_name': name, 'channel_num': None,
+                'usage_kwh': value, 'cost_cents': 0, 'timestamp': datetime.now().isoformat(),
+                'age_seconds': 1,
+            })
+            self.snapshot['power']['summary'].append({
+                'channel_name': name, 'total_kwh': value, 'total_cents': 0, 'readings': 1,
+            })
 
     def tearDown(self):
         self.db.stop(); self.env.stop(); self.directory.cleanup()
@@ -90,3 +104,89 @@ class PreviewSensorSyncTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     sync.refresh(host, container)
             run.assert_not_called()
+
+    def cache_power(self):
+        sync.import_snapshot(self.snapshot)
+        (self.root / 'sensor-sync-status.json').write_text(json.dumps({
+            'ok': True, 'last_success': datetime.now(timezone.utc).isoformat()}))
+
+    def test_live_power_is_panel_scoped_preserves_zero_and_does_not_sum_main_with_legs(self):
+        self.cache_power()
+        panel = sync.power_snapshot()
+        self.assertTrue(panel['menu']['online'])
+        self.assertEqual(panel['menu']['current_watts'], 6000)
+        self.assertEqual(panel['menu']['active_device_gid'], 'live-panel')
+        self.assertEqual([r['channel_name'] for r in panel['mains']], ['Main', 'Mains_A', 'Mains_B'])
+        kitchen = next(row for row in panel['menu']['breaker_slots'] if row['channel_name'] == 'Kitchen')
+        missing = next(row for row in panel['menu']['breaker_slots'] if row['channel_name'] == 'Missing')
+        self.assertEqual(kitchen['watts'], 0)
+        self.assertIsNone(missing['watts'])
+        self.assertEqual(sync.power_catalog(), {'live-panel': {'Kitchen', 'Missing'}})
+        self.assertEqual({row['channel_name'] for row in panel['summary']}, {'Kitchen', 'Missing'})
+
+    def test_transport_failure_expired_cache_stale_measurement_and_stopped_poller_clear_power(self):
+        for reason in ('transport', 'cache', 'measurement', 'poller'):
+            self.snapshot['power']['poller_ok'] = True
+            self.snapshot['power']['captured_at'] = datetime.now(timezone.utc).isoformat()
+            for row in self.snapshot['power']['latest']:
+                row['age_seconds'] = 1
+            if reason == 'cache':
+                self.snapshot['power']['captured_at'] = (datetime.now(timezone.utc)-timedelta(seconds=91)).isoformat()
+            if reason == 'measurement':
+                for row in self.snapshot['power']['latest']:
+                    row['age_seconds'] = 181
+            if reason == 'poller':
+                self.snapshot['power']['poller_ok'] = False
+            self.cache_power()
+            if reason == 'transport':
+                (self.root / 'sensor-sync-status.json').write_text(json.dumps({'ok': False, 'last_success': None}))
+            with self.subTest(reason=reason):
+                panel = sync.power_snapshot()
+                self.assertFalse(panel['menu']['online'])
+                self.assertIsNone(panel['menu']['current_watts'])
+                self.assertTrue(all(row['watts'] is None for row in panel['mains']))
+                self.assertTrue(all(row['watts'] is None for row in panel['menu']['breaker_slots']))
+                self.assertTrue(panel['summary'])  # Clearly retained historical data, not fake zero.
+
+    def test_invalid_cross_panel_power_rejects_the_whole_refresh_without_changing_cache(self):
+        self.cache_power()
+        previous = (self.root / 'power-cache.json').read_bytes()
+        self.snapshot['power']['latest'][0]['device_gid'] = 'other-panel'
+        with self.assertRaises(ValueError):
+            sync.import_snapshot(self.snapshot)
+        self.assertEqual((self.root / 'power-cache.json').read_bytes(), previous)
+
+    def test_live_mapping_can_use_a_new_source_panel_without_importing_history_or_remote_layouts(self):
+        import house_control
+        self.cache_power()
+        # Remove the dummy plan fixture; use the real private config API.
+        self.plan.unlink()
+        config = house_control.load_config()
+        before_snapshot = (self.root / 'power-cache.json').read_bytes()
+        payload = {'plan': config['plan'], 'sensors': [], 'revision': config['revision'],
+                   'bindings': [{'device_gid': 'live-panel', 'channel_name': 'Kitchen', 'room_id': 'kitchen'}]}
+        saved = house_control.save_config(payload, known_circuits=sync.power_catalog())
+        self.assertEqual(saved['bindings'], payload['bindings'])
+        self.assertEqual((self.root / 'power-cache.json').read_bytes(), before_snapshot)
+        plan_bytes = self.plan.read_bytes()
+        sync.import_snapshot(self.snapshot)
+        self.assertEqual(self.plan.read_bytes(), plan_bytes)
+
+    def test_exporter_reads_actual_schema_and_rolling_totals_without_writing_source_data(self):
+        conn = energy._connect()
+        now = datetime.now().isoformat()
+        with conn:
+            conn.execute('INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents) VALUES (?,?,?,?,?)',
+                         (now, 'source-panel', 'Main', .2, 4))
+            conn.execute('INSERT INTO latest_channel_snapshot VALUES(?,?,?,?,?,?)',
+                         ('source-panel', 'Main', None, .2, 4, now))
+        conn.close()
+        (self.root / 'poller_status.json').write_text(json.dumps({'ok': True, 'timestamp': now}))
+        script = sync.REMOTE_SCRIPT.replace('/var/lib/energy-monitor/collector', str(self.root))
+        import sys
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=True)
+        exported = json.loads(result.stdout)
+        self.assertTrue(exported['power']['poller_ok'])
+        self.assertEqual(exported['power']['active_device_gid'], 'source-panel')
+        self.assertEqual(exported['power']['summary'][0]['total_kwh'], .2)
+        self.assertEqual(sync.validate_power(exported['power']), exported['power'])

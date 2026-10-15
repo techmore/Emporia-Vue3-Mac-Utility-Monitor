@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.50 - 2026-10-15
+
+- Refresh live circuits, service mains and rolling 24-hour energy/cost aggregates
+  from the same read-only SER8 database transaction as environmental sensors.
+- Project source-panel readings onto local rooms without importing remote floor
+  plans, settings or placements. Display measured mains legs separately from Total.
+- Require fresh source heartbeat, measurement age and transport for live watt
+  estimates; stale/missing readings stay unknown and recorded zero stays zero.
+- Support alternate SSH addresses with the existing verified host-key alias;
+  no production deployment, new production service or authentication change.
+
 ## 2.3.49 - 2026-10-15
 
 - Add an opt-in local Home 3D preview runner with read-only SER8 sensor refresh

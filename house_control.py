@@ -234,7 +234,7 @@ def _validate_sensors(raw, plan, previous) -> list[dict]:
     return clean
 
 
-def save_config(data: dict) -> dict:
+def save_config(data: dict, known_circuits: dict[str, set[str]] | None = None) -> dict:
     if not isinstance(data, dict) or set(data) not in (
             {"plan", "bindings", "revision"}, {"plan", "bindings", "revision", "sensors"}):
         raise ValueError("Supply plan, bindings, and the loaded revision")
@@ -265,7 +265,7 @@ def save_config(data: dict) -> dict:
         # Older mapping clients must never erase placements by omitting the new field.
         sensors = _validate_sensors(data.get('sensors', current['sensors']), plan, current['sensors'])
         known = {}
-        devices = set(energy.get_known_devices())
+        devices = set(known_circuits) if known_circuits is not None else set(energy.get_known_devices())
         for binding in clean:
             if binding in current["bindings"]:
                 continue
@@ -273,7 +273,8 @@ def save_config(data: dict) -> dict:
             if gid not in devices:
                 raise ValueError("Unknown panel")
             if gid not in known:
-                known[gid] = {r["channel_name"] for r in energy.get_latest(gid)}
+                known[gid] = known_circuits[gid] if known_circuits is not None else {
+                    r["channel_name"] for r in energy.get_latest(gid)}
             if binding["channel_name"] not in known[gid]:
                 raise ValueError("Unknown circuit on the selected panel")
         write_private_json(_path(), {"plan": plan, "bindings": clean, "sensors": sensors,
@@ -378,7 +379,7 @@ HOUSE_CONTROL_CSS = """
 .home3d-inspector input {width:110px;padding:6px;background:var(--surface);color:var(--text);border:1px solid var(--border);}
 .editor-sensor {fill:var(--olive-800);stroke:var(--surface);stroke-width:.07;cursor:move;}
 .selected .editor-sensor {stroke:var(--text);stroke-width:.12;}
-#home3d-sensors {display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;}
+#home3d-sensors,#home3d-mains {display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;}
 .home3d-sensor {display:grid;gap:6px;border:1px solid var(--border);border-left:4px solid var(--olive-600);border-radius:8px;padding:12px;overflow-wrap:anywhere;}
 .home3d-sensor-marker {border-left:4px solid var(--olive-600);font-size:.65rem;max-width:260px;}
 [data-sensor-source^="radon:"] {border-left-color:var(--stone-500);}
