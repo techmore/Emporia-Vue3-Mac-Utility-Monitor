@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.49 - 2026-10-15
+
+- Add an opt-in local Home 3D preview runner with read-only SER8 sensor refresh
+  every 30 seconds, isolated from production deployment and device controls.
+- Preserve local floor plans and placements; atomically replace only observation
+  caches, retain measurement times, and mark transport failures/stopped feeds stale.
+- Require an explicit preview marker and DB path; use noninteractive verified SSH
+  and read-only SQLite on SER8. Reconnect automatically after transient failures.
+
 ## 2.3.48 - 2026-10-15
 
 - Match furniture dimension controls to the pinned renderer's supported fields

@@ -89,6 +89,38 @@ host/origin policy and deployment gateway apply to all new routes.
 
 ## Upstream and rebuild
 
+### Local preview with live SER8 sensors
+
+Use `scripts/run_home3d_preview.py` only with a copied database in a separate
+private directory. Never point it at the collector's working data directory.
+The destination must contain `energy.db` and an owner-only `preview-only.json`
+with exactly `{"purpose":"house-control-local-preview"}`. Floor plans and
+placements remain in this directory's `house-control.json`; no collector config
+or placement file is downloaded or uploaded.
+
+```bash
+venv/bin/python3 scripts/run_home3d_preview.py \
+  --data "$HOME/Library/Application Support/EnergyMonitor/previews/house-control" \
+  --sensors-host sdolbec@10.20.0.117
+```
+
+The runner binds only `127.0.0.1:15045`, exposes Home 3D/configuration/static assets
+only, and starts a supervised local sensor-cache worker. The worker uses existing
+SSH keys with `BatchMode=yes` and strict host-key checking; no password prompts,
+vendor authentication, new SER8 software, public endpoints or production changes
+are required. The existing `energy-monitor` Incus container must permit a read-only
+Python query of `/var/lib/energy-monitor/collector/energy.db`. Other installations
+need an explicitly adapted read-only exporter; this is not a universal discovery tool.
+
+Every 30 seconds it copies latest Aqara/Matter, climate and radon observations and
+labels in one local transaction. It preserves measurement timestamps and zero values.
+Circuit history remains a snapshot. Failed/incomplete snapshots preserve the last
+cache; the UI marks all sensors stale during a transport failure or if the worker
+has not succeeded for 90 seconds. It retries automatically and never fabricates a
+fresh measurement time. Removed devices with local placements remain removable.
+Only the preview sensor caches are replaced, not historical production readings.
+The runner stops its worker when terminated; logs/status remain in the preview directory.
+
 Upstream: https://github.com/0xProbabillity/house-control
 Pinned commit: `1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9` (MIT).
 Unmodified source modules and SHA-256 provenance are in

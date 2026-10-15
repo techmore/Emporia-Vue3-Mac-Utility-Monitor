@@ -42,6 +42,10 @@ function renderState() {
   const metric = $('metric').value;
   $('status').textContent = `${state.online ? 'Collector live' : 'Collector offline or readings stale'} · `
     + `Whole home: ${format(state.current_watts, 'watts')} · Last reading: ${state.last_reading || 'none'}`;
+  if(state.sensor_sync) {
+    $('status').textContent = `Local preview · SER8 sensor feed ${state.sensor_sync.ok?'connected':'unavailable; retained values are stale'}`
+      + ` · Last successful refresh: ${state.sensor_sync.last_success || 'none'} · Circuit history is a snapshot.`;
+  }
   const container = $('rooms');
   container.replaceChildren();
   for (const room of state.rooms) {

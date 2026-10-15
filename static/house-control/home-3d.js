@@ -12898,7 +12898,7 @@ function Gu(e, t, n) {
 }
 function Ku() {
 	let e = $("metric").value;
-	$("status").textContent = `${Nu.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${ju(Nu.current_watts, "watts")} · Last reading: ${Nu.last_reading || "none"}`;
+	$("status").textContent = `${Nu.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${ju(Nu.current_watts, "watts")} · Last reading: ${Nu.last_reading || "none"}`, Nu.sensor_sync && ($("status").textContent = `Local preview · SER8 sensor feed ${Nu.sensor_sync.ok ? "connected" : "unavailable; retained values are stale"} · Last successful refresh: ${Nu.sensor_sync.last_success || "none"} · Circuit history is a snapshot.`);
 	let t = $("rooms");
 	t.replaceChildren();
 	for (let n of Nu.rooms) {
