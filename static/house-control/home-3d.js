@@ -12429,9 +12429,31 @@ function Cu(e, t) {
 function wu(e, t, n, r) {
 	for (let i of e.filter((e) => e.room_id === t)) i.position = Cu([i.position[0] + r.rect[0] - n[0], i.position[1] + r.rect[1] - n[1]], r);
 }
+function Tu(e) {
+	let t = {
+		sofa: 2.2,
+		coffeeTable: 1.1,
+		tv: 1.7,
+		sideboard: 1.6,
+		diningSet: 1.8,
+		island: 2,
+		kitchen: 3,
+		bed: 1.6,
+		dresser: 1.3,
+		vanity: 1,
+		desk: 1.4,
+		wardrobe: 1.6,
+		bookshelf: 1
+	}, n = {
+		plant: 1.2,
+		wardrobe: 2.1,
+		bookshelf: 1.8
+	}, r = [];
+	return t[e.type] != null && r.push(["width", e.width ?? t[e.type]]), n[e.type] != null && r.push(["height", e.height ?? n[e.type]]), r;
+}
 //#endregion
 //#region src/editor.js
-var Tu = "http://www.w3.org/2000/svg", Eu = [
+var Eu = "http://www.w3.org/2000/svg", Du = [
 	"rug",
 	"sofa",
 	"armchair",
@@ -12452,15 +12474,15 @@ var Tu = "http://www.w3.org/2000/svg", Eu = [
 	"desk",
 	"wardrobe",
 	"bookshelf"
-], Du = (e, t) => {
+], Ou = (e, t) => {
 	let n = document.createElement(e);
 	return n.textContent = t, n;
-}, Ou = (e, t, n = "") => {
-	let r = document.createElementNS(Tu, e);
+}, ku = (e, t, n = "") => {
+	let r = document.createElementNS(Eu, e);
 	for (let [e, n] of Object.entries(t)) r.setAttribute(e, n);
 	return r.textContent = n, r;
 };
-function ku(e, { onSave: t, onDirty: n }) {
+function Au(e, { onSave: t, onDirty: n }) {
 	let r = (t) => e.querySelector(`[data-editor="${t}"]`), i = r("canvas"), a = r("inspector"), o = r("selection"), s, c, l = {
 		kind: "rooms",
 		index: 0
@@ -12503,9 +12525,9 @@ function ku(e, { onSave: t, onDirty: n }) {
 		let e = (l.kind === "sensors" ? v : c[l.kind])[l.index];
 		if (!e) return;
 		let t = (e, t, n, i) => {
-			let o = Du("label", e), s = document.createElement(i ? "select" : "input");
+			let o = Ou("label", e), s = document.createElement(i ? "select" : "input");
 			if (i) for (let e of i) {
-				let t = Du("option", e);
+				let t = Ou("option", e);
 				t.value = e, s.append(t);
 			}
 			else s.type = typeof t == "number" ? "number" : "text", s.type === "number" ? s.step = "0.25" : s.maxLength = 120;
@@ -12515,11 +12537,11 @@ function ku(e, { onSave: t, onDirty: n }) {
 			}), o.append(s), a.append(o);
 		};
 		if (l.kind === "sensors") {
-			a.append(Du("strong", C(e).name || e.sensor_id)), a.append(Du("small", e.source));
-			let n = Du("label", "Sensor room"), r = document.createElement("select");
+			a.append(Ou("strong", C(e).name || e.sensor_id)), a.append(Ou("small", e.source));
+			let n = Ou("label", "Sensor room"), r = document.createElement("select");
 			r.setAttribute("aria-label", "Sensor room");
 			for (let e of c.rooms) {
-				let t = Du("option", e.name);
+				let t = Ou("option", e.name);
 				t.value = e.id, r.append(t);
 			}
 			r.value = e.room_id, r.addEventListener("change", () => D(() => {
@@ -12528,7 +12550,7 @@ function ku(e, { onSave: t, onDirty: n }) {
 				e.position = Cu([t.rect[0] + t.rect[2] / 2, t.rect[1] + t.rect[3] / 2], t);
 			})), n.append(r), a.append(n), ["Sensor X (m)", "Sensor Z (m)"].forEach((n, r) => t(n, e.position[r], (t) => {
 				e.position[r] = t, e.position = Cu(e.position, c.rooms.find((t) => t.id === e.room_id));
-			})), a.append(Du("small", "Drag the marker inside its room, or change its room above. This never moves or controls the physical device."));
+			})), a.append(Ou("small", "Drag the marker inside its room, or change its room above. This never moves or controls the physical device."));
 		} else if (l.kind === "rooms") t("Room name", e.name, (t) => {
 			e.name = t;
 		}), [
@@ -12546,19 +12568,20 @@ function ku(e, { onSave: t, onDirty: n }) {
 			"walnut",
 			"tile",
 			"stone"
-		]), a.append(Du("small", "Drag the room to move it; drag its corner to resize. Openings and furniture move independently."));
-		else if (l.kind === "furniture") t("Furniture type", e.type, (t) => {
-			e.type = t;
-		}, Eu), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.pos[r], (t) => {
-			e.pos[r] = Math.max(-100, Math.min(100, t));
-		})), t("Rotation", e.rot || 0, (t) => {
-			e.rot = Math.max(-360, Math.min(360, t));
-		}), t("Furniture width", e.width || 1, (t) => {
-			e.width = Math.max(.3, Math.min(10, t));
-		}), t("Furniture height", e.height || 1, (t) => {
-			e.height = Math.max(.3, Math.min(10, t));
-		});
-		else {
+		]), a.append(Ou("small", "Drag the room to move it; drag its corner to resize. Openings and furniture move independently."));
+		else if (l.kind === "furniture") {
+			t("Furniture type", e.type, (t) => {
+				e.type = t;
+			}, Du), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.pos[r], (t) => {
+				e.pos[r] = Math.max(-100, Math.min(100, t));
+			})), t("Rotation", e.rot || 0, (t) => {
+				e.rot = Math.max(-360, Math.min(360, t));
+			});
+			for (let [n, r] of Tu(e)) t(`Furniture ${n}`, r, (t) => {
+				e[n] = Math.max(.3, Math.min(10, t));
+			});
+			a.append(Ou("small", "Only dimensions supported by this furniture template are editable."));
+		} else {
 			t("Opening type", e.type, (t) => {
 				e.type = t;
 			}, [
@@ -12590,65 +12613,65 @@ function ku(e, { onSave: t, onDirty: n }) {
 			"furniture",
 			"openings"
 		]) c[e].forEach((t, n) => {
-			let r = l?.kind === e && l.index === n, a = Ou("g", {
+			let r = l?.kind === e && l.index === n, a = ku("g", {
 				"data-kind": e,
 				"data-index": n,
 				class: r ? "selected" : ""
 			}), s, c;
-			e === "rooms" ? ([s, c] = t.rect, a.append(Ou("rect", {
+			e === "rooms" ? ([s, c] = t.rect, a.append(ku("rect", {
 				x: s,
 				y: c,
 				width: t.rect[2],
 				height: t.rect[3],
 				class: "editor-room"
-			})), a.append(Ou("text", {
+			})), a.append(ku("text", {
 				x: s + t.rect[2] / 2,
 				y: c + t.rect[3] / 2,
 				class: "editor-name"
-			}, t.name)), r && a.append(Ou("circle", {
+			}, t.name)), r && a.append(ku("circle", {
 				cx: s + t.rect[2],
 				cy: c + t.rect[3],
 				r: .22,
 				"data-resize": "true",
 				class: "editor-handle"
-			}))) : e === "furniture" ? ([s, c] = t.pos, a.append(Ou("rect", {
+			}))) : e === "furniture" ? ([s, c] = t.pos, a.append(ku("rect", {
 				x: s - .4,
 				y: c - .3,
 				width: .8,
 				height: .6,
 				class: "editor-furniture",
 				transform: `rotate(${t.rot || 0},${s},${c})`
-			})), a.append(Ou("text", {
+			})), a.append(ku("text", {
 				x: s,
 				y: c - .5,
 				class: "editor-name"
-			}, t.type))) : a.append(Ou("line", {
+			}, t.type))) : a.append(ku("line", {
 				x1: t.from[0],
 				y1: t.from[1],
 				x2: t.to[0],
 				y2: t.to[1],
 				class: "editor-opening"
 			})), i.append(a);
-			let u = Du("option", `${e === "rooms" ? "Room" : e === "furniture" ? "Furniture" : "Opening"}: ${t.name || t.type}`);
+			let u = Ou("option", `${e === "rooms" ? "Room" : e === "furniture" ? "Furniture" : "Opening"}: ${t.name || t.type}`);
 			u.value = `${e}:${n}`, o.append(u);
 		});
 		v.forEach((e, t) => {
-			let n = Ou("g", {
+			let n = ku("g", {
 				"data-kind": "sensors",
 				"data-index": t,
 				class: l?.kind === "sensors" && l.index === t ? "selected" : ""
 			});
-			n.append(Ou("circle", {
+			n.append(ku("circle", {
 				cx: e.position[0],
 				cy: e.position[1],
 				r: .19,
 				class: "editor-sensor"
-			})), n.append(Ou("text", {
+			})), n.append(ku("text", {
 				x: e.position[0],
 				y: e.position[1] - .4,
 				class: "editor-name"
 			}, C(e).name || e.sensor_id)), i.append(n);
-			let r = Du("option", `Sensor: ${C(e).name || e.sensor_id}`);
+			let r = Ou("option", `Sensor: ${C(e).name || e.sensor_id}`);
 			r.value = `sensors:${t}`, o.append(r);
 		}), o.value = l ? `${l.kind}:${l.index}` : "", r("remove").disabled = !l, t && k();
 	}
@@ -12834,7 +12857,7 @@ function ku(e, { onSave: t, onDirty: n }) {
 			let t = r("sensor-picker"), n = t.value;
 			t.replaceChildren();
 			for (let e of y) {
-				let n = Du("option", `${e.name} · ${e.source}${e.stale ? " · last recorded" : ""}`);
+				let n = Ou("option", `${e.name} · ${e.source}${e.stale ? " · last recorded" : ""}`);
 				n.value = mu(e), t.append(n);
 			}
 			y.some((e) => mu(e) === n) && (t.value = n), r("place-sensor").disabled = r("center-sensor").disabled = g || !y.length;
@@ -12849,16 +12872,16 @@ function ku(e, { onSave: t, onDirty: n }) {
 }
 //#endregion
 //#region src/main.js
-var $ = (e) => document.getElementById(`home3d-${e}`), Au = (e, t) => e == null ? "Unknown" : t === "watts" ? `${Math.round(e).toLocaleString()} W` : t === "kwh_24h" ? `${e.toFixed(2)} kWh` : `$${e.toFixed(2)}`, ju, Mu, Nu, Pu, Fu = !1, Iu = !1, Lu = !1, Ru, zu = 0, Bu = !1, Vu = document.getElementById("home3d-editor"), Hu = ku(Vu, {
+var $ = (e) => document.getElementById(`home3d-${e}`), ju = (e, t) => e == null ? "Unknown" : t === "watts" ? `${Math.round(e).toLocaleString()} W` : t === "kwh_24h" ? `${e.toFixed(2)} kWh` : `$${e.toFixed(2)}`, Mu, Nu, Pu, Fu, Iu = !1, Lu = !1, Ru = !1, zu, Bu = 0, Vu = !1, Hu = document.getElementById("home3d-editor"), Uu = Au(Hu, {
 	onSave: async (e, t, n) => {
-		let r = await Zu(e, Su(Qu(), e), n);
-		return r || (Vu.querySelector("[data-editor=\"status\"]").textContent = $("save-status").textContent), r;
+		let r = await Qu(e, Su($u(), e), n);
+		return r || (Hu.querySelector("[data-editor=\"status\"]").textContent = $("save-status").textContent), r;
 	},
 	onDirty: (e) => {
-		$("save").disabled = e || Lu || !Fu;
+		$("save").disabled = e || Ru || !Iu;
 	}
 });
-async function Uu(e, t = {}) {
+async function Wu(e, t = {}) {
 	let n = await fetch(`/api/house-control/${e}`, {
 		cache: "no-store",
 		signal: AbortSignal.timeout(1e4),
@@ -12869,166 +12892,166 @@ async function Uu(e, t = {}) {
 	if (!n.ok) throw Error(r.error || `Collector request failed (${n.status})`);
 	return r;
 }
-function Wu(e, t, n) {
+function Gu(e, t, n) {
 	let r = document.createElement(e);
 	return r.textContent = t, n && (r.className = n), r;
 }
-function Gu() {
+function Ku() {
 	let e = $("metric").value;
-	$("status").textContent = `${Mu.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${Au(Mu.current_watts, "watts")} · Last reading: ${Mu.last_reading || "none"}`;
+	$("status").textContent = `${Nu.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${ju(Nu.current_watts, "watts")} · Last reading: ${Nu.last_reading || "none"}`;
 	let t = $("rooms");
 	t.replaceChildren();
-	for (let n of Mu.rooms) {
-		let r = Wu("button", "", "home3d-room");
-		r.type = "button", r.dataset.roomId = n.id, r.append(Wu("strong", n.name), Wu("span", Au(n[e], e)), Wu("small", `${n.mapped_circuits} mapped · ${n.reporting_circuits} reporting`), Wu("small", `${Au(n.kwh_24h, "kwh_24h")} · ${Au(n.cost_24h, "cost_24h")} recorded / 24h`)), r.addEventListener("click", () => Ku(n.id)), t.append(r);
+	for (let n of Nu.rooms) {
+		let r = Gu("button", "", "home3d-room");
+		r.type = "button", r.dataset.roomId = n.id, r.append(Gu("strong", n.name), Gu("span", ju(n[e], e)), Gu("small", `${n.mapped_circuits} mapped · ${n.reporting_circuits} reporting`), Gu("small", `${ju(n.kwh_24h, "kwh_24h")} · ${ju(n.cost_24h, "cost_24h")} recorded / 24h`)), r.addEventListener("click", () => qu(n.id)), t.append(r);
 	}
 	let n = $("sensors");
-	n.replaceChildren(), Mu.sensors.length || n.append(Wu("p", "No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically."));
-	for (let e of Mu.sensors) {
-		let t = Wu("article", "", "home3d-sensor");
+	n.replaceChildren(), Nu.sensors.length || n.append(Gu("p", "No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically."));
+	for (let e of Nu.sensors) {
+		let t = Gu("article", "", "home3d-sensor");
 		t.dataset.sensorSource = e.source;
-		let r = ju.plan.rooms.find((t) => t.id === e.placement?.room_id);
-		t.append(Wu("strong", e.name), Wu("span", hu(e)), Wu("small", `${e.source} · ${r?.name || "Unplaced"} · ${e.stale ? "Last recorded (stale)" : "Recent observation"}`), Wu("small", e.timestamp ? new Date(e.timestamp).toLocaleString() : "No observation available")), n.append(t);
+		let r = Mu.plan.rooms.find((t) => t.id === e.placement?.room_id);
+		t.append(Gu("strong", e.name), Gu("span", hu(e)), Gu("small", `${e.source} · ${r?.name || "Unplaced"} · ${e.stale ? "Last recorded (stale)" : "Recent observation"}`), Gu("small", e.timestamp ? new Date(e.timestamp).toLocaleString() : "No observation available")), n.append(t);
 	}
-	Hu.refreshSensors(Mu.sensors), Nu?.update(Mu.rooms, e, Au, Mu.sensors);
-}
-function Ku(e) {
-	for (let t of $("rooms").children) t.setAttribute("aria-pressed", String(t.dataset.roomId === e));
-	let t = Mu.rooms.find((t) => t.id === e);
-	t && ($("save-status").textContent = `${t.name}: ` + (Mu.circuits.filter((t) => t.room_id === e).map((e) => e.display_name).join(", ") || "No circuits assigned"));
+	Uu.refreshSensors(Nu.sensors), Pu?.update(Nu.rooms, e, ju, Nu.sensors);
 }
 function qu(e) {
+	for (let t of $("rooms").children) t.setAttribute("aria-pressed", String(t.dataset.roomId === e));
+	let t = Nu.rooms.find((t) => t.id === e);
+	t && ($("save-status").textContent = `${t.name}: ` + (Nu.circuits.filter((t) => t.room_id === e).map((e) => e.display_name).join(", ") || "No circuits assigned"));
+}
+function Ju(e) {
 	return JSON.stringify([e.active_device_gid, e.circuits.map((e) => e.channel_name).sort()]);
 }
-function Ju() {
-	Ru = qu(Mu), $("panel").textContent = `Panel: ${Mu.active_device_gid || "No readings yet"}. ` + (Mu.other_panel_bindings ? `${Mu.other_panel_bindings} mappings from other panels are preserved.` : "");
+function Yu() {
+	zu = Ju(Nu), $("panel").textContent = `Panel: ${Nu.active_device_gid || "No readings yet"}. ` + (Nu.other_panel_bindings ? `${Nu.other_panel_bindings} mappings from other panels are preserved.` : "");
 	let e = $("mappings");
 	e.replaceChildren();
-	for (let t of Mu.circuits) {
-		let n = Wu("label", t.display_name + (t.missing ? " (not reported)" : "")), r = document.createElement("select");
+	for (let t of Nu.circuits) {
+		let n = Gu("label", t.display_name + (t.missing ? " (not reported)" : "")), r = document.createElement("select");
 		r.setAttribute("aria-label", `Room for ${t.display_name}`), r.dataset.channel = t.channel_name;
-		let i = Wu("option", "Unassigned");
+		let i = Gu("option", "Unassigned");
 		i.value = "", r.append(i);
-		for (let e of ju.plan.rooms) {
-			let t = Wu("option", e.name);
+		for (let e of Mu.plan.rooms) {
+			let t = Gu("option", e.name);
 			t.value = e.id, r.append(t);
 		}
 		r.value = t.room_id || "", r.addEventListener("change", () => {
-			Fu = !0, $("save").disabled = Lu || Hu.dirty, $("save-status").textContent = "Unsaved room mappings";
+			Iu = !0, $("save").disabled = Ru || Uu.dirty, $("save-status").textContent = "Unsaved room mappings";
 		}), n.append(r), e.append(n);
 	}
 }
-async function Yu() {
-	if (!ju || Iu || document.hidden) return;
-	Iu = !0;
-	let e = zu;
+async function Xu() {
+	if (!Mu || Lu || document.hidden) return;
+	Lu = !0;
+	let e = Bu;
 	try {
-		let t = await Uu("state");
-		if (e !== zu || ((t.revision !== ju.revision || qu(t) !== Ru) && (Lu = !0, Hu.block(!0), $("save").disabled = !0, $("save-status").textContent = "The saved plan or panel circuits changed. Reload the saved plan before editing."), t.revision !== ju.revision)) return;
-		Mu = t, Gu();
+		let t = await Wu("state");
+		if (e !== Bu || ((t.revision !== Mu.revision || Ju(t) !== zu) && (Ru = !0, Uu.block(!0), $("save").disabled = !0, $("save-status").textContent = "The saved plan or panel circuits changed. Reload the saved plan before editing."), t.revision !== Mu.revision)) return;
+		Nu = t, Ku();
 	} catch (t) {
-		if (e !== zu) return;
-		Mu && (Mu = {
-			...Mu,
+		if (e !== Bu) return;
+		Nu && (Nu = {
+			...Nu,
 			online: !1,
 			current_watts: null,
-			sensors: Mu.sensors.map((e) => ({
+			sensors: Nu.sensors.map((e) => ({
 				...e,
 				stale: !0
 			})),
-			rooms: Mu.rooms.map((e) => ({
+			rooms: Nu.rooms.map((e) => ({
 				...e,
 				watts: null,
 				reporting_circuits: 0
 			}))
-		}, Gu()), $("status").textContent = `${t.message} Last received history retained; live power unavailable.`;
+		}, Ku()), $("status").textContent = `${t.message} Last received history retained; live power unavailable.`;
 	} finally {
-		Iu = !1;
+		Lu = !1;
 	}
 }
-async function Xu() {
-	let e = ++zu;
+async function Zu() {
+	let e = ++Bu;
 	$("save").disabled = !0;
-	let t = await Uu("config"), n = await Uu("state");
-	if (e === zu) {
+	let t = await Wu("config"), n = await Wu("state");
+	if (e === Bu) {
 		if (n.revision !== t.revision) throw Error("Plan changed while loading. Reload the saved plan.");
-		ju = t, Mu = n, Fu = !1, Lu = !1, $("name").textContent = `${ju.plan.name}${ju.example ? " · Example layout, not your measured home" : ""}`, $("save-status").textContent = "", Ju(), Hu.setConfig(ju, Mu.sensors), Vu.hidden = !1, Nu?.dispose(), Nu = null, $("render-error").hidden = !0;
+		Mu = t, Nu = n, Iu = !1, Ru = !1, $("name").textContent = `${Mu.plan.name}${Mu.example ? " · Example layout, not your measured home" : ""}`, $("save-status").textContent = "", Yu(), Uu.setConfig(Mu, Nu.sensors), Hu.hidden = !1, Pu?.dispose(), Pu = null, $("render-error").hidden = !0;
 		try {
-			Nu = gu($("canvas"), $("labels"), ju.plan, Ku);
+			Pu = gu($("canvas"), $("labels"), Mu.plan, qu);
 		} catch (e) {
 			$("render-error").hidden = !1, $("render-error").textContent = "3D rendering is unavailable in this browser. Room data and mappings still work below.", console.warn("Home 3D renderer unavailable:", e.message);
 		}
-		Gu();
+		Ku();
 	}
 }
-async function Zu(e, t, n = ju.sensors) {
-	if (Bu) return !1;
-	Bu = !0, Hu.setSaving(!0), $("save-status").textContent = "Saving...";
+async function Qu(e, t, n = Mu.sensors) {
+	if (Vu) return !1;
+	Vu = !0, Uu.setSaving(!0), $("save-status").textContent = "Saving...";
 	for (let e of $("mappings").querySelectorAll("select")) e.disabled = !0;
 	$("save").disabled = !0;
 	try {
-		return await Uu("config", {
+		return await Wu("config", {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				plan: e,
 				bindings: t,
 				sensors: n,
-				revision: ju.revision
+				revision: Mu.revision
 			})
-		}), await Xu(), $("save-status").textContent = "Saved", !0;
+		}), await Zu(), $("save-status").textContent = "Saved", !0;
 	} catch (e) {
-		return $("save-status").textContent = e.message, $("save").disabled = Lu || !Fu, !1;
+		return $("save-status").textContent = e.message, $("save").disabled = Ru || !Iu, !1;
 	} finally {
-		Bu = !1, Hu.setSaving(!1);
+		Vu = !1, Uu.setSaving(!1);
 		for (let e of $("mappings").querySelectorAll("select")) e.disabled = !1;
 	}
 }
-function Qu() {
-	let e = new Set(Mu.circuits.map((e) => e.channel_name)), t = ju.bindings.filter((t) => t.device_gid !== Mu.active_device_gid || !e.has(t.channel_name));
+function $u() {
+	let e = new Set(Nu.circuits.map((e) => e.channel_name)), t = Mu.bindings.filter((t) => t.device_gid !== Nu.active_device_gid || !e.has(t.channel_name));
 	for (let e of $("mappings").querySelectorAll("select")) e.value && t.push({
-		device_gid: Mu.active_device_gid,
+		device_gid: Nu.active_device_gid,
 		channel_name: e.dataset.channel,
 		room_id: e.value
 	});
 	return t;
 }
-$("save").addEventListener("click", () => Zu(ju.plan, Qu())), $("metric").addEventListener("change", () => {
-	Mu && Gu();
-}), $("reset").addEventListener("click", () => Nu?.reset()), $("refresh").addEventListener("click", Yu), $("reload").addEventListener("click", () => {
-	(!Fu && !Hu.dirty || confirm("Discard unsaved floor-plan and mapping changes and reload?")) && Xu().catch((e) => {
+$("save").addEventListener("click", () => Qu(Mu.plan, $u())), $("metric").addEventListener("change", () => {
+	Nu && Ku();
+}), $("reset").addEventListener("click", () => Pu?.reset()), $("refresh").addEventListener("click", Xu), $("reload").addEventListener("click", () => {
+	(!Iu && !Uu.dirty || confirm("Discard unsaved floor-plan and mapping changes and reload?")) && Zu().catch((e) => {
 		$("status").textContent = e.message;
 	});
 }), $("import").addEventListener("change", async (e) => {
 	let t = e.target.files[0];
-	if (e.target.value = "", t && ju) try {
+	if (e.target.value = "", t && Mu) try {
 		if (t.size > 256e3) throw Error("Floor plan must be smaller than 250 KB.");
 		let e = JSON.parse(await t.text());
-		confirm("Replace the floor plan and clear all saved room mappings and sensor placements, including other panels?") && await Zu(e, [], []);
+		confirm("Replace the floor plan and clear all saved room mappings and sensor placements, including other panels?") && await Qu(e, [], []);
 	} catch (e) {
 		$("save-status").textContent = e.message;
 	}
 }), $("export").addEventListener("click", () => {
-	if (!ju) return;
-	let e = URL.createObjectURL(new Blob([JSON.stringify(ju.plan, null, 2)], { type: "application/json" })), t = document.createElement("a");
+	if (!Mu) return;
+	let e = URL.createObjectURL(new Blob([JSON.stringify(Mu.plan, null, 2)], { type: "application/json" })), t = document.createElement("a");
 	t.href = e, t.download = "floor-plan.json", t.click(), setTimeout(() => URL.revokeObjectURL(e), 1e3);
 }), document.addEventListener("visibilitychange", () => {
-	document.hidden || Yu();
+	document.hidden || Xu();
 }), window.addEventListener("beforeunload", (e) => {
-	(Fu || Hu.dirty) && (e.preventDefault(), e.returnValue = "");
+	(Iu || Uu.dirty) && (e.preventDefault(), e.returnValue = "");
 }), window.addEventListener("pagehide", () => {
-	clearInterval(Pu), Nu?.dispose(), Nu = null;
+	clearInterval(Fu), Pu?.dispose(), Pu = null;
 }), window.addEventListener("pageshow", (e) => {
-	e.persisted && $u();
+	e.persisted && ed();
 });
-async function $u() {
-	clearInterval(Pu);
+async function ed() {
+	clearInterval(Fu);
 	try {
-		await Xu();
+		await Zu();
 	} catch (e) {
 		$("status").textContent = e.message;
 	}
-	Pu = setInterval(Yu, 3e4);
+	Fu = setInterval(Xu, 3e4);
 }
-$u();
+ed();
 //#endregion

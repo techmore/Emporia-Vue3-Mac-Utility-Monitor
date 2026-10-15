@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.48 - 2026-10-15
+
+- Match furniture dimension controls to the pinned renderer's supported fields
+  and defaults; remove misleading controls that could not affect the 3D model.
+
 ## 2.3.47 - 2026-10-15
 
 - Allow Home 3D selectors to shrink within their labels, fixing horizontal

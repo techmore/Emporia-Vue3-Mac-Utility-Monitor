@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, clampSensor, relocateSensors } from '../frontend/house-control/src/plan-edit.js';
+import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, clampSensor, relocateSensors, furnitureDimensions } from '../frontend/house-control/src/plan-edit.js';
 import { sensorKey, sensorReading } from '../frontend/house-control/src/sensors.js';
 const room = drawnRoom([4,4],[1.1,1.2],'r');
 assert.deepEqual(room.rect,[1,1.25,3,2.75]);
@@ -21,3 +21,8 @@ assert.notEqual(sensorKey({source:'a',sensor_id:'x'}),sensorKey({source:'b',sens
 assert.equal(sensorReading({metrics:{temperature_f:32,humidity_pct:0,radon_pci_l:0}}),'32.0 °F · 0.0 % RH · 0.0 pCi/L');
 assert.equal(sensorReading({metrics:{temperature_f:null}}),'No recorded values');
 console.log('Sensor relocation, bounds, namespaced identities and zero/missing measurement checks passed');
+assert.deepEqual(furnitureDimensions({type:'sofa'}),[['width',2.2]]);
+assert.deepEqual(furnitureDimensions({type:'wardrobe',width:2}),[['width',2],['height',2.1]]);
+assert.deepEqual(furnitureDimensions({type:'plant'}),[['height',1.2]]);
+assert.deepEqual(furnitureDimensions({type:'armchair',width:9,height:9}),[]);
+console.log('Furniture inspector fields match renderer-supported dimensions and defaults');

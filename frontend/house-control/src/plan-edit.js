@@ -40,3 +40,13 @@ export function relocateSensors(placements, roomId, before, room) {
       sensor.position[1]+room.rect[1]-before[1]],room);
   }
 }
+// Match the pinned vendor furniture constructors; fixed-size templates expose no sizes.
+export function furnitureDimensions(item) {
+  const widths={sofa:2.2,coffeeTable:1.1,tv:1.7,sideboard:1.6,diningSet:1.8,
+    island:2,kitchen:3,bed:1.6,dresser:1.3,vanity:1,desk:1.4,wardrobe:1.6,bookshelf:1};
+  const heights={plant:1.2,wardrobe:2.1,bookshelf:1.8};
+  const fields=[];
+  if(widths[item.type]!=null)fields.push(['width',item.width ?? widths[item.type]]);
+  if(heights[item.type]!=null)fields.push(['height',item.height ?? heights[item.type]]);
+  return fields;
+}

@@ -45,7 +45,8 @@ plan, or Add room and edit its dimensions. Drag a room to move it, drag its
 corner to resize, and use the selection list/fields for keyboard access.
 Arrow keys on the focused plan move the selected item in 0.25-meter steps.
 Add furniture/openings, choose their type and position, and use Undo/Redo for
-draft changes. Openings must lie on walls to appear in 3D; they and furniture
+draft changes. Furniture dimensions appear only when supported by that template,
+using the renderer's actual defaults. Openings must lie on walls to appear in 3D; they and furniture
 move independently of rooms. Save floor plan updates the 3D model and saves
 current circuit selections for retained rooms. Room IDs survive renaming and
 moving. Deleting a room requires confirmation and removes its mappings on save.

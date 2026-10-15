@@ -1,4 +1,4 @@
-import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, snap, clampSensor, relocateSensors } from './plan-edit.js';
+import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, snap, clampSensor, relocateSensors, furnitureDimensions } from './plan-edit.js';
 import { sensorKey } from './sensors.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -91,8 +91,10 @@ export function createEditor(root, { onSave, onDirty }) {
       field('Furniture type', item.type, value => { item.type = value; }, furnitureTypes);
       ['X (m)','Z (m)'].forEach((name, i) => field(name, item.pos[i], value => { item.pos[i] = Math.max(-100, Math.min(100, value)); }));
       field('Rotation', item.rot || 0, value => { item.rot = Math.max(-360, Math.min(360, value)); });
-      field('Furniture width', item.width || 1, value => { item.width = Math.max(0.3, Math.min(10, value)); });
-      field('Furniture height', item.height || 1, value => { item.height = Math.max(0.3, Math.min(10, value)); });
+      for(const [key,value] of furnitureDimensions(item)) {
+        field(`Furniture ${key}`,value,next=>{item[key]=Math.max(0.3,Math.min(10,next));});
+      }
+      inspector.append(element('small','Only dimensions supported by this furniture template are editable.'));
     } else {
       field('Opening type', item.type, value => { item.type = value; }, ['door','window','open']);
       const horizontal = item.from[1] === item.to[1];
