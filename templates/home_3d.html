@@ -1,0 +1,17 @@
+<div class="page home3d">
+  <header class="home3d-head"><div><h1>Home 3D</h1><p id="home3d-name">Loading floor plan...</p></div><span class="home3d-badge">Preview · read-only</span></header>
+  <p id="home3d-status" role="status">Connecting to the collector...</p>
+  <div class="home3d-toolbar">
+    <label>Room overlay <select id="home3d-metric"><option value="watts">Estimated power now</option><option value="kwh_24h">Recorded energy · 24h</option><option value="cost_24h">Recorded usage cost · 24h</option></select></label>
+    <button id="home3d-reset" type="button">Reset view</button><button id="home3d-refresh" type="button">Refresh</button><button id="home3d-reload" type="button">Reload saved plan</button>
+  </div>
+  <div class="home3d-layout">
+    <section class="card home3d-stage" aria-label="Interactive floor plan"><canvas id="home3d-canvas" aria-label="3D floor plan. Drag to rotate; scroll or pinch to zoom."></canvas><div id="home3d-labels" aria-hidden="true"></div><p id="home3d-render-error" hidden></p></section>
+    <section class="card home3d-rooms" aria-label="Room energy summaries"><h2>Mapped circuit totals</h2><p>Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.</p><div id="home3d-rooms"></div></section>
+  </div>
+  <p class="home3d-caption">Room positions come from your plan. No circuits are assigned automatically. Missing readings remain unknown. Usage cost excludes the monthly fixed charge.</p>
+  <details class="card home3d-setup" open><summary>Map circuits to rooms</summary><p id="home3d-panel"></p><div id="home3d-mappings"></div><button id="home3d-save" type="button" disabled>Save room mappings</button><p id="home3d-save-status" role="status"></p></details>
+  <details class="card home3d-setup"><summary>Floor plan</summary><p>Import a house-control JSON floor plan to replace this example. Rooms, openings and furniture are supported. Device links, scenes and credentials are omitted. Importing clears existing room mappings after confirmation.</p><label>Import floor plan <input id="home3d-import" type="file" accept=".json,application/json"></label><button id="home3d-export" type="button">Download floor plan</button><p>The full house-control visual editor is not included in this preview.</p></details>
+  <p class="home3d-caption">Floor-plan renderer from <a href="https://github.com/0xProbabillity/house-control" target="_blank" rel="noopener noreferrer">house-control</a> (MIT), with Three.js. <a href="/static/house-control/LICENSES.txt">Licenses</a></p>
+</div>
+<script type="module" src="/static/house-control/home-3d.js"></script>

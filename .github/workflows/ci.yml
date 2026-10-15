@@ -5,6 +5,19 @@ on:
   pull_request:
 
 jobs:
+  home-3d-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Rebuild committed Home 3D assets
+        run: |
+          npm ci --ignore-scripts --prefix frontend/house-control
+          npm run build --prefix frontend/house-control
+          git diff --exit-code -- static/house-control
+
   linux-service:
     runs-on: ubuntu-latest
     steps:
@@ -85,11 +98,13 @@ jobs:
           venv/bin/python3 - <<'PY'
           import web
           client = web.app.test_client()
-          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara']:
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/home-3d', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara']:
               response = client.get(path, follow_redirects=True)
               assert response.status_code == 200, f"{path}: {response.status_code}"
           assert client.get('/api/menu-summary').status_code == 200
           assert client.get('/api/climate/replay?demo=1').status_code == 200
+          assert client.get('/api/house-control/config').status_code == 200
+          assert client.get('/api/house-control/state').status_code == 200
           PY
 
       - name: Compile and package release

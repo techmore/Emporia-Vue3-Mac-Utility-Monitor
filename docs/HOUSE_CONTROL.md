@@ -1,0 +1,86 @@
+# House-control integration preview
+
+Open **Home 3D** (`/home-3d`) in the existing dashboard. This optional page reuses
+house-control's floor, wall, opening and furniture renderer, with a new adapter
+for Emporia's recorded circuit data. SER8 remains the authoritative collector.
+The page works in browser clients on macOS and Linux; no AppKit bridge is used.
+
+## Use
+
+1. The initial four-room plan is explicitly an example, with no circuits mapped.
+2. Import a house-control JSON plan under Floor plan. Import replaces geometry
+   and clears all mappings after confirmation. Only rooms, openings, furniture,
+   camera and wall dimensions survive validation. Device links/scenes/secrets
+   are omitted. Download floor plan exports this geometry for editing elsewhere.
+3. Under Map circuits to rooms, assign circuits from the active panel and Save.
+   Each circuit can belong to one room. A circuit serving several rooms must
+   remain unassigned or be associated with one explicitly understood grouping;
+   the app cannot measure separate room consumption from one circuit.
+4. Choose power, recorded 24-hour kWh, or recorded 24-hour usage cost. Click a
+   room on the plan or its accessible card to see assigned circuits. Rotate by
+   dragging; scroll/pinch to zoom. Room cards and mapping controls also work
+   when WebGL is unavailable.
+
+Unknown/stale circuit power remains unknown. A room total is unknown when any
+assigned circuit lacks that metric; reported zero is preserved. Historical cost
+comes from stored consumption charges and excludes monthly fixed charges.
+The power overlay uses the same interval-derived watt estimates and freshness
+rules as the current menu API; this integration does not solve interval modeling
+tracked in #135. Totals describe **assigned circuits**, not measured room load.
+Other-panel mappings are retained and cannot attach by channel name alone.
+
+The page refreshes every 30 seconds while visible. Lost connections clear live
+watts and label retained historical values. Conflicting edits return HTTP 409
+and require reloading; edits are not silently overwritten. Private geometry and
+mappings are stored in `house-control.json` beside `DB_PATH`, mode 0600, using
+an atomic replacement and a process-shared lock. Include the file in private
+installation backups, never in Git or release artifacts.
+
+## Integration boundary
+
+This first branch implements the read-only data/visualization milestone of #148.
+It does not import house-control's native app, visual editor, vendor clients,
+device commands, scenes, AI links/MCP server or Mac/iPhone sync. Existing Kasa,
+Mitsubishi, Aqara and EcoQube pages continue to operate independently. No public
+endpoint or extra authentication exemption is introduced; the existing Flask
+host/origin policy and deployment gateway apply to all new routes.
+
+## Upstream and rebuild
+
+Upstream: https://github.com/0xProbabillity/house-control
+Pinned commit: `1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9` (MIT).
+Unmodified source modules and SHA-256 provenance are in
+`frontend/house-control/vendor/`. Their original colors/materials are retained;
+the new page chrome follows the existing olive/stone theme.
+
+The committed bundle and license notices under `static/house-control/` are
+included in Python/macOS source releases. Normal app startup does not require
+Node, npm, a CDN, or a separate frontend server. To rebuild from the Git checkout
+with Node 22.12+:
+
+```bash
+cd frontend/house-control
+npm ci --ignore-scripts
+npm run build
+```
+
+Three.js 0.186.1 and Vite 8.3.4 are pinned in the package manifest and lockfile.
+The bundle contains the Three.js runtime; Vite is only a build dependency.
+Redistributions must keep `static/house-control/LICENSES.txt` with the bundle.
+
+## Verify
+
+- Visit `/home-3d` with an empty test database: the example plan must render,
+  report no readings and show no invented mappings/power.
+- With known panel data, assign a circuit, save, reload, and compare its 24-hour
+  usage/cost with the existing circuit summary. Verify zero differs from missing.
+- Load the page in two tabs; save in one, then save the other's old revision:
+  the latter must return 409 without overwriting the first tab's mappings.
+- Import a plan with duplicate room IDs or invalid/nonfinite geometry: reject
+  it without changing the saved plan. Importing upstream plans omits device links.
+- Check desktop and mobile layouts, WebGL failure fallback, and network-loss
+  handling. Existing dashboard, menu summary and climate lab must still work.
+
+```bash
+venv/bin/python3 -m unittest discover -s tests -p 'test_house_control.py' -v
+```

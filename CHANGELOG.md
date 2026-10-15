@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.3.44 - 2026-10-15
+
+- Add a Home 3D preview using pinned MIT-licensed house-control floor-plan and
+  furniture renderers, bundled locally with Three.js for Mac/Linux browsers.
+- Import/export geometry and persist explicit panel/circuit-to-room mappings.
+  Show existing power estimates and recorded 24-hour usage/cost without splitting
+  shared circuits, double-counting two-pole slots, or showing missing data as zero.
+- Keep mappings private, bound imports, and reject stale concurrent saves.
+  No additional collectors, vendor logins, device commands, or AI gateways start.
+
 ## 2.3.43 - 2026-10-12
 
 - Add opt-in trusted-proxy support for one explicitly configured HTTPS public

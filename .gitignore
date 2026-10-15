@@ -71,3 +71,8 @@ mitsubishi-module.lock
 
 # Raw Emporia data exports contain household usage data; never commit them.
 data-export-*/
+
+# Optional Home 3D build dependencies and private floor-plan mappings
+node_modules/
+house-control.json
+house-control.lock
