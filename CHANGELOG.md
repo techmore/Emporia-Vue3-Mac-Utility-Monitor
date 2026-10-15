@@ -5,6 +5,8 @@
 - Make the isolated preview navigation badge follow the live SER8 feed instead of
   the copied local history's age. Browser fetch failures also clear feed connectivity.
   Normal production navigation and collection are unchanged.
+- Include the preview mains reader in source release archives; release validation
+  rejects bundles missing the new module.
 
 ## 2.3.51 - 2026-10-15
 
