@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/0xProbabillity/house-control",
+  "commit": "1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9",
+  "license": "MIT",
+  "files": {
+    "LICENSE": "49f645e6eab667e0ab99c0bdb5ecfb1ef997bf33be19671803d639d3f0f983ff",
+    "config.js": "4ea792cc3b2758b477adb686e977919627310f465aee0cfb06942ab83e812e09",
+    "three/furniture.js": "91918ff1f48f8cf1c22bd0f19172cff987f5b099fe5588b6d0805e70f7a2ef1a",
+    "three/house.js": "0ebbf3270bfe37f7a5679a072ac8eae9aa01a18e128fa847cc95a9d8c60b76b4",
+    "three/kit.js": "dd4b470595b5c18e5567674a96d457f60f75c29f293d775555adc82e4ac893a8"
+  }
+}

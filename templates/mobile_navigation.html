@@ -12,7 +12,7 @@
 }
 </style>
 <nav class="mobile-sections" aria-label="Device sections">
-{% for path, label in [('/circuits', 'Circuits'), ('/aqara', 'Aqara'), ('/radon', 'EcoQube'), ('/mitsubishi', 'Mitsubishi'), ('/kasa', 'Kasa')] %}
+{% for path, label in [('/circuits', 'Circuits'), ('/aqara', 'Aqara'), ('/radon', 'EcoQube'), ('/mitsubishi', 'Mitsubishi'), ('/kasa', 'Kasa'), ('/home-3d', 'Home 3D')] %}
   <a href="{{ path }}" {% if mobile_path == path %}aria-current="page"{% endif %}>{{ label }}</a>
 {% endfor %}
 </nav>

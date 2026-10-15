@@ -5,7 +5,7 @@ import web
 
 class MobileNavigationTests(unittest.TestCase):
     def test_sections_render_with_current_location(self):
-        for path in ('/circuits', '/aqara', '/radon', '/mitsubishi', '/kasa'):
+        for path in ('/circuits', '/aqara', '/radon', '/mitsubishi', '/kasa', '/home-3d'):
             with self.subTest(path=path), web.app.test_request_context(path):
                 page = web._render('<main>Fixture</main>')
                 self.assertIn(f'href="{path}" aria-current="page"', page)

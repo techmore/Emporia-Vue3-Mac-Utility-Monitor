@@ -30,6 +30,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import energy
+import house_control
 import panel_photos
 import radon
 from extensions import HOUSE_CSS, register_extensions
@@ -78,6 +79,8 @@ def validate_local_request():
         request.max_content_length = 8192
     if request.path == '/api/aqara/local/label':
         request.max_content_length = 8192
+    if request.path == '/api/house-control/config':
+        request.max_content_length = 256 * 1024
     request_origin = request.host_url.rstrip("/")
     local_host = urlsplit(request_origin).hostname in {"localhost", "127.0.0.1", "::1"}
     public_host = bool(PUBLIC_ORIGIN and request_origin == PUBLIC_ORIGIN)
@@ -993,6 +996,7 @@ NAV_HTML = """
       <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
       <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
       <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
+      <a href="/home-3d" class="{{ 'active' if active_page == 'home-3d' else '' }}">Home 3D</a>
       <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
       <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
       <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}">HVAC</a>
@@ -4298,6 +4302,43 @@ def api_monthly_costs():
 
 @app.route("/api/menu-summary")
 def api_menu_summary():
+    return jsonify(_build_menu_summary_payload())
+
+
+@app.get("/home-3d")
+def home_3d():
+    return _render('{% include "home_3d.html" %}', active_page="home-3d", **_common())
+
+
+@app.route("/api/house-control/config", methods=["GET", "PUT"])
+def house_control_config():
+    if request.method == "GET":
+        result = house_control.load_config()
+    else:
+        if request.headers.get("Origin", "").rstrip("/") != request.host_url.rstrip("/"):
+            return jsonify({"error": "Explicit same-origin request required"}), 403
+        try:
+            result = house_control.save_config(request.get_json())
+        except house_control.RevisionConflict as exc:
+            return jsonify({"error": str(exc)}), 409
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": str(exc)}), 400
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/api/house-control/state")
+def house_control_state():
+    menu = _build_menu_summary_payload()
+    gid = menu["active_device_gid"]
+    summary = energy.get_summary(24, gid) if gid else []
+    response = jsonify(house_control.project_state(house_control.load_config(), menu, summary))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _build_menu_summary_payload() -> dict:
     """Small native-menu payload; no templates or dashboard analytics required."""
     gid = energy.get_active_device_gid()
     latest = energy.get_latest(gid)
@@ -4397,7 +4438,7 @@ def api_menu_summary():
     circuits.sort(key=lambda row: (-(row["watts"] or 0), row["display_name"]))
     total = energy.get_main_total(24, gid)
     this_month = next(iter(energy.get_monthly_costs(1, gid)), None)
-    return jsonify({
+    return {
         "version": VERSION, "online": online, "current_watts": watts,
         "active_device_gid": gid,
         "collector_source_id": energy.get_reading_changes(0, 1)["source_id"],
@@ -4411,7 +4452,7 @@ def api_menu_summary():
         "last_reading": main["timestamp"] if main else None,
         "top_circuits": circuits[:5],
         "radon_reading": radon.get_latest_indicator(),
-    })
+    }
 
 
 @app.route("/api/circuit-history/<path:circuit_name>")
@@ -5701,7 +5742,7 @@ def handle_large_upload(_exc):
     return jsonify({"error": f"Upload too large. Limit is {max_mb:.0f} MB"}), 413
 
 
-BASE_CSS += HOUSE_CSS
+BASE_CSS += HOUSE_CSS + house_control.HOUSE_CONTROL_CSS
 register_extensions(app, _render, _common)
 
 

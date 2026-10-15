@@ -20,6 +20,8 @@ _kasa_control_lock = threading.Lock()
 
 CATALOG = ({'id': 'climate', 'name': 'House climate', 'status': 'experimental',
             'url': '/house', 'sources': ['aqara', 'home_assistant', 'manual']},
+           {'id': 'house-control', 'name': 'Home 3D', 'status': 'experimental',
+            'url': '/home-3d', 'sources': ['emporia']},
            {'id': 'radon', 'name': 'Radon history', 'status': 'not_connected',
             'url': '/radon', 'sources': ['ecosense', 'home_assistant', 'manual']},
            {'id': 'mitsubishi', 'name': 'Mitsubishi Comfort', 'status': 'optional',

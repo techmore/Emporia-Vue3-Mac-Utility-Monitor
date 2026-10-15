@@ -272,6 +272,19 @@ def _history_table(conn) -> str:
     return 'radon_cached_readings' if cached else 'radon_readings'
 
 
+def get_latest_readings() -> list[dict]:
+    """One latest sample per identity, respecting the remote collector cache."""
+    conn = energy._connect()
+    try:
+        table = _history_table(conn)
+        return [dict(row) for row in conn.execute(f'''SELECT r.* FROM {table} r
+            WHERE r.timestamp=(SELECT MAX(n.timestamp) FROM {table} n
+                WHERE n.source=r.source AND n.sensor_id=r.sensor_id)
+            ORDER BY r.source,r.sensor_id''')]
+    finally:
+        conn.close()
+
+
 def observation_chart(rows: list[dict], now: datetime | None = None, days: int = 7) -> dict:
     """Plot recorded samples, breaking connecting lines at gaps over three hours."""
     if isinstance(days, bool) or days not in (1, 7, 30, 365):
