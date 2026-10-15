@@ -1214,6 +1214,29 @@ def get_mains_history(device_gid: str, now: datetime | None = None) -> dict:
             window_start=start.isoformat(), window_end=end.isoformat()) for row in rows}
 
 
+def get_mains_history_chart(device_gid: str, now: datetime | None = None) -> dict:
+    """1440 UTC minute buckets of measured average watts, with explicit null gaps."""
+    end = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(second=0, microsecond=0)
+    start = end - timedelta(hours=24)
+    names = (('Main', 'Total'), ('Mains_A', 'Leg A'), ('Mains_B', 'Leg B'))
+    values = {name: [None] * 1440 for name, _ in names}
+    conn = _connect()
+    try:
+        rows = conn.execute('''SELECT channel_name,timestamp,usage_kwh FROM mains_intervals
+            WHERE device_gid=? AND channel_name IN ('Main','Mains_A','Mains_B')
+            AND timestamp>=? AND timestamp<? ORDER BY timestamp''',
+            (str(device_gid), start.isoformat(), end.isoformat())).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        stamp = datetime.fromisoformat(row['timestamp'])
+        index = int((stamp - start).total_seconds() / 60)
+        values[row['channel_name']][index] = row['usage_kwh'] * 60000
+    return {'start': start.isoformat(), 'end': end.isoformat(), 'interval_seconds': 60,
+            'series': [{'channel_name': name, 'name': label, 'values': values[name]}
+                       for name, label in names]}
+
+
 def collect_mains_history(vue, device_gid: str) -> dict:
     from emporia_mains import collect
     end = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)

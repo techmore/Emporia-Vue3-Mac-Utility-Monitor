@@ -207,6 +207,18 @@ In live preview mode the navigation badge follows SER8 transport and recent powe
 not the copied local historical database. Individual environmental sensors can still
 be stale independently of the power feed; their measurement timestamps remain visible.
 
+The preview's 24-hour mains chart reads only `mains_intervals` for the active
+panel: Total (olive, solid), A (blue, dashed), B (rust, dotted). It uses a fixed
+1440-minute UTC grid and converts each recorded kWh minute to average watts;
+missing buckets are explicit nulls and break the line, never zero-filled,
+interpolated across gaps, or combined into a stacked total. A local-time minute
+slider/pointer readout shows exact values or `Missing`, including the date/time
+zone around daylight-saving changes. The chart is self-contained SVG with no CDN
+or new dependencies; narrow screens can scroll the plot inside its card. Empty
+history is explained, and already received history remains visible on disconnect.
+It refreshes with the existing preview state every 30 seconds without touching
+floor-plan drafts. No chart endpoint or data is added to the production instance.
+
 Upstream: https://github.com/0xProbabillity/house-control
 Pinned commit: `1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9` (MIT).
 Unmodified source modules and SHA-256 provenance are in

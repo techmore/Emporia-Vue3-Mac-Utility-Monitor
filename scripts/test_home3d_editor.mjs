@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './test_mains_chart.mjs';
 import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, clampSensor, relocateSensors, furnitureDimensions } from '../frontend/house-control/src/plan-edit.js';
 import { sensorKey, sensorReading } from '../frontend/house-control/src/sensors.js';
 const room = drawnRoom([4,4],[1.1,1.2],'r');

@@ -154,6 +154,31 @@ class MainsHistoryTests(unittest.TestCase):
             vue.login.assert_called_once_with(id_token='id', access_token='access',
                                                refresh_token='refresh', token_storage_file='keys.json')
 
+    def test_chart_uses_measured_minutes_zero_and_null_gaps_without_other_panels_or_c(self):
+        rows = self.samples(3)
+        rows = [r for r in rows if not (r['channel_name'] == 'Mains_A'
+                and r['timestamp'] == (self.start + timedelta(minutes=1)).isoformat())]
+        rows[0]['usage_kwh'] = 0
+        energy.store_mains_intervals('551741', rows, 22.58)
+        energy.store_mains_intervals('99', self.samples(3), 22.58)
+        chart = energy.get_mains_history_chart('551741', self.end)
+        self.assertEqual(chart['interval_seconds'], 60)
+        self.assertEqual(chart['start'], self.start.isoformat())
+        self.assertEqual(chart['end'], self.end.isoformat())
+        self.assertEqual([r['name'] for r in chart['series']], ['Total', 'Leg A', 'Leg B'])
+        self.assertTrue(all(len(r['values']) == 1440 for r in chart['series']))
+        self.assertEqual(chart['series'][0]['values'][:4], [0, 480, 480, None])
+        self.assertEqual(chart['series'][1]['values'][:4], [180, None, 180, None])
+        self.assertEqual(chart['series'][2]['values'][:4], [300, 300, 300, None])
+        empty = energy.get_mains_history_chart('100', self.end)
+        self.assertTrue(all(value is None for r in empty['series'] for value in r['values']))
+
+    def test_chart_window_is_exactly_24_hours_across_dst(self):
+        from zoneinfo import ZoneInfo
+        end = datetime(2026, 3, 8, 12, tzinfo=ZoneInfo('America/New_York'))
+        chart = energy.get_mains_history_chart('551741', end)
+        self.assertEqual(mains.utc(chart['end']) - mains.utc(chart['start']), timedelta(hours=24))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.54 - 2026-10-15
+
+- Add a preview-only 24-hour measured mains power chart: separate olive Total,
+  blue Leg A and rust Leg B lines, with distinct line patterns and null gaps.
+- Read exactly 1440 UTC minute intervals for the active panel, preserving recorded
+  zero/negative values and never interpolating or summing Main with its own legs.
+- Add accessible local-time minute inspection, responsive in-card scrolling,
+  empty/error states and retained historical display during disconnection.
+- Test chart segmentation, missing/zero values, bounds, panel isolation and DST;
+  no new dependencies or changes to the deployed production instance.
+
 ## 2.3.53 - 2026-10-15
 
 - Share bounded actual mains chart collection between the branch poller and local

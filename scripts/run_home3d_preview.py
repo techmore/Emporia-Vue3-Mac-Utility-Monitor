@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -31,6 +32,7 @@ def main() -> None:
     os.chdir(root)
     from flask import jsonify, redirect, request
 
+    import energy
     import house_control
     import web
 
@@ -46,10 +48,12 @@ def main() -> None:
                 request.path == '/api/house-control/config' and request.method == 'PUT'):
             return jsonify(error='Device controls and collector changes are disabled in this preview.'), 403
         if args.sensors_host and request.path == '/api/house-control/state':
-            power = power_snapshot()
+            now = datetime.now(timezone.utc)
+            power = power_snapshot(now)
             payload = house_control.project_state(house_control.load_config(), power['menu'], power['summary'])
             payload['mains'] = power['mains']
             payload['power_captured_at'] = power['captured_at']
+            payload['mains_history'] = energy.get_mains_history_chart(power['menu']['active_device_gid'], now)
             return jsonify(payload)
         if args.sensors_host and request.path == '/api/house-control/config' and request.method == 'PUT':
             if request.headers.get('Origin', '').rstrip('/') != request.host_url.rstrip('/'):

@@ -2,6 +2,7 @@ import { createView } from './view.js';
 import { createEditor } from './editor.js';
 import { retainRoomBindings } from './plan-edit.js';
 import { sensorReading } from './sensors.js';
+import { renderMainsChart } from './mains-chart.js';
 
 const $ = id => document.getElementById(`home3d-${id}`);
 const format = (value, metric) => value == null ? 'Unknown' : metric === 'watts'
@@ -53,6 +54,7 @@ function renderState() {
       + ` · Last reading: ${state.last_reading || 'none'} · Last refresh: ${state.sensor_sync.last_success || 'none'}`;
   }
   const mains=$('mains');mains.replaceChildren();
+  renderMainsChart($('mains-history'),state.mains_history);
   $('mains-section').hidden=!state.mains?.length;
   for(const row of state.mains || []) {
     const card=node('article','','home3d-sensor');
