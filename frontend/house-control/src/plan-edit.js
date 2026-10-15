@@ -30,3 +30,13 @@ export function retainRoomBindings(bindings, plan) {
   const rooms = new Set(plan.rooms.map(room => room.id));
   return bindings.filter(binding => rooms.has(binding.room_id));
 }
+export function clampSensor(position, room) {
+  const [x,z,w,d] = room.rect;
+  return [Math.max(x,Math.min(x+w,snap(position[0]))),Math.max(z,Math.min(z+d,snap(position[1])))];
+}
+export function relocateSensors(placements, roomId, before, room) {
+  for (const sensor of placements.filter(row => row.room_id === roomId)) {
+    sensor.position = clampSensor([sensor.position[0]+room.rect[0]-before[0],
+      sensor.position[1]+room.rect[1]-before[1]],room);
+  }
+}

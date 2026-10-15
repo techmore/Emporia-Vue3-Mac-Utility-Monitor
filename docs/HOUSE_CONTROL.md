@@ -9,7 +9,7 @@ The page works in browser clients on macOS and Linux; no AppKit bridge is used.
 
 1. The initial four-room plan is explicitly an example, with no circuits mapped.
 2. Import a house-control JSON plan under Floor plan. Import replaces geometry
-   and clears all mappings after confirmation. Only rooms, openings, furniture,
+   and clears all mappings and sensor placements after confirmation. Only rooms, openings, furniture,
    camera and wall dimensions survive validation. Device links/scenes/secrets
    are omitted. Download floor plan exports this geometry for editing elsewhere.
 3. Under Map circuits to rooms, assign circuits from the active panel and Save.
@@ -51,6 +51,33 @@ current circuit selections for retained rooms. Room IDs survive renaming and
 moving. Deleting a room requires confirmation and removes its mappings on save.
 Reload discards drafts only after confirmation. Browser navigation warns about
 unsaved edits. The geometry editor works without WebGL.
+
+### Environmental sensor placement
+
+The recorded sensor list reads existing Aqara local/Matter observations, climate
+observations (including Home Assistant), and EcoQube/radon history. It makes no
+vendor requests and starts no new collectors. Source plus sensor ID is the identity;
+identical IDs from different sources remain distinct. Names come from existing
+sensor labels. Climate/Aqara samples older than 3 minutes, radon samples older than
+3 hours, and samples over 5 minutes in the future are marked stale. Lost connections
+also mark all retained sensor observations stale. Temperature defaults to Fahrenheit;
+missing measurements are never replaced by zero. A recent sample is not a guarantee
+that its device is online.
+
+Select a recorded sensor in the editor, choose **Place sensor on plan**, then click
+inside a room. Or select a room in **Selected item** and use **Place in selected room
+center** for keyboard access. Drag a placed marker within its room, or use its room
+and X/Z fields. Save floor plan persists placements with geometry and circuit mappings.
+Undo/Redo includes placements. Moving a room moves its sensors; resizing clamps them
+inside the new boundary. Deleting a room explicitly removes its placements on save.
+Delete a selected sensor marker to unplace it; this never deletes readings or changes
+the physical sensor. Disappeared devices remain listed as stale/unavailable while placed.
+
+3D markers and accessible sensor cards show the saved layout and observation timestamps.
+Placements are stored in the private `house-control.json`, not in the older climate-lab
+schematic or sensor registry. Geometry downloads exclude identities and placements;
+include `house-control.json` in private backups to restore them. Config updates from
+older clients that omit `sensors` preserve placements and reject incompatible room edits.
 
 This first branch implements the read-only data/visualization milestone of #148.
 It does not import house-control's native app, vendor clients,
@@ -94,7 +121,12 @@ Redistributions must keep `static/house-control/LICENSES.txt` with the bundle.
   it without changing the saved plan. Importing upstream plans omits device links.
 - Check desktop and mobile layouts, WebGL failure fallback, and network-loss
   handling. Existing dashboard, menu summary and climate lab must still work.
+- Place a known sensor, save/reload, move and resize its room, and verify its
+  coordinates and room association. Undo room deletion must restore its placement.
+- Compare Fahrenheit, humidity and radon values against existing sensor pages.
+  Check stale observations, zero readings, source-ID collisions and vanished sensors.
 
 ```bash
 venv/bin/python3 -m unittest discover -s tests -p 'test_house_control.py' -v
+node scripts/test_home3d_editor.mjs
 ```

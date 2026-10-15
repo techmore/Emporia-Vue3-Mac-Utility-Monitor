@@ -12283,8 +12283,21 @@ function pu(e) {
 	return t;
 }
 //#endregion
+//#region src/sensors.js
+var mu = (e) => JSON.stringify([e.source, e.sensor_id]);
+function hu(e) {
+	let t = e.metrics || {}, n = [];
+	for (let [e, r] of [
+		["temperature_f", "°F"],
+		["humidity_pct", "% RH"],
+		["radon_pci_l", "pCi/L"],
+		["battery_pct", "% battery"]
+	]) Number.isFinite(t[e]) && n.push(`${t[e].toFixed(1)} ${r}`);
+	return n.join(" · ") || "No recorded values";
+}
+//#endregion
 //#region src/view.js
-function mu(e, t, n, r) {
+function gu(e, t, n, r) {
 	let i = Ml(n), a = getComputedStyle(document.documentElement), o = new rl({
 		canvas: e,
 		antialias: !0,
@@ -12310,52 +12323,66 @@ function mu(e, t, n, r) {
 			node: n,
 			point: new W(e.x + e.w / 2, .3, e.z + e.d / 2)
 		};
-	}), C = new Map(u.floors.map((e) => (e.material = e.material.clone(), [e.userData.id, e]))), w = !1;
-	function T() {
-		if (w || document.hidden) return;
+	}), C = new Map(u.floors.map((e) => (e.material = e.material.clone(), [e.userData.id, e]))), w = /* @__PURE__ */ new Map(), T = !1;
+	function E() {
+		if (T || document.hidden) return;
 		o.render(s, c);
 		let t = e.getBoundingClientRect();
-		for (let e of S) {
+		for (let e of [...S, ...w.values()]) {
 			let n = e.point.clone().project(c);
 			e.node.hidden = n.z < -1 || n.z > 1, e.node.style.left = `${(n.x + 1) * t.width / 2}px`, e.node.style.top = `${(1 - n.y) * t.height / 2}px`;
 		}
 	}
-	function E() {
+	function D() {
 		p.target.copy(x);
 		let e = i.camera.elevation * Math.PI / 180, t = c.fov * Math.PI / 360, n = Math.atan(Math.tan(t) * c.aspect), r = b.radius / Math.sin(Math.min(t, n)) * 1.06;
-		p.maxDistance = Math.max(v * 5, r * 1.5), c.position.copy(x).add(new W(l.x * Math.cos(e), Math.sin(e), l.z * Math.cos(e)).multiplyScalar(r)), p.update(), T();
+		p.maxDistance = Math.max(v * 5, r * 1.5), c.position.copy(x).add(new W(l.x * Math.cos(e), Math.sin(e), l.z * Math.cos(e)).multiplyScalar(r)), p.update(), E();
 	}
-	function D() {
+	function O() {
 		let t = e.getBoundingClientRect();
-		t.width && t.height && (o.setSize(t.width, t.height, !1), c.aspect = t.width / t.height, c.updateProjectionMatrix(), E());
+		t.width && t.height && (o.setSize(t.width, t.height, !1), c.aspect = t.width / t.height, c.updateProjectionMatrix(), D());
 	}
-	p.addEventListener("change", T);
-	let O = new ResizeObserver(D);
-	O.observe(e);
-	let k = new Na(), A, j = (e) => {
-		A = [e.clientX, e.clientY];
-	}, M = (t) => {
-		if (!A || Math.hypot(t.clientX - A[0], t.clientY - A[1]) > 5) return;
+	p.addEventListener("change", E);
+	let k = new ResizeObserver(O);
+	k.observe(e);
+	let A = new Na(), j, M = (e) => {
+		j = [e.clientX, e.clientY];
+	}, N = (t) => {
+		if (!j || Math.hypot(t.clientX - j[0], t.clientY - j[1]) > 5) return;
 		let n = e.getBoundingClientRect();
-		k.setFromCamera(new U((t.clientX - n.left) / n.width * 2 - 1, 1 - (t.clientY - n.top) / n.height * 2), c);
-		let i = k.intersectObjects(u.floors, !1)[0];
+		A.setFromCamera(new U((t.clientX - n.left) / n.width * 2 - 1, 1 - (t.clientY - n.top) / n.height * 2), c);
+		let i = A.intersectObjects(u.floors, !1)[0];
 		i && r(i.object.userData.id);
 	};
-	return e.addEventListener("pointerdown", j), e.addEventListener("pointerup", M), document.addEventListener("visibilitychange", T), D(), {
-		reset: E,
-		update(e, t, n) {
-			let r = Math.max(1, ...e.map((e) => Math.max(0, e[t] ?? 0)));
-			for (let i of S) {
-				let o = e.find((e) => e.id === i.id);
-				if (!o) continue;
-				i.node.textContent = `${o.name} · ${n(o[t], t)}`;
-				let s = C.get(i.id).material;
-				s.emissive.set(a.getPropertyValue("--olive-600").trim()), s.emissiveIntensity = o[t] == null ? 0 : .12 + .5 * Math.max(0, o[t]) / r;
+	return e.addEventListener("pointerdown", M), e.addEventListener("pointerup", N), document.addEventListener("visibilitychange", E), O(), {
+		reset: D,
+		update(e, n, r, i = []) {
+			let o = i.filter((e) => e.placement), s = new Set(o.map(mu));
+			for (let [e, t] of w) s.has(e) || (t.node.remove(), w.delete(e));
+			for (let e of o) {
+				let n = mu(e);
+				if (!w.has(n)) {
+					let e = document.createElement("span");
+					e.className = "home3d-label home3d-sensor-marker", t.append(e), w.set(n, {
+						node: e,
+						point: new W()
+					});
+				}
+				let r = w.get(n);
+				r.point.set(e.placement.position[0], .65, e.placement.position[1]), r.node.dataset.sensorSource = e.source, r.node.classList.toggle("stale", e.stale), r.node.textContent = `${e.name} · ${hu(e)}${e.stale ? " · stale" : ""}`;
 			}
-			T();
+			let c = Math.max(1, ...e.map((e) => Math.max(0, e[n] ?? 0)));
+			for (let t of S) {
+				let i = e.find((e) => e.id === t.id);
+				if (!i) continue;
+				t.node.textContent = `${i.name} · ${r(i[n], n)}`;
+				let o = C.get(t.id).material;
+				o.emissive.set(a.getPropertyValue("--olive-600").trim()), o.emissiveIntensity = i[n] == null ? 0 : .12 + .5 * Math.max(0, i[n]) / c;
+			}
+			E();
 		},
 		dispose() {
-			w = !0, O.disconnect(), p.dispose(), document.removeEventListener("visibilitychange", T), e.removeEventListener("pointerdown", j), e.removeEventListener("pointerup", M);
+			T = !0, k.disconnect(), p.dispose(), document.removeEventListener("visibilitychange", E), e.removeEventListener("pointerdown", M), e.removeEventListener("pointerup", N);
 			let n = /* @__PURE__ */ new Set(), r = /* @__PURE__ */ new Set(), i = /* @__PURE__ */ new Set();
 			s.traverse((e) => {
 				e.geometry && n.add(e.geometry);
@@ -12370,34 +12397,41 @@ function mu(e, t, n, r) {
 }
 //#endregion
 //#region src/plan-edit.js
-var hu = (e) => Math.round(e * 4) / 4, gu = (e) => Math.max(-100, Math.min(100, hu(e)));
-function _u(e, t, n, r, i) {
+var _u = (e) => Math.round(e * 4) / 4, vu = (e) => Math.max(-100, Math.min(100, _u(e)));
+function yu(e, t, n, r, i) {
 	let a = e[t][n];
-	t === "rooms" ? (a.rect[0] = gu(a.rect[0] + r), a.rect[1] = gu(a.rect[1] + i)) : t === "furniture" ? a.pos = [gu(a.pos[0] + r), gu(a.pos[1] + i)] : t === "openings" && (r = Math.max(-100 - Math.min(a.from[0], a.to[0]), Math.min(100 - Math.max(a.from[0], a.to[0]), hu(r))), i = Math.max(-100 - Math.min(a.from[1], a.to[1]), Math.min(100 - Math.max(a.from[1], a.to[1]), hu(i))), a.from = [a.from[0] + r, a.from[1] + i], a.to = [a.to[0] + r, a.to[1] + i]);
+	t === "rooms" ? (a.rect[0] = vu(a.rect[0] + r), a.rect[1] = vu(a.rect[1] + i)) : t === "furniture" ? a.pos = [vu(a.pos[0] + r), vu(a.pos[1] + i)] : t === "openings" && (r = Math.max(-100 - Math.min(a.from[0], a.to[0]), Math.min(100 - Math.max(a.from[0], a.to[0]), _u(r))), i = Math.max(-100 - Math.min(a.from[1], a.to[1]), Math.min(100 - Math.max(a.from[1], a.to[1]), _u(i))), a.from = [a.from[0] + r, a.from[1] + i], a.to = [a.to[0] + r, a.to[1] + i]);
 }
-function vu(e, t, n) {
-	e.rect[2] = Math.max(.5, Math.min(50, hu(t - e.rect[0]))), e.rect[3] = Math.max(.5, Math.min(50, hu(n - e.rect[1])));
+function bu(e, t, n) {
+	e.rect[2] = Math.max(.5, Math.min(50, _u(t - e.rect[0]))), e.rect[3] = Math.max(.5, Math.min(50, _u(n - e.rect[1])));
 }
-function yu(e, t, n) {
+function xu(e, t, n) {
 	return {
 		id: n,
 		name: "New room",
 		floor: "oak",
 		rect: [
-			gu(Math.min(e[0], t[0])),
-			gu(Math.min(e[1], t[1])),
-			Math.max(.5, Math.min(50, hu(Math.abs(t[0] - e[0])))),
-			Math.max(.5, Math.min(50, hu(Math.abs(t[1] - e[1]))))
+			vu(Math.min(e[0], t[0])),
+			vu(Math.min(e[1], t[1])),
+			Math.max(.5, Math.min(50, _u(Math.abs(t[0] - e[0])))),
+			Math.max(.5, Math.min(50, _u(Math.abs(t[1] - e[1]))))
 		]
 	};
 }
-function bu(e, t) {
+function Su(e, t) {
 	let n = new Set(t.rooms.map((e) => e.id));
 	return e.filter((e) => n.has(e.room_id));
 }
+function Cu(e, t) {
+	let [n, r, i, a] = t.rect;
+	return [Math.max(n, Math.min(n + i, _u(e[0]))), Math.max(r, Math.min(r + a, _u(e[1])))];
+}
+function wu(e, t, n, r) {
+	for (let i of e.filter((e) => e.room_id === t)) i.position = Cu([i.position[0] + r.rect[0] - n[0], i.position[1] + r.rect[1] - n[1]], r);
+}
 //#endregion
 //#region src/editor.js
-var xu = "http://www.w3.org/2000/svg", Su = [
+var Tu = "http://www.w3.org/2000/svg", Eu = [
 	"rug",
 	"sofa",
 	"armchair",
@@ -12418,49 +12452,84 @@ var xu = "http://www.w3.org/2000/svg", Su = [
 	"desk",
 	"wardrobe",
 	"bookshelf"
-], Cu = (e, t) => {
+], Du = (e, t) => {
 	let n = document.createElement(e);
 	return n.textContent = t, n;
-}, wu = (e, t, n = "") => {
-	let r = document.createElementNS(xu, e);
+}, Ou = (e, t, n = "") => {
+	let r = document.createElementNS(Tu, e);
 	for (let [e, n] of Object.entries(t)) r.setAttribute(e, n);
 	return r.textContent = n, r;
 };
-function Tu(e, { onSave: t, onDirty: n }) {
+function ku(e, { onSave: t, onDirty: n }) {
 	let r = (t) => e.querySelector(`[data-editor="${t}"]`), i = r("canvas"), a = r("inspector"), o = r("selection"), s, c, l = {
 		kind: "rooms",
 		index: 0
-	}, u = [], d = [], f, p = !1, m, h = !1, g = !1;
-	function _() {
-		h = JSON.stringify(c) !== m, r("save").disabled = g || !h, r("undo").disabled = !u.length, r("redo").disabled = !d.length, n(h);
+	}, u = [], d = [], f, p = !1, m, h = !1, g = !1, _ = !1, v = [], y = [], b = !1, x = () => structuredClone({
+		plan: c,
+		placements: v
+	}), S = (e) => {
+		c = e.plan, v = e.placements;
+	};
+	function C(e) {
+		return y.find((t) => mu(t) === mu(e)) || e;
 	}
-	function v() {
-		u.push(structuredClone(c)), u = u.slice(-50), d = [];
+	function w(e, t) {
+		if (l.kind === "sensors") {
+			let n = v[l.index], r = c.rooms.find((e) => e.id === n.room_id);
+			n.position = Cu([n.position[0] + e, n.position[1] + t], r);
+		} else {
+			let n = l.kind === "rooms" ? [...c.rooms[l.index].rect] : null;
+			yu(c, l.kind, l.index, e, t), n && wu(v, c.rooms[l.index].id, n, c.rooms[l.index]);
+		}
 	}
-	function y(e) {
-		v(), e(), S(), _();
+	function T() {
+		h = JSON.stringify({
+			plan: c,
+			placements: v
+		}) !== m, r("save").disabled = g || _ || !h, r("undo").disabled = !u.length, r("redo").disabled = !d.length, n(h);
 	}
-	function b(e) {
+	function E() {
+		u.push(x()), u = u.slice(-50), d = [];
+	}
+	function D(e) {
+		E(), e(), A(), T();
+	}
+	function O(e) {
 		let t = new DOMPoint(e.clientX, e.clientY).matrixTransform(i.getScreenCTM().inverse());
-		return [hu(t.x), hu(t.y)];
+		return [_u(t.x), _u(t.y)];
 	}
-	function x() {
+	function k() {
 		if (a.replaceChildren(), !l) return;
-		let e = c[l.kind][l.index];
+		let e = (l.kind === "sensors" ? v : c[l.kind])[l.index];
 		if (!e) return;
 		let t = (e, t, n, i) => {
-			let o = Cu("label", e), s = document.createElement(i ? "select" : "input");
+			let o = Du("label", e), s = document.createElement(i ? "select" : "input");
 			if (i) for (let e of i) {
-				let t = Cu("option", e);
+				let t = Du("option", e);
 				t.value = e, s.append(t);
 			}
 			else s.type = typeof t == "number" ? "number" : "text", s.type === "number" ? s.step = "0.25" : s.maxLength = 120;
 			s.value = t, s.setAttribute("aria-label", e), s.addEventListener("change", () => {
 				let e = typeof t == "number" ? Number(s.value) : s.value;
-				typeof t == "number" && (!s.value.trim() || !Number.isFinite(e)) || typeof t == "string" && !e.trim() ? (r("status").textContent = "Enter a valid value.", s.value = t) : y(() => n(e));
+				typeof t == "number" && (!s.value.trim() || !Number.isFinite(e)) || typeof t == "string" && !e.trim() ? (r("status").textContent = "Enter a valid value.", s.value = t) : D(() => n(e));
 			}), o.append(s), a.append(o);
 		};
-		if (l.kind === "rooms") t("Room name", e.name, (t) => {
+		if (l.kind === "sensors") {
+			a.append(Du("strong", C(e).name || e.sensor_id)), a.append(Du("small", e.source));
+			let n = Du("label", "Sensor room"), r = document.createElement("select");
+			r.setAttribute("aria-label", "Sensor room");
+			for (let e of c.rooms) {
+				let t = Du("option", e.name);
+				t.value = e.id, r.append(t);
+			}
+			r.value = e.room_id, r.addEventListener("change", () => D(() => {
+				e.room_id = r.value;
+				let t = c.rooms.find((e) => e.id === r.value);
+				e.position = Cu([t.rect[0] + t.rect[2] / 2, t.rect[1] + t.rect[3] / 2], t);
+			})), n.append(r), a.append(n), ["Sensor X (m)", "Sensor Z (m)"].forEach((n, r) => t(n, e.position[r], (t) => {
+				e.position[r] = t, e.position = Cu(e.position, c.rooms.find((t) => t.id === e.room_id));
+			})), a.append(Du("small", "Drag the marker inside its room, or change its room above. This never moves or controls the physical device."));
+		} else if (l.kind === "rooms") t("Room name", e.name, (t) => {
 			e.name = t;
 		}), [
 			"X (m)",
@@ -12468,7 +12537,8 @@ function Tu(e, { onSave: t, onDirty: n }) {
 			"Width (m)",
 			"Depth (m)"
 		].forEach((n, r) => t(n, e.rect[r], (t) => {
-			e.rect[r] = r < 2 ? Math.max(-100, Math.min(100, t)) : Math.max(.5, Math.min(50, t));
+			let n = [...e.rect];
+			e.rect[r] = r < 2 ? Math.max(-100, Math.min(100, t)) : Math.max(.5, Math.min(50, t)), wu(v, e.id, n, e);
 		})), t("Floor", e.floor, (t) => {
 			e.floor = t;
 		}, [
@@ -12476,10 +12546,10 @@ function Tu(e, { onSave: t, onDirty: n }) {
 			"walnut",
 			"tile",
 			"stone"
-		]), a.append(Cu("small", "Drag the room to move it; drag its corner to resize. Openings and furniture move independently."));
+		]), a.append(Du("small", "Drag the room to move it; drag its corner to resize. Openings and furniture move independently."));
 		else if (l.kind === "furniture") t("Furniture type", e.type, (t) => {
 			e.type = t;
-		}, Su), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.pos[r], (t) => {
+		}, Eu), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.pos[r], (t) => {
 			e.pos[r] = Math.max(-100, Math.min(100, t));
 		})), t("Rotation", e.rot || 0, (t) => {
 			e.rot = Math.max(-360, Math.min(360, t));
@@ -12502,14 +12572,14 @@ function Tu(e, { onSave: t, onDirty: n }) {
 				e.to = t === "horizontal" ? [Math.min(100, e.from[0] + n), e.from[1]] : [e.from[0], Math.min(100, e.from[1] + n)];
 			}, ["horizontal", "vertical"]), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.from[r], (t) => {
 				let n = t - e.from[r];
-				_u(c, "openings", l.index, r === 0 ? n : 0, r === 1 ? n : 0);
+				yu(c, "openings", l.index, r === 0 ? n : 0, r === 1 ? n : 0);
 			})), t("Opening length", Math.abs(e.to[0] - e.from[0]) + Math.abs(e.to[1] - e.from[1]), (t) => {
 				let r = Math.max(.5, Math.min(10, t));
 				e.to = n ? [Math.min(100, e.from[0] + r), e.from[1]] : [e.from[0], Math.min(100, e.from[1] + r)];
 			});
 		}
 	}
-	function S(e = !0, t = !0) {
+	function A(e = !0, t = !0) {
 		if (r("name").value = c.name, e) {
 			let e = c.rooms.flatMap((e) => [e.rect[0], e.rect[0] + e.rect[2]]), t = c.rooms.flatMap((e) => [e.rect[1], e.rect[1] + e.rect[3]]), n = Math.min(...e) - 3, r = Math.min(...t) - 3;
 			i.setAttribute("viewBox", `${n} ${r} ${Math.max(...e) - n + 3} ${Math.max(...t) - r + 3}`);
@@ -12520,69 +12590,109 @@ function Tu(e, { onSave: t, onDirty: n }) {
 			"furniture",
 			"openings"
 		]) c[e].forEach((t, n) => {
-			let r = l?.kind === e && l.index === n, a = wu("g", {
+			let r = l?.kind === e && l.index === n, a = Ou("g", {
 				"data-kind": e,
 				"data-index": n,
 				class: r ? "selected" : ""
 			}), s, c;
-			e === "rooms" ? ([s, c] = t.rect, a.append(wu("rect", {
+			e === "rooms" ? ([s, c] = t.rect, a.append(Ou("rect", {
 				x: s,
 				y: c,
 				width: t.rect[2],
 				height: t.rect[3],
 				class: "editor-room"
-			})), a.append(wu("text", {
+			})), a.append(Ou("text", {
 				x: s + t.rect[2] / 2,
 				y: c + t.rect[3] / 2,
 				class: "editor-name"
-			}, t.name)), r && a.append(wu("circle", {
+			}, t.name)), r && a.append(Ou("circle", {
 				cx: s + t.rect[2],
 				cy: c + t.rect[3],
 				r: .22,
 				"data-resize": "true",
 				class: "editor-handle"
-			}))) : e === "furniture" ? ([s, c] = t.pos, a.append(wu("rect", {
+			}))) : e === "furniture" ? ([s, c] = t.pos, a.append(Ou("rect", {
 				x: s - .4,
 				y: c - .3,
 				width: .8,
 				height: .6,
 				class: "editor-furniture",
 				transform: `rotate(${t.rot || 0},${s},${c})`
-			})), a.append(wu("text", {
+			})), a.append(Ou("text", {
 				x: s,
 				y: c - .5,
 				class: "editor-name"
-			}, t.type))) : a.append(wu("line", {
+			}, t.type))) : a.append(Ou("line", {
 				x1: t.from[0],
 				y1: t.from[1],
 				x2: t.to[0],
 				y2: t.to[1],
 				class: "editor-opening"
 			})), i.append(a);
-			let u = Cu("option", `${e === "rooms" ? "Room" : e === "furniture" ? "Furniture" : "Opening"}: ${t.name || t.type}`);
+			let u = Du("option", `${e === "rooms" ? "Room" : e === "furniture" ? "Furniture" : "Opening"}: ${t.name || t.type}`);
 			u.value = `${e}:${n}`, o.append(u);
 		});
-		o.value = l ? `${l.kind}:${l.index}` : "", r("remove").disabled = !l, t && x();
+		v.forEach((e, t) => {
+			let n = Ou("g", {
+				"data-kind": "sensors",
+				"data-index": t,
+				class: l?.kind === "sensors" && l.index === t ? "selected" : ""
+			});
+			n.append(Ou("circle", {
+				cx: e.position[0],
+				cy: e.position[1],
+				r: .19,
+				class: "editor-sensor"
+			})), n.append(Ou("text", {
+				x: e.position[0],
+				y: e.position[1] - .4,
+				class: "editor-name"
+			}, C(e).name || e.sensor_id)), i.append(n);
+			let r = Du("option", `Sensor: ${C(e).name || e.sensor_id}`);
+			r.value = `sensors:${t}`, o.append(r);
+		}), o.value = l ? `${l.kind}:${l.index}` : "", r("remove").disabled = !l, t && k();
 	}
-	function C(e, t) {
+	function j(e, t) {
 		l = {
 			kind: e,
 			index: t
-		}, S(!1);
+		}, A(!1);
 	}
 	return o.addEventListener("change", () => {
 		let [e, t] = o.value.split(":");
-		C(e, Number(t));
+		j(e, Number(t));
 	}), i.addEventListener("pointerdown", (e) => {
-		if (g || !c || e.button !== 0) return;
-		let t = b(e), n = e.target.closest("[data-kind]");
-		if (p || n) {
-			if (v(), p) {
+		if (g || _ || !c || e.button !== 0) return;
+		let t = O(e), n = e.target.closest("[data-kind]");
+		if (b) {
+			let i = n?.dataset.kind === "rooms" ? c.rooms[Number(n.dataset.index)] : null;
+			if (!i) {
+				r("status").textContent = "Click inside a room to place the selected sensor.";
+				return;
+			}
+			let a = y.find((e) => mu(e) === r("sensor-picker").value);
+			if (!a) return;
+			D(() => {
+				let e = v.findIndex((e) => mu(e) === mu(a));
+				e < 0 && (e = v.length, v.push({
+					source: a.source,
+					sensor_id: a.sensor_id
+				})), v[e] = {
+					...v[e],
+					room_id: i.id,
+					position: Cu(t, i)
+				}, l = {
+					kind: "sensors",
+					index: e
+				};
+			}), b = !1, r("place-sensor").setAttribute("aria-pressed", "false"), e.preventDefault();
+		} else if (p || n) {
+			if (E(), p) {
 				if (c.rooms.length >= 64) {
 					u.pop(), r("status").textContent = "Maximum 64 rooms.";
 					return;
 				}
-				c.rooms.push(yu(t, t, crypto.randomUUID())), l = {
+				c.rooms.push(xu(t, t, crypto.randomUUID())), l = {
 					kind: "rooms",
 					index: c.rooms.length - 1
 				};
@@ -12592,19 +12702,24 @@ function Tu(e, { onSave: t, onDirty: n }) {
 			};
 			f = {
 				start: t,
-				original: structuredClone(c),
+				original: x(),
 				draw: p,
 				resize: e.target.hasAttribute("data-resize")
-			}, i.setPointerCapture(e.pointerId), S(!1), e.preventDefault();
+			}, i.setPointerCapture(e.pointerId), A(!1), e.preventDefault();
 		}
 	}), i.addEventListener("pointermove", (e) => {
 		if (!f) return;
-		let t = b(e);
-		c = structuredClone(f.original), f.draw ? c.rooms[l.index] = yu(f.start, t, c.rooms[l.index].id) : f.resize ? vu(c.rooms[l.index], ...t) : _u(c, l.kind, l.index, t[0] - f.start[0], t[1] - f.start[1]), S(!1, !1);
+		let t = O(e);
+		if (S(structuredClone(f.original)), f.draw) c.rooms[l.index] = xu(f.start, t, c.rooms[l.index].id);
+		else if (f.resize) {
+			let e = c.rooms[l.index], n = [...e.rect];
+			bu(e, ...t), wu(v, e.id, n, e);
+		} else w(t[0] - f.start[0], t[1] - f.start[1]);
+		A(!1, !1);
 	}), i.addEventListener("pointerup", () => {
-		f && (f = null, p = !1, r("draw").setAttribute("aria-pressed", "false"), S(), _());
+		f && (f = null, p = !1, r("draw").setAttribute("aria-pressed", "false"), A(), T());
 	}), i.addEventListener("pointercancel", () => {
-		f && (c = u.pop(), f = null, p = !1, S(), _());
+		f && (S(u.pop()), f = null, p = !1, A(), T());
 	}), i.addEventListener("keydown", (e) => {
 		let t = {
 			ArrowLeft: [-.25, 0],
@@ -12612,18 +12727,40 @@ function Tu(e, { onSave: t, onDirty: n }) {
 			ArrowUp: [0, -.25],
 			ArrowDown: [0, .25]
 		}[e.key];
-		t && l && !g && (e.preventDefault(), y(() => _u(c, l.kind, l.index, ...t)));
+		t && l && !g && !_ && (e.preventDefault(), D(() => w(...t)));
+	}), r("place-sensor").addEventListener("click", () => {
+		b = !b, p = !1, r("draw").setAttribute("aria-pressed", "false"), r("place-sensor").setAttribute("aria-pressed", String(b)), r("status").textContent = b ? "Click a room to place the selected sensor." : "Select an item to edit.";
+	}), r("sensor-picker").addEventListener("change", () => {
+		b = !1, r("place-sensor").setAttribute("aria-pressed", "false");
+	}), r("center-sensor").addEventListener("click", () => {
+		let e = y.find((e) => mu(e) === r("sensor-picker").value);
+		if (!e) return;
+		let t = l?.kind === "rooms" ? c.rooms[l.index] : c.rooms[0];
+		D(() => {
+			let n = v.findIndex((t) => mu(t) === mu(e));
+			n < 0 && (n = v.length, v.push({
+				source: e.source,
+				sensor_id: e.sensor_id
+			})), v[n] = {
+				...v[n],
+				room_id: t.id,
+				position: Cu([t.rect[0] + t.rect[2] / 2, t.rect[1] + t.rect[3] / 2], t)
+			}, l = {
+				kind: "sensors",
+				index: n
+			};
+		});
 	}), r("draw").addEventListener("click", () => {
-		p = !p, r("draw").setAttribute("aria-pressed", String(p)), r("status").textContent = p ? "Drag on the plan to draw a room." : "Select an item to edit.";
+		p = !p, b = !1, r("place-sensor").setAttribute("aria-pressed", "false"), r("draw").setAttribute("aria-pressed", String(p)), r("status").textContent = p ? "Drag on the plan to draw a room." : "Select an item to edit.";
 	}), r("add-room").addEventListener("click", () => {
-		c.rooms.length >= 64 || y(() => {
-			c.rooms.push(yu([0, 0], [3, 3], crypto.randomUUID())), l = {
+		c.rooms.length >= 64 || D(() => {
+			c.rooms.push(xu([0, 0], [3, 3], crypto.randomUUID())), l = {
 				kind: "rooms",
 				index: c.rooms.length - 1
 			};
 		});
 	}), r("add-furniture").addEventListener("click", () => {
-		c.furniture.length >= 256 || y(() => {
+		c.furniture.length >= 256 || D(() => {
 			c.furniture.push({
 				type: "sofa",
 				pos: [1, 1]
@@ -12635,7 +12772,7 @@ function Tu(e, { onSave: t, onDirty: n }) {
 	}), r("add-opening").addEventListener("click", () => {
 		if (c.openings.length >= 256) return;
 		let [e, t] = c.rooms[0].rect;
-		y(() => {
+		D(() => {
 			c.openings.push({
 				type: "door",
 				from: [e + .5, t],
@@ -12653,59 +12790,75 @@ function Tu(e, { onSave: t, onDirty: n }) {
 					return;
 				}
 				let e = c.rooms[l.index];
-				if (!confirm(`Delete ${e.name}? Circuit mappings to this room will be removed when saved.`)) return;
+				if (!confirm(`Delete ${e.name}? Circuit mappings and sensor placements in this room will be removed when saved.`)) return;
 			}
-			y(() => {
-				c[l.kind].splice(l.index, 1), l = {
+			D(() => {
+				l.kind === "rooms" && (v = v.filter((e) => e.room_id !== c.rooms[l.index].id)), (l.kind === "sensors" ? v : c[l.kind]).splice(l.index, 1), l = {
 					kind: "rooms",
 					index: 0
 				};
 			});
 		}
 	}), r("undo").addEventListener("click", () => {
-		u.length && (d.push(structuredClone(c)), c = u.pop(), l = {
+		u.length && (d.push(x()), S(u.pop()), l = {
 			kind: "rooms",
 			index: 0
-		}, S(), _());
+		}, A(), T());
 	}), r("redo").addEventListener("click", () => {
-		d.length && (u.push(structuredClone(c)), c = d.pop(), l = {
+		d.length && (u.push(x()), S(d.pop()), l = {
 			kind: "rooms",
 			index: 0
-		}, S(), _());
+		}, A(), T());
 	}), r("name").addEventListener("change", () => {
 		let e = r("name").value.trim();
-		e && y(() => {
+		e && D(() => {
 			c.name = e;
 		});
 	}), r("save").addEventListener("click", async () => {
-		r("save").disabled = !0, await t(structuredClone(c), bu(s.bindings, c)) || _();
+		r("save").disabled = !0, await t(structuredClone(c), Su(s.bindings, c), structuredClone(v)) || T();
 	}), {
 		get dirty() {
 			return h;
 		},
-		setConfig(e) {
-			s = e, c = structuredClone(e.plan), m = JSON.stringify(c), u = [], d = [], l = {
+		setConfig(e, t = []) {
+			s = e, c = structuredClone(e.plan), v = structuredClone(e.sensors || []), m = JSON.stringify({
+				plan: c,
+				placements: v
+			}), u = [], d = [], l = {
 				kind: "rooms",
 				index: 0
-			}, g = !1, f = null, r("name").value = c.name, r("status").textContent = "Drag rooms or furniture. Use the corner handle or fields to resize. Save to update the 3D view.", S(), _();
+			}, g = !1, f = null, p = !1, b = !1, r("draw").setAttribute("aria-pressed", "false"), r("place-sensor").setAttribute("aria-pressed", "false"), r("name").value = c.name, r("status").textContent = "Drag rooms, furniture or sensors. Save to update the 3D view.", this.refreshSensors(t), A(), T();
+		},
+		refreshSensors(e) {
+			y = e;
+			let t = r("sensor-picker"), n = t.value;
+			t.replaceChildren();
+			for (let e of y) {
+				let n = Du("option", `${e.name} · ${e.source}${e.stale ? " · last recorded" : ""}`);
+				n.value = mu(e), t.append(n);
+			}
+			y.some((e) => mu(e) === n) && (t.value = n), r("place-sensor").disabled = r("center-sensor").disabled = g || !y.length;
 		},
 		block(e) {
 			g = e, r("save").disabled = e || !h;
+		},
+		setSaving(e) {
+			_ = e, r("controls").disabled = e, T();
 		}
 	};
 }
 //#endregion
 //#region src/main.js
-var $ = (e) => document.getElementById(`home3d-${e}`), Eu = (e, t) => e == null ? "Unknown" : t === "watts" ? `${Math.round(e).toLocaleString()} W` : t === "kwh_24h" ? `${e.toFixed(2)} kWh` : `$${e.toFixed(2)}`, Du, Ou, ku, Au, ju = !1, Mu = !1, Nu = !1, Pu, Fu = 0, Iu = document.getElementById("home3d-editor"), Lu = Tu(Iu, {
-	onSave: async (e) => {
-		let t = await Ku(e, bu(qu(), e));
-		return t || (Iu.querySelector("[data-editor=\"status\"]").textContent = $("save-status").textContent), t;
+var $ = (e) => document.getElementById(`home3d-${e}`), Au = (e, t) => e == null ? "Unknown" : t === "watts" ? `${Math.round(e).toLocaleString()} W` : t === "kwh_24h" ? `${e.toFixed(2)} kWh` : `$${e.toFixed(2)}`, ju, Mu, Nu, Pu, Fu = !1, Iu = !1, Lu = !1, Ru, zu = 0, Bu = !1, Vu = document.getElementById("home3d-editor"), Hu = ku(Vu, {
+	onSave: async (e, t, n) => {
+		let r = await Zu(e, Su(Qu(), e), n);
+		return r || (Vu.querySelector("[data-editor=\"status\"]").textContent = $("save-status").textContent), r;
 	},
 	onDirty: (e) => {
-		$("save").disabled = e || Nu || !ju;
+		$("save").disabled = e || Lu || !Fu;
 	}
 });
-async function Ru(e, t = {}) {
+async function Uu(e, t = {}) {
 	let n = await fetch(`/api/house-control/${e}`, {
 		cache: "no-store",
 		signal: AbortSignal.timeout(1e4),
@@ -12716,147 +12869,166 @@ async function Ru(e, t = {}) {
 	if (!n.ok) throw Error(r.error || `Collector request failed (${n.status})`);
 	return r;
 }
-function zu(e, t, n) {
+function Wu(e, t, n) {
 	let r = document.createElement(e);
 	return r.textContent = t, n && (r.className = n), r;
 }
-function Bu() {
+function Gu() {
 	let e = $("metric").value;
-	$("status").textContent = `${Ou.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${Eu(Ou.current_watts, "watts")} · Last reading: ${Ou.last_reading || "none"}`;
+	$("status").textContent = `${Mu.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${Au(Mu.current_watts, "watts")} · Last reading: ${Mu.last_reading || "none"}`;
 	let t = $("rooms");
 	t.replaceChildren();
-	for (let n of Ou.rooms) {
-		let r = zu("button", "", "home3d-room");
-		r.type = "button", r.dataset.roomId = n.id, r.append(zu("strong", n.name), zu("span", Eu(n[e], e)), zu("small", `${n.mapped_circuits} mapped · ${n.reporting_circuits} reporting`), zu("small", `${Eu(n.kwh_24h, "kwh_24h")} · ${Eu(n.cost_24h, "cost_24h")} recorded / 24h`)), r.addEventListener("click", () => Vu(n.id)), t.append(r);
+	for (let n of Mu.rooms) {
+		let r = Wu("button", "", "home3d-room");
+		r.type = "button", r.dataset.roomId = n.id, r.append(Wu("strong", n.name), Wu("span", Au(n[e], e)), Wu("small", `${n.mapped_circuits} mapped · ${n.reporting_circuits} reporting`), Wu("small", `${Au(n.kwh_24h, "kwh_24h")} · ${Au(n.cost_24h, "cost_24h")} recorded / 24h`)), r.addEventListener("click", () => Ku(n.id)), t.append(r);
 	}
-	ku?.update(Ou.rooms, e, Eu);
+	let n = $("sensors");
+	n.replaceChildren(), Mu.sensors.length || n.append(Wu("p", "No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically."));
+	for (let e of Mu.sensors) {
+		let t = Wu("article", "", "home3d-sensor");
+		t.dataset.sensorSource = e.source;
+		let r = ju.plan.rooms.find((t) => t.id === e.placement?.room_id);
+		t.append(Wu("strong", e.name), Wu("span", hu(e)), Wu("small", `${e.source} · ${r?.name || "Unplaced"} · ${e.stale ? "Last recorded (stale)" : "Recent observation"}`), Wu("small", e.timestamp ? new Date(e.timestamp).toLocaleString() : "No observation available")), n.append(t);
+	}
+	Hu.refreshSensors(Mu.sensors), Nu?.update(Mu.rooms, e, Au, Mu.sensors);
 }
-function Vu(e) {
+function Ku(e) {
 	for (let t of $("rooms").children) t.setAttribute("aria-pressed", String(t.dataset.roomId === e));
-	let t = Ou.rooms.find((t) => t.id === e);
-	t && ($("save-status").textContent = `${t.name}: ` + (Ou.circuits.filter((t) => t.room_id === e).map((e) => e.display_name).join(", ") || "No circuits assigned"));
+	let t = Mu.rooms.find((t) => t.id === e);
+	t && ($("save-status").textContent = `${t.name}: ` + (Mu.circuits.filter((t) => t.room_id === e).map((e) => e.display_name).join(", ") || "No circuits assigned"));
 }
-function Hu(e) {
+function qu(e) {
 	return JSON.stringify([e.active_device_gid, e.circuits.map((e) => e.channel_name).sort()]);
 }
-function Uu() {
-	Pu = Hu(Ou), $("panel").textContent = `Panel: ${Ou.active_device_gid || "No readings yet"}. ` + (Ou.other_panel_bindings ? `${Ou.other_panel_bindings} mappings from other panels are preserved.` : "");
+function Ju() {
+	Ru = qu(Mu), $("panel").textContent = `Panel: ${Mu.active_device_gid || "No readings yet"}. ` + (Mu.other_panel_bindings ? `${Mu.other_panel_bindings} mappings from other panels are preserved.` : "");
 	let e = $("mappings");
 	e.replaceChildren();
-	for (let t of Ou.circuits) {
-		let n = zu("label", t.display_name + (t.missing ? " (not reported)" : "")), r = document.createElement("select");
+	for (let t of Mu.circuits) {
+		let n = Wu("label", t.display_name + (t.missing ? " (not reported)" : "")), r = document.createElement("select");
 		r.setAttribute("aria-label", `Room for ${t.display_name}`), r.dataset.channel = t.channel_name;
-		let i = zu("option", "Unassigned");
+		let i = Wu("option", "Unassigned");
 		i.value = "", r.append(i);
-		for (let e of Du.plan.rooms) {
-			let t = zu("option", e.name);
+		for (let e of ju.plan.rooms) {
+			let t = Wu("option", e.name);
 			t.value = e.id, r.append(t);
 		}
 		r.value = t.room_id || "", r.addEventListener("change", () => {
-			ju = !0, $("save").disabled = Nu || Lu.dirty, $("save-status").textContent = "Unsaved room mappings";
+			Fu = !0, $("save").disabled = Lu || Hu.dirty, $("save-status").textContent = "Unsaved room mappings";
 		}), n.append(r), e.append(n);
 	}
 }
-async function Wu() {
-	if (!Du || Mu || document.hidden) return;
-	Mu = !0;
-	let e = Fu;
+async function Yu() {
+	if (!ju || Iu || document.hidden) return;
+	Iu = !0;
+	let e = zu;
 	try {
-		let t = await Ru("state");
-		if (e !== Fu || ((t.revision !== Du.revision || Hu(t) !== Pu) && (Nu = !0, Lu.block(!0), $("save").disabled = !0, $("save-status").textContent = "The saved plan or panel circuits changed. Reload the saved plan before editing."), t.revision !== Du.revision)) return;
-		Ou = t, Bu();
+		let t = await Uu("state");
+		if (e !== zu || ((t.revision !== ju.revision || qu(t) !== Ru) && (Lu = !0, Hu.block(!0), $("save").disabled = !0, $("save-status").textContent = "The saved plan or panel circuits changed. Reload the saved plan before editing."), t.revision !== ju.revision)) return;
+		Mu = t, Gu();
 	} catch (t) {
-		if (e !== Fu) return;
-		Ou && (Ou = {
-			...Ou,
+		if (e !== zu) return;
+		Mu && (Mu = {
+			...Mu,
 			online: !1,
 			current_watts: null,
-			rooms: Ou.rooms.map((e) => ({
+			sensors: Mu.sensors.map((e) => ({
+				...e,
+				stale: !0
+			})),
+			rooms: Mu.rooms.map((e) => ({
 				...e,
 				watts: null,
 				reporting_circuits: 0
 			}))
-		}, Bu()), $("status").textContent = `${t.message} Last received history retained; live power unavailable.`;
+		}, Gu()), $("status").textContent = `${t.message} Last received history retained; live power unavailable.`;
 	} finally {
-		Mu = !1;
+		Iu = !1;
 	}
 }
-async function Gu() {
-	let e = ++Fu;
+async function Xu() {
+	let e = ++zu;
 	$("save").disabled = !0;
-	let t = await Ru("config"), n = await Ru("state");
-	if (e === Fu) {
+	let t = await Uu("config"), n = await Uu("state");
+	if (e === zu) {
 		if (n.revision !== t.revision) throw Error("Plan changed while loading. Reload the saved plan.");
-		Du = t, Ou = n, ju = !1, Nu = !1, $("name").textContent = `${Du.plan.name}${Du.example ? " · Example layout, not your measured home" : ""}`, $("save-status").textContent = "", Uu(), Lu.setConfig(Du), Iu.hidden = !1, ku?.dispose(), ku = null, $("render-error").hidden = !0;
+		ju = t, Mu = n, Fu = !1, Lu = !1, $("name").textContent = `${ju.plan.name}${ju.example ? " · Example layout, not your measured home" : ""}`, $("save-status").textContent = "", Ju(), Hu.setConfig(ju, Mu.sensors), Vu.hidden = !1, Nu?.dispose(), Nu = null, $("render-error").hidden = !0;
 		try {
-			ku = mu($("canvas"), $("labels"), Du.plan, Vu);
+			Nu = gu($("canvas"), $("labels"), ju.plan, Ku);
 		} catch (e) {
 			$("render-error").hidden = !1, $("render-error").textContent = "3D rendering is unavailable in this browser. Room data and mappings still work below.", console.warn("Home 3D renderer unavailable:", e.message);
 		}
-		Bu();
+		Gu();
 	}
 }
-async function Ku(e, t) {
+async function Zu(e, t, n = ju.sensors) {
+	if (Bu) return !1;
+	Bu = !0, Hu.setSaving(!0), $("save-status").textContent = "Saving...";
+	for (let e of $("mappings").querySelectorAll("select")) e.disabled = !0;
 	$("save").disabled = !0;
 	try {
-		return await Ru("config", {
+		return await Uu("config", {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				plan: e,
 				bindings: t,
-				revision: Du.revision
+				sensors: n,
+				revision: ju.revision
 			})
-		}), await Gu(), $("save-status").textContent = "Saved", !0;
+		}), await Xu(), $("save-status").textContent = "Saved", !0;
 	} catch (e) {
-		return $("save-status").textContent = e.message, $("save").disabled = Nu || !ju, !1;
+		return $("save-status").textContent = e.message, $("save").disabled = Lu || !Fu, !1;
+	} finally {
+		Bu = !1, Hu.setSaving(!1);
+		for (let e of $("mappings").querySelectorAll("select")) e.disabled = !1;
 	}
 }
-function qu() {
-	let e = new Set(Ou.circuits.map((e) => e.channel_name)), t = Du.bindings.filter((t) => t.device_gid !== Ou.active_device_gid || !e.has(t.channel_name));
+function Qu() {
+	let e = new Set(Mu.circuits.map((e) => e.channel_name)), t = ju.bindings.filter((t) => t.device_gid !== Mu.active_device_gid || !e.has(t.channel_name));
 	for (let e of $("mappings").querySelectorAll("select")) e.value && t.push({
-		device_gid: Ou.active_device_gid,
+		device_gid: Mu.active_device_gid,
 		channel_name: e.dataset.channel,
 		room_id: e.value
 	});
 	return t;
 }
-$("save").addEventListener("click", () => Ku(Du.plan, qu())), $("metric").addEventListener("change", () => {
-	Ou && Bu();
-}), $("reset").addEventListener("click", () => ku?.reset()), $("refresh").addEventListener("click", Wu), $("reload").addEventListener("click", () => {
-	(!ju && !Lu.dirty || confirm("Discard unsaved floor-plan and mapping changes and reload?")) && Gu().catch((e) => {
+$("save").addEventListener("click", () => Zu(ju.plan, Qu())), $("metric").addEventListener("change", () => {
+	Mu && Gu();
+}), $("reset").addEventListener("click", () => Nu?.reset()), $("refresh").addEventListener("click", Yu), $("reload").addEventListener("click", () => {
+	(!Fu && !Hu.dirty || confirm("Discard unsaved floor-plan and mapping changes and reload?")) && Xu().catch((e) => {
 		$("status").textContent = e.message;
 	});
 }), $("import").addEventListener("change", async (e) => {
 	let t = e.target.files[0];
-	if (e.target.value = "", t && Du) try {
+	if (e.target.value = "", t && ju) try {
 		if (t.size > 256e3) throw Error("Floor plan must be smaller than 250 KB.");
 		let e = JSON.parse(await t.text());
-		confirm("Replace the floor plan and clear all saved room mappings, including other panels?") && await Ku(e, []);
+		confirm("Replace the floor plan and clear all saved room mappings and sensor placements, including other panels?") && await Zu(e, [], []);
 	} catch (e) {
 		$("save-status").textContent = e.message;
 	}
 }), $("export").addEventListener("click", () => {
-	if (!Du) return;
-	let e = URL.createObjectURL(new Blob([JSON.stringify(Du.plan, null, 2)], { type: "application/json" })), t = document.createElement("a");
+	if (!ju) return;
+	let e = URL.createObjectURL(new Blob([JSON.stringify(ju.plan, null, 2)], { type: "application/json" })), t = document.createElement("a");
 	t.href = e, t.download = "floor-plan.json", t.click(), setTimeout(() => URL.revokeObjectURL(e), 1e3);
 }), document.addEventListener("visibilitychange", () => {
-	document.hidden || Wu();
+	document.hidden || Yu();
 }), window.addEventListener("beforeunload", (e) => {
-	(ju || Lu.dirty) && (e.preventDefault(), e.returnValue = "");
+	(Fu || Hu.dirty) && (e.preventDefault(), e.returnValue = "");
 }), window.addEventListener("pagehide", () => {
-	clearInterval(Au), ku?.dispose(), ku = null;
+	clearInterval(Pu), Nu?.dispose(), Nu = null;
 }), window.addEventListener("pageshow", (e) => {
-	e.persisted && Ju();
+	e.persisted && $u();
 });
-async function Ju() {
-	clearInterval(Au);
+async function $u() {
+	clearInterval(Pu);
 	try {
-		await Gu();
+		await Xu();
 	} catch (e) {
 		$("status").textContent = e.message;
 	}
-	Au = setInterval(Wu, 3e4);
+	Pu = setInterval(Yu, 3e4);
 }
-Ju();
+$u();
 //#endregion

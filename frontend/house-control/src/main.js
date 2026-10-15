@@ -1,17 +1,18 @@
 import { createView } from './view.js';
 import { createEditor } from './editor.js';
 import { retainRoomBindings } from './plan-edit.js';
+import { sensorReading } from './sensors.js';
 
 const $ = id => document.getElementById(`home3d-${id}`);
 const format = (value, metric) => value == null ? 'Unknown' : metric === 'watts'
   ? `${Math.round(value).toLocaleString()} W` : metric === 'kwh_24h'
     ? `${value.toFixed(2)} kWh` : `$${value.toFixed(2)}`;
 let config, state, view, timer, dirty = false, busy = false, needsReload = false, signature;
-let generation = 0;
+let generation = 0, saving = false;
 const editorRoot = document.getElementById('home3d-editor');
 const editor = createEditor(editorRoot, {
-  onSave: async plan => {
-    const ok = await save(plan, retainRoomBindings(collectBindings(), plan));
+  onSave: async (plan, bindings, sensors) => {
+    const ok = await save(plan, retainRoomBindings(collectBindings(), plan), sensors);
     if (!ok) editorRoot.querySelector('[data-editor="status"]').textContent = $('save-status').textContent;
     return ok;
   },
@@ -53,7 +54,19 @@ function renderState() {
     button.addEventListener('click', () => selectRoom(room.id));
     container.append(button);
   }
-  view?.update(state.rooms, metric, format);
+  const sensors=$('sensors');sensors.replaceChildren();
+  if(!state.sensors.length)sensors.append(node('p','No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically.'));
+  for(const row of state.sensors){
+    const card=node('article','','home3d-sensor');
+    card.dataset.sensorSource=row.source;
+    const room=config.plan.rooms.find(room=>room.id===row.placement?.room_id);
+    card.append(node('strong',row.name),node('span',sensorReading(row)),
+      node('small',`${row.source} · ${room?.name || 'Unplaced'} · ${row.stale?'Last recorded (stale)':'Recent observation'}`),
+      node('small',row.timestamp ? new Date(row.timestamp).toLocaleString() : 'No observation available'));
+    sensors.append(card);
+  }
+  editor.refreshSensors(state.sensors);
+  view?.update(state.rooms, metric, format, state.sensors);
 }
 
 function selectRoom(id) {
@@ -114,6 +127,7 @@ async function refresh() {
     if (expectedGeneration !== generation) return;
     if (state) {
       state = { ...state, online: false, current_watts: null,
+        sensors: state.sensors.map(row=>({...row,stale:true})),
         rooms: state.rooms.map(room => ({ ...room, watts: null, reporting_circuits: 0 })) };
       renderState();
     }
@@ -135,7 +149,7 @@ async function load() {
   $('name').textContent = `${config.plan.name}${config.example ? ' · Example layout, not your measured home' : ''}`;
   $('save-status').textContent = '';
   renderMappings();
-  editor.setConfig(config);
+  editor.setConfig(config, state.sensors);
   editorRoot.hidden = false;
   view?.dispose(); view = null;
   $('render-error').hidden = true;
@@ -148,11 +162,15 @@ async function load() {
   renderState();
 }
 
-async function save(plan, bindings) {
+async function save(plan, bindings, sensors=config.sensors) {
+  if(saving)return false;
+  saving=true;editor.setSaving(true);
+  $('save-status').textContent='Saving...';
+  for(const select of $('mappings').querySelectorAll('select'))select.disabled=true;
   $('save').disabled = true;
   try {
     await api('config', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan, bindings, revision: config.revision }) });
+      body: JSON.stringify({ plan, bindings, sensors, revision: config.revision }) });
     await load();
     $('save-status').textContent = 'Saved';
     return true;
@@ -160,6 +178,9 @@ async function save(plan, bindings) {
     $('save-status').textContent = error.message;
     $('save').disabled = needsReload || !dirty;
     return false;
+  } finally {
+    saving=false;editor.setSaving(false);
+    for(const select of $('mappings').querySelectorAll('select'))select.disabled=false;
   }
 }
 
@@ -187,7 +208,7 @@ $('import').addEventListener('change', async event => {
   try {
     if (file.size > 250 * 1024) throw new Error('Floor plan must be smaller than 250 KB.');
     const plan = JSON.parse(await file.text());
-    if (confirm('Replace the floor plan and clear all saved room mappings, including other panels?')) await save(plan, []);
+    if (confirm('Replace the floor plan and clear all saved room mappings and sensor placements, including other panels?')) await save(plan, [], []);
   } catch (error) { $('save-status').textContent = error.message; }
 });
 $('export').addEventListener('click', () => {

@@ -5,9 +5,13 @@ import json
 import math
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
+import aqara_local
+import climate
 import energy
+import radon
 from runtime_store import write_private_json
 
 UPSTREAM_COMMIT = "1ad70a26197c0503b5af7932f0b5c8a8d3c7a6f9"
@@ -153,11 +157,86 @@ def load_config() -> dict:
         config = json.loads(_path().read_text())
     except FileNotFoundError:
         config = {"plan": DEFAULT_PLAN, "bindings": [], "example": True}
+    config.setdefault("sensors", [])
     return {**config, "revision": _revision(config)}
 
 
+def sensor_catalog(now: datetime | None = None) -> list[dict]:
+    """Project stored observations only; never start discovery or vendor requests."""
+    now = now or datetime.now(timezone.utc)
+    rows = []
+
+    def add(source, identifier, name, stamp, metrics, max_age, online=True):
+        try:
+            observed = datetime.fromisoformat(stamp)
+            age = (now - observed).total_seconds() if observed.tzinfo else float('inf')
+        except (TypeError, ValueError):
+            age = float('inf')
+        rows.append({"source": source, "sensor_id": identifier, "name": name or identifier,
+                     "timestamp": stamp, "stale": not online or not -300 <= age <= max_age,
+                     "available": True, "metrics": metrics, "placement": None})
+
+    def number(value, low, high):
+        return value if type(value) in (float, int) and low <= value <= high else None
+
+    def temperature(value):
+        value = number(value, -80, 80)
+        return value * 9 / 5 + 32 if value is not None else None
+
+    for row in aqara_local.get_sensors():
+        add('aqara_local', row['did'], row['name'], row['observed_at'], {
+            'temperature_f': temperature(row['temperature']),
+            'humidity_pct': number(row['humidity'], 0, 100),
+            'battery_pct': number(row['battery'], 0, 100),
+        }, 180, row['online'])
+    for row in climate.get_latest_sensors():
+        add('climate:' + row['source'], row['sensor_id'], row['name'], row['timestamp'], {
+            'temperature_f': temperature(row['temperature_c']),
+            'humidity_pct': number(row['humidity_pct'], 0, 100),
+            'battery_pct': number(row['battery_pct'], 0, 100),
+        }, 180)
+    for row in radon.get_latest_readings():
+        value = number(row['radon_bq_m3'], 0, 1e9)
+        add('radon:' + row['source'], row['sensor_id'], row['name'], row['timestamp'], {
+            'radon_pci_l': value / 37 if value is not None else None,
+        }, 10800)
+    return rows
+
+
+def _validate_sensors(raw, plan, previous) -> list[dict]:
+    if not isinstance(raw, list) or len(raw) > 256:
+        raise ValueError('Sensor placements must contain at most 256 items')
+    known = {(row['source'], row['sensor_id']) for row in sensor_catalog()}
+    known.update((row['source'], row['sensor_id']) for row in previous)
+    rooms = {room['id']: room for room in plan['rooms']}
+    seen, clean = set(), []
+    for row in raw:
+        if not isinstance(row, dict) or set(row) != {'source', 'sensor_id', 'room_id', 'position'}:
+            raise ValueError('Each sensor placement needs source, sensor_id, room_id and position')
+        source = _text(row['source'], 'Sensor source')
+        identifier = _text(row['sensor_id'], 'Sensor id', 256)
+        identity = (source, identifier)
+        if identity not in known or identity in seen:
+            raise ValueError('Place each recorded sensor at most once')
+        room_id = _text(row['room_id'], 'Room id', 80)
+        if room_id not in rooms:
+            raise ValueError('Place sensors in a known room')
+        position = row['position']
+        if not isinstance(position, list) or len(position) != 2:
+            raise ValueError('Sensor position needs [x, z] in meters')
+        position = [_number(value, 'Sensor coordinate', -100, 150) for value in position]
+        x, z, width, depth = rooms[room_id]['rect']
+        if not (x <= position[0] <= x + width and z <= position[1] <= z + depth):
+            raise ValueError('Sensor position must be inside its assigned room')
+        seen.add(identity)
+        clean.append({'source': source, 'sensor_id': identifier,
+                      'room_id': room_id, 'position': position})
+    return clean
+
+
 def save_config(data: dict) -> dict:
-    if set(data) != {"plan", "bindings", "revision"}:
+    if not isinstance(data, dict) or set(data) not in (
+            {"plan", "bindings", "revision"}, {"plan", "bindings", "revision", "sensors"}):
         raise ValueError("Supply plan, bindings, and the loaded revision")
     plan = validate_plan(data["plan"])
     bindings = data["bindings"]
@@ -183,6 +262,8 @@ def save_config(data: dict) -> dict:
         current = load_config()
         if data["revision"] != current["revision"]:
             raise RevisionConflict("Floor plan changed in another tab; reload before saving")
+        # Older mapping clients must never erase placements by omitting the new field.
+        sensors = _validate_sensors(data.get('sensors', current['sensors']), plan, current['sensors'])
         known = {}
         devices = set(energy.get_known_devices())
         for binding in clean:
@@ -195,7 +276,7 @@ def save_config(data: dict) -> dict:
                 known[gid] = {r["channel_name"] for r in energy.get_latest(gid)}
             if binding["channel_name"] not in known[gid]:
                 raise ValueError("Unknown circuit on the selected panel")
-        write_private_json(_path(), {"plan": plan, "bindings": clean,
+        write_private_json(_path(), {"plan": plan, "bindings": clean, "sensors": sensors,
                                      "example": plan == validate_plan(DEFAULT_PLAN)})
     return load_config()
 
@@ -242,9 +323,18 @@ def project_state(config: dict, menu: dict, summary: list[dict]) -> dict:
                   for key in ("watts", "kwh_24h", "cost_24h")}
         result.append({"id": room["id"], "name": room["name"], "mapped_circuits": len(expected),
                        "reporting_circuits": sum(r["watts"] is not None for r in rows), **values})
+    sensors = {(row['source'], row['sensor_id']): row for row in sensor_catalog()}
+    for placement in config.get('sensors', []):
+        key = (placement['source'], placement['sensor_id'])
+        if key not in sensors:
+            sensors[key] = {'source': key[0], 'sensor_id': key[1], 'name': key[1],
+                            'timestamp': None, 'stale': True, 'available': False,
+                            'metrics': {}, 'placement': None}
+        sensors[key]['placement'] = placement
     return {"active_device_gid": gid, "online": menu["online"], "last_reading": menu["last_reading"],
             "current_watts": menu["current_watts"] if menu["online"] else None, "rooms": result,
-            "circuits": list(circuits.values()), "revision": config["revision"],
+            "circuits": list(circuits.values()), "sensors": list(sensors.values()),
+            "revision": config["revision"],
             "other_panel_bindings": sum(b["device_gid"] != gid for b in config["bindings"])}
 
 
@@ -274,6 +364,7 @@ HOUSE_CONTROL_CSS = """
 .home3d-room[aria-pressed=true] {border-color:var(--olive-600);background:var(--olive-100);}
 .home3d-setup {padding:16px;margin-top:14px;}
 .home3d-setup summary {cursor:pointer;font-weight:600;}
+.home3d-setup fieldset {border:0;padding:0;min-width:0;}
 .home3d-editor-layout {display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:16px;margin:16px 0;}
 .home3d-editor-canvas {display:block;width:100%;height:400px;background:var(--surface);border:1px solid var(--border);touch-action:none;}
 .editor-room {fill:var(--olive-100);stroke:var(--olive-600);stroke-width:.06;}
@@ -284,6 +375,14 @@ HOUSE_CONTROL_CSS = """
 .selected .editor-room,.selected .editor-furniture {stroke:var(--olive-950);stroke-width:.12;}
 .home3d-inspector label {margin:10px 0;}
 .home3d-inspector input {width:110px;padding:6px;background:var(--surface);color:var(--text);border:1px solid var(--border);}
+.editor-sensor {fill:var(--olive-800);stroke:var(--surface);stroke-width:.07;cursor:move;}
+.selected .editor-sensor {stroke:var(--text);stroke-width:.12;}
+#home3d-sensors {display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;}
+.home3d-sensor {display:grid;gap:6px;border:1px solid var(--border);border-left:4px solid var(--olive-600);border-radius:8px;padding:12px;overflow-wrap:anywhere;}
+.home3d-sensor-marker {border-left:4px solid var(--olive-600);font-size:.65rem;max-width:260px;}
+[data-sensor-source^="radon:"] {border-left-color:var(--stone-500);}
+[data-sensor-source^="climate:"] {border-left-color:var(--olive-950);}
+.home3d-sensor-marker.stale {border-style:dashed;}
 [data-editor=draw][aria-pressed=true] {background:var(--olive-200);}
 #home3d-mappings {display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:14px 0;}
 #home3d-mappings select {max-width:55%;}

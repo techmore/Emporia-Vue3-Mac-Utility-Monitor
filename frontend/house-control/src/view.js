@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { normalize } from '../vendor/config.js';
 import { buildHouse } from '../vendor/three/house.js';
 import { buildFurniture } from '../vendor/three/furniture.js';
+import { sensorKey, sensorReading } from './sensors.js';
 
 export function createView(canvas, labelContainer, plan, onPick) {
   const config = normalize(plan);
@@ -46,12 +47,13 @@ export function createView(canvas, labelContainer, plan, onPick) {
     floor.material = floor.material.clone();
     return [floor.userData.id, floor];
   }));
+  const sensorLabels=new Map();
   let disposed = false;
   function render() {
     if (disposed || document.hidden) return;
     renderer.render(scene, camera);
     const rect = canvas.getBoundingClientRect();
-    for (const label of labels) {
+    for (const label of [...labels,...sensorLabels.values()]) {
       const point = label.point.clone().project(camera);
       label.node.hidden = point.z < -1 || point.z > 1;
       label.node.style.left = `${(point.x + 1) * rect.width / 2}px`;
@@ -98,7 +100,22 @@ export function createView(canvas, labelContainer, plan, onPick) {
   resize();
   return {
     reset,
-    update(rooms, metric, format) {
+    update(rooms, metric, format, sensors=[]) {
+      const placed=sensors.filter(row=>row.placement);
+      const keys=new Set(placed.map(sensorKey));
+      for(const [key,label] of sensorLabels){if(!keys.has(key)){label.node.remove();sensorLabels.delete(key);}}
+      for(const row of placed){
+        const key=sensorKey(row);
+        if(!sensorLabels.has(key)){
+          const node=document.createElement('span');node.className='home3d-label home3d-sensor-marker';
+          labelContainer.append(node);sensorLabels.set(key,{node,point:new THREE.Vector3()});
+        }
+        const label=sensorLabels.get(key);
+        label.point.set(row.placement.position[0],.65,row.placement.position[1]);
+        label.node.dataset.sensorSource=row.source;
+        label.node.classList.toggle('stale',row.stale);
+        label.node.textContent=`${row.name} · ${sensorReading(row)}${row.stale?' · stale':''}`;
+      }
       const maximum = Math.max(1, ...rooms.map(room => Math.max(0, room[metric] ?? 0)));
       for (const label of labels) {
         const room = rooms.find(row => row.id === label.id);

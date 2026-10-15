@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.46 - 2026-10-15
+
+- Place recorded Aqara, climate and EcoQube sensors in the visual floor plan;
+  drag markers, change room/coordinates, undo/redo, and save privately. Room moves
+  carry sensors with them; resizing keeps placements inside the room.
+- Show sensor markers in 3D and accessible observation cards with Fahrenheit,
+  humidity, radon and battery values. Preserve zeros and mark stale/missing data.
+- Validate namespaced sensor identities and in-room coordinates. Older mapping
+  clients preserve placements; disappeared sensors remain removable. No device
+  discovery, new collectors or device-control commands are introduced.
+
 ## 2.3.45 - 2026-10-15
 
 - Add a browser floor-plan editor with room drawing, snapped dragging, resizing,

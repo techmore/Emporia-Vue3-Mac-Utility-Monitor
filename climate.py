@@ -17,6 +17,21 @@ ROOMS = [
 ROOM_IDS = {room['id'] for room in ROOMS}
 
 
+def get_latest_sensors() -> list[dict]:
+    """Read one observation per registered sensor without loading replay history."""
+    conn = energy._connect()
+    try:
+        return [dict(row) for row in conn.execute('''SELECT s.source,s.sensor_id,s.name,
+            r.timestamp,r.temperature_c,r.humidity_pct,r.battery_pct
+            FROM climate_sensors s LEFT JOIN climate_readings r
+            ON r.source=s.source AND r.sensor_id=s.sensor_id
+            AND r.timestamp=(SELECT MAX(n.timestamp) FROM climate_readings n
+                             WHERE n.source=s.source AND n.sensor_id=s.sensor_id)
+            ORDER BY s.name,s.source,s.sensor_id''')]
+    finally:
+        conn.close()
+
+
 def _number(value, name: str, low: float, high: float) -> float | None:
     if value is None:
         return None
