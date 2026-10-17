@@ -365,8 +365,17 @@ class EnergyMonitor(Gtk.Application):
         selected = next((item for item in record["data"]["windows"] if item.get("days") == days), {})
         def number(key, template):
             return template % selected[key] if selected.get(key) is not None else "—"
-        totals.set_label(number("total_kwh", "%.2f kWh") + " · " + number("total_cents", "%.0f¢") +
-                         " · " + number("change_pct", "%+.1f%% vs previous period"))
+        parts = [number("total_kwh", "%.2f kWh"), number("total_cents", "%.0f¢")]
+        change = selected.get("change_pct")
+        if change is None:
+            parts.append("no trend yet")
+        else:
+            arrow = "↑" if change > 0 else ("↓" if change < 0 else "→")
+            parts.append("%s %+.1f%% vs previous period" % (arrow, change))
+        readings = selected.get("readings")
+        if readings is not None:
+            parts.append("%d readings · gaps are unrecorded periods" % readings)
+        totals.set_label(" · ".join(parts))
         chart.queue_draw()
 
     def draw_history(self, channel, cr, width, height):
