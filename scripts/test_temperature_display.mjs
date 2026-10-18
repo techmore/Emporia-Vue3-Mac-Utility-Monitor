@@ -17,3 +17,14 @@ for(const [width,height] of [[640,400],[350,220]]){
  }
 }
 console.log('Temperature display: fresh/stale/missing, zero values, boundaries, range and bounded non-overlapping labels passed');
+
+const house={left:150,right:490,top:45,bottom:355};
+const outside=placeTemperatureLabels(Array.from({length:6},(_,i)=>({id:i,x:220+i*35,y:100+i*30,w:100,h:45})),640,400,house);
+assert.equal(outside.length,6);
+for(const a of outside){
+ assert(a.x+a.w<=house.left-12 || a.x>=house.right+12 || a.y+a.h<=house.top-12 || a.y>=house.bottom+12);
+ assert(a.x>=0 && a.x+a.w<=640 && a.y>=0 && a.y+a.h<=400);
+ for(const b of outside.filter(b=>b!==a))assert(!(a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y));
+}
+assert.equal(placeTemperatureLabels([{x:200,y:200,w:100,h:50}],400,400,{left:0,right:400,top:0,bottom:400}).length,0);
+console.log('Outside-house callouts: six sensors stay off the home, separated, bounded, and overflow stays in the list');

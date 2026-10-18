@@ -12485,29 +12485,54 @@ function Ou(e, t) {
 }
 //#endregion
 //#region src/temperature-display.js
-function ku(e, t, n) {
-	let r = [];
-	for (let i of [...e].sort((e, t) => (t.priority || 0) - (e.priority || 0))) {
-		if (i.w > t - 12 || i.h > n - 12) continue;
+function ku(e, t, n, r = null) {
+	if (r) return Au(e, t, n, r);
+	let i = [];
+	for (let r of [...e].sort((e, t) => (t.priority || 0) - (e.priority || 0))) {
+		if (r.w > t - 12 || r.h > n - 12) continue;
 		let e;
 		for (let a = 0; a < 10 && !e; a++) for (let o = 0; o < (a ? 12 : 1); o++) {
-			let s = o * Math.PI / 6, c = Math.max(6, Math.min(t - i.w - 6, i.x - i.w / 2 + Math.cos(s) * a * 20)), l = Math.max(6, Math.min(n - i.h - 6, i.y - i.h - 14 + Math.sin(s) * a * 18));
-			if (!r.some((e) => c < e.x + e.w + 8 && c + i.w + 8 > e.x && l < e.y + e.h + 8 && l + i.h + 8 > e.y)) {
+			let s = o * Math.PI / 6, c = Math.max(6, Math.min(t - r.w - 6, r.x - r.w / 2 + Math.cos(s) * a * 20)), l = Math.max(6, Math.min(n - r.h - 6, r.y - r.h - 14 + Math.sin(s) * a * 18));
+			if (!i.some((e) => c < e.x + e.w + 8 && c + r.w + 8 > e.x && l < e.y + e.h + 8 && l + r.h + 8 > e.y)) {
 				e = {
-					...i,
+					...r,
 					x: c,
 					y: l
 				};
 				break;
 			}
 		}
-		e && r.push(e);
+		e && i.push(e);
 	}
-	return r;
+	return i;
+}
+function Au(e, t, n, r) {
+	let i = [], a = (e) => i.some((t) => e.x < t.x + t.w + 6 && e.x + e.w + 6 > t.x && e.y < t.y + t.h + 6 && e.y + e.h + 6 > t.y), o = (e) => e.x + e.w <= r.left - 12 || e.x >= r.right + 12 || e.y + e.h <= r.top - 12 || e.y >= r.bottom + 12;
+	for (let s of [...e].sort((e, t) => (t.priority || 0) - (e.priority || 0) || e.y - t.y)) {
+		let e = [], c = r.left - s.w - 12, l = r.right + 12;
+		for (let r of [c, l]) if (!(r < 6 || r + s.w > t - 6)) for (let t = 0; t < 12; t++) for (let i of t ? [1, -1] : [1]) {
+			let c = Math.max(6, Math.min(n - s.h - 6, s.y - s.h / 2 + i * t * (s.h + 8))), l = {
+				...s,
+				x: r,
+				y: c
+			};
+			o(l) && !a(l) && e.push(l);
+		}
+		for (let i of [r.top - s.h - 12, r.bottom + 12]) if (!(i < 6 || i + s.h > n - 6)) for (let n = 0; n < 12; n++) for (let r of n ? [1, -1] : [1]) {
+			let c = Math.max(6, Math.min(t - s.w - 6, s.x - s.w / 2 + r * n * (s.w + 8))), l = {
+				...s,
+				x: c,
+				y: i
+			};
+			o(l) && !a(l) && e.push(l);
+		}
+		e.sort((e, t) => Math.hypot(e.x + e.w / 2 - s.x, e.y + e.h / 2 - s.y) - Math.hypot(t.x + t.w / 2 - s.x, t.y + t.h / 2 - s.y)), e.length && i.push(e[0]);
+	}
+	return i;
 }
 //#endregion
 //#region src/view.js
-function Au(e, t, n, r, i = {}) {
+function ju(e, t, n, r, i = {}) {
 	let a = yu(n), o = Fl(n), s = getComputedStyle(e), c = new il({
 		canvas: e,
 		antialias: !0,
@@ -12631,6 +12656,19 @@ function Au(e, t, n, r, i = {}) {
 	}), ee = !1, M = "all", N = i.compactTemperatures ? document.createElementNS("http://www.w3.org/2000/svg", "svg") : null;
 	N && (N.classList.add("temperature-leaders"), t.prepend(N));
 	function P() {
+		let t = {
+			left: Infinity,
+			right: -Infinity,
+			top: Infinity,
+			bottom: -Infinity
+		};
+		for (let n of [C.min.x, C.max.x]) for (let r of [C.min.y, C.max.y]) for (let i of [C.min.z, C.max.z]) {
+			let a = new W(n, r, i).project(u), o = (a.x + 1) * e.clientWidth / 2, s = (1 - a.y) * e.clientHeight / 2;
+			t.left = Math.min(t.left, o), t.right = Math.max(t.right, o), t.top = Math.min(t.top, s), t.bottom = Math.max(t.bottom, s);
+		}
+		return t;
+	}
+	function te() {
 		if (ee || document.hidden) return;
 		c.render(l, u);
 		let t = e.getBoundingClientRect();
@@ -12663,7 +12701,7 @@ function Au(e, t, n, r, i = {}) {
 				};
 			});
 			for (let t of e) t.label.node.hidden = !0;
-			for (let n of ku(e, t.width, t.height)) {
+			for (let n of ku(e, t.width, t.height, i.outsideTemperatureLabels ? P() : null)) {
 				let e = n.label.node;
 				e.hidden = !1, e.style.left = `${n.x}px`, e.style.top = `${n.y}px`;
 				let t = document.createElementNS(N.namespaceURI, "line");
@@ -12673,33 +12711,33 @@ function Au(e, t, n, r, i = {}) {
 			}
 		}
 	}
-	function te() {
-		_.target.copy(T);
-		let e = o.camera.elevation * Math.PI / 180, t = u.fov * Math.PI / 360, n = Math.atan(Math.tan(t) * u.aspect), r = w.radius / Math.sin(Math.min(t, n)) * 1.06;
-		_.maxDistance = Math.max(S * 5, r * 1.5), u.position.copy(T).add(new W(d.x * Math.cos(e), Math.sin(e), d.z * Math.cos(e)).multiplyScalar(r)), _.update(), P();
-	}
 	function ne() {
-		let t = e.getBoundingClientRect();
-		t.width && t.height && (c.setSize(t.width, t.height, !1), u.aspect = t.width / t.height, u.updateProjectionMatrix(), te());
+		_.target.copy(T);
+		let t = o.camera.elevation * Math.PI / 180, n = u.fov * Math.PI / 360, r = i.outsideTemperatureLabels ? Math.min(130, e.clientWidth * .24) : 0, a = r ? Math.max(.25, (e.clientWidth - 2 * r) / Math.max(1, e.clientHeight)) : u.aspect, s = Math.atan(Math.tan(n) * a), c = w.radius / Math.sin(Math.min(n, s)) * 1.06;
+		_.maxDistance = Math.max(S * 5, c * 1.5), u.position.copy(T).add(new W(d.x * Math.cos(t), Math.sin(t), d.z * Math.cos(t)).multiplyScalar(c)), _.update(), te();
 	}
-	_.addEventListener("change", P);
-	let re = new ResizeObserver(ne);
-	re.observe(e);
-	let ie = new Pa(), ae, oe = (e) => {
-		ae = [e.clientX, e.clientY];
-	}, se = (t) => {
-		if (!ae || Math.hypot(t.clientX - ae[0], t.clientY - ae[1]) > 5) return;
+	function re() {
+		let t = e.getBoundingClientRect();
+		t.width && t.height && (c.setSize(t.width, t.height, !1), u.aspect = t.width / t.height, u.updateProjectionMatrix(), ne());
+	}
+	_.addEventListener("change", te);
+	let ie = new ResizeObserver(re);
+	ie.observe(e);
+	let ae = new Pa(), oe, se = (e) => {
+		oe = [e.clientX, e.clientY];
+	}, ce = (t) => {
+		if (!oe || Math.hypot(t.clientX - oe[0], t.clientY - oe[1]) > 5) return;
 		let n = e.getBoundingClientRect();
-		ie.setFromCamera(new U((t.clientX - n.left) / n.width * 2 - 1, 1 - (t.clientY - n.top) / n.height * 2), u);
-		let i = ie.intersectObjects(f.filter((e) => e.group.visible).flatMap((e) => e.floors), !1)[0];
+		ae.setFromCamera(new U((t.clientX - n.left) / n.width * 2 - 1, 1 - (t.clientY - n.top) / n.height * 2), u);
+		let i = ae.intersectObjects(f.filter((e) => e.group.visible).flatMap((e) => e.floors), !1)[0];
 		i && r(i.object.userData.id);
 	};
-	return e.addEventListener("pointerdown", oe), e.addEventListener("pointerup", se), document.addEventListener("visibilitychange", P), ne(), {
-		reset: te,
+	return e.addEventListener("pointerdown", se), e.addEventListener("pointerup", ce), document.addEventListener("visibilitychange", te), re(), {
+		reset: ne,
 		setFloorOpacity(e) {
 			e = Math.max(.15, Math.min(1, e));
 			for (let t of f.filter((e) => e.level.elevation > a[0].elevation)) for (let n of t.floors) n.material.transparent = e < 1, n.material.opacity = e, n.material.depthWrite = e >= 1, n.material.needsUpdate = !0;
-			P();
+			te();
 		},
 		setLevel(e) {
 			M = e;
@@ -12708,7 +12746,7 @@ function Au(e, t, n, r, i = {}) {
 			for (let { access: t, group: n } of h) n.visible = e === "all" || t.level === e || t.toLevel === e;
 			C.makeEmpty();
 			for (let e of f.filter((e) => e.group.visible)) C.union(new tr().setFromObject(e.group));
-			C.isEmpty() || (C.getBoundingSphere(w), T.copy(w.center)), te();
+			C.isEmpty() || (C.getBoundingSphere(w), T.copy(w.center)), ne();
 		},
 		update(e, r, o, c = []) {
 			let l = c.filter((e) => e.placement), u = new Set(l.map(_u));
@@ -12770,10 +12808,10 @@ function Au(e, t, n, r, i = {}) {
 					i.emissive.set(t), i.emissiveIntensity = e ? .55 : 0, e && i.color.set(t);
 				} else i.emissive.set(s.getPropertyValue("--olive-600").trim()), i.emissiveIntensity = n[r] == null ? 0 : .12 + .5 * Math.max(0, n[r]) / d;
 			}
-			P();
+			te();
 		},
 		dispose() {
-			ee = !0, re.disconnect(), _.dispose(), document.removeEventListener("visibilitychange", P), e.removeEventListener("pointerdown", oe), e.removeEventListener("pointerup", se);
+			ee = !0, ie.disconnect(), _.dispose(), document.removeEventListener("visibilitychange", te), e.removeEventListener("pointerdown", se), e.removeEventListener("pointerup", ce);
 			let n = /* @__PURE__ */ new Set(), r = /* @__PURE__ */ new Set(), i = /* @__PURE__ */ new Set();
 			l.traverse((e) => {
 				e.geometry && n.add(e.geometry);
@@ -12788,39 +12826,39 @@ function Au(e, t, n, r, i = {}) {
 }
 //#endregion
 //#region src/plan-edit.js
-var ju = (e) => Math.round(e * 4) / 4, Mu = (e) => Math.max(-100, Math.min(100, ju(e)));
-function Nu(e, t, n, r, i) {
+var Mu = (e) => Math.round(e * 4) / 4, Nu = (e) => Math.max(-100, Math.min(100, Mu(e)));
+function Pu(e, t, n, r, i) {
 	let a = e[t][n];
-	t === "rooms" ? (a.rect[0] = Mu(a.rect[0] + r), a.rect[1] = Mu(a.rect[1] + i)) : t === "furniture" ? a.pos = [Mu(a.pos[0] + r), Mu(a.pos[1] + i)] : t === "openings" && (r = Math.max(-100 - Math.min(a.from[0], a.to[0]), Math.min(100 - Math.max(a.from[0], a.to[0]), ju(r))), i = Math.max(-100 - Math.min(a.from[1], a.to[1]), Math.min(100 - Math.max(a.from[1], a.to[1]), ju(i))), a.from = [a.from[0] + r, a.from[1] + i], a.to = [a.to[0] + r, a.to[1] + i]);
-}
-function Pu(e, t, n) {
-	e.rect[2] = Math.max(.5, Math.min(50, ju(t - e.rect[0]))), e.rect[3] = Math.max(.5, Math.min(50, ju(n - e.rect[1])));
+	t === "rooms" ? (a.rect[0] = Nu(a.rect[0] + r), a.rect[1] = Nu(a.rect[1] + i)) : t === "furniture" ? a.pos = [Nu(a.pos[0] + r), Nu(a.pos[1] + i)] : t === "openings" && (r = Math.max(-100 - Math.min(a.from[0], a.to[0]), Math.min(100 - Math.max(a.from[0], a.to[0]), Mu(r))), i = Math.max(-100 - Math.min(a.from[1], a.to[1]), Math.min(100 - Math.max(a.from[1], a.to[1]), Mu(i))), a.from = [a.from[0] + r, a.from[1] + i], a.to = [a.to[0] + r, a.to[1] + i]);
 }
 function Fu(e, t, n) {
+	e.rect[2] = Math.max(.5, Math.min(50, Mu(t - e.rect[0]))), e.rect[3] = Math.max(.5, Math.min(50, Mu(n - e.rect[1])));
+}
+function Iu(e, t, n) {
 	return {
 		id: n,
 		name: "New room",
 		floor: "oak",
 		rect: [
-			Mu(Math.min(e[0], t[0])),
-			Mu(Math.min(e[1], t[1])),
-			Math.max(.5, Math.min(50, ju(Math.abs(t[0] - e[0])))),
-			Math.max(.5, Math.min(50, ju(Math.abs(t[1] - e[1]))))
+			Nu(Math.min(e[0], t[0])),
+			Nu(Math.min(e[1], t[1])),
+			Math.max(.5, Math.min(50, Mu(Math.abs(t[0] - e[0])))),
+			Math.max(.5, Math.min(50, Mu(Math.abs(t[1] - e[1]))))
 		]
 	};
 }
-function Iu(e, t) {
+function Lu(e, t) {
 	let n = new Set(t.rooms.map((e) => e.id));
 	return e.filter((e) => n.has(e.room_id));
 }
-function Lu(e, t) {
+function Ru(e, t) {
 	let [n, r, i, a] = t.rect;
-	return [Math.max(n, Math.min(n + i, ju(e[0]))), Math.max(r, Math.min(r + a, ju(e[1])))];
+	return [Math.max(n, Math.min(n + i, Mu(e[0]))), Math.max(r, Math.min(r + a, Mu(e[1])))];
 }
-function Ru(e, t, n, r) {
-	for (let i of e.filter((e) => e.room_id === t)) i.position = Lu([i.position[0] + r.rect[0] - n[0], i.position[1] + r.rect[1] - n[1]], r);
+function zu(e, t, n, r) {
+	for (let i of e.filter((e) => e.room_id === t)) i.position = Ru([i.position[0] + r.rect[0] - n[0], i.position[1] + r.rect[1] - n[1]], r);
 }
-function zu(e) {
+function Bu(e) {
 	let t = {
 		sofa: 2.2,
 		coffeeTable: 1.1,
@@ -12844,7 +12882,7 @@ function zu(e) {
 }
 //#endregion
 //#region src/editor.js
-var Bu = "http://www.w3.org/2000/svg", Vu = [
+var Vu = "http://www.w3.org/2000/svg", Hu = [
 	"rug",
 	"sofa",
 	"armchair",
@@ -12865,15 +12903,15 @@ var Bu = "http://www.w3.org/2000/svg", Vu = [
 	"desk",
 	"wardrobe",
 	"bookshelf"
-], Hu = (e, t) => {
+], Uu = (e, t) => {
 	let n = document.createElement(e);
 	return n.textContent = t, n;
-}, Uu = (e, t, n = "") => {
-	let r = document.createElementNS(Bu, e);
+}, Wu = (e, t, n = "") => {
+	let r = document.createElementNS(Vu, e);
 	for (let [e, n] of Object.entries(t)) r.setAttribute(e, n);
 	return r.textContent = n, r;
 };
-function Wu(e, { onSave: t, onDirty: n }) {
+function Gu(e, { onSave: t, onDirty: n }) {
 	let r = (t) => e.querySelector(`[data-editor="${t}"]`), i = r("canvas"), a = r("inspector"), o = r("selection"), s, c, l = {
 		kind: "rooms",
 		index: 0
@@ -12889,10 +12927,10 @@ function Wu(e, { onSave: t, onDirty: n }) {
 	function O(e, t) {
 		if (l.kind === "sensors") {
 			let n = v[l.index], r = c.rooms.find((e) => e.id === n.room_id);
-			n.position = Lu([n.position[0] + e, n.position[1] + t], r);
+			n.position = Ru([n.position[0] + e, n.position[1] + t], r);
 		} else {
 			let n = l.kind === "rooms" ? [...c.rooms[l.index].rect] : null;
-			Nu(c, l.kind, l.index, e, t), n && Ru(v, c.rooms[l.index].id, n, c.rooms[l.index]);
+			Pu(c, l.kind, l.index, e, t), n && zu(v, c.rooms[l.index].id, n, c.rooms[l.index]);
 		}
 	}
 	function k() {
@@ -12909,16 +12947,16 @@ function Wu(e, { onSave: t, onDirty: n }) {
 	}
 	function ee(e) {
 		let t = new DOMPoint(e.clientX, e.clientY).matrixTransform(i.getScreenCTM().inverse());
-		return [ju(t.x), ju(t.y)];
+		return [Mu(t.x), Mu(t.y)];
 	}
 	function M() {
 		if (a.replaceChildren(), !l) return;
 		let e = (l.kind === "sensors" ? v : c[l.kind])[l.index];
 		if (!e) return;
 		let t = (e, t, n, i) => {
-			let o = Hu("label", e), s = document.createElement(i ? "select" : "input");
+			let o = Uu("label", e), s = document.createElement(i ? "select" : "input");
 			if (i) for (let e of i) {
-				let t = Hu("option", e);
+				let t = Uu("option", e);
 				t.value = e, s.append(t);
 			}
 			else s.type = typeof t == "number" ? "number" : "text", s.type === "number" ? s.step = "0.25" : s.maxLength = 120;
@@ -12928,7 +12966,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 			}), o.append(s), a.append(o);
 		};
 		if (l.kind === "sensors") {
-			a.append(Hu("strong", D(e).name || e.sensor_id)), a.append(Hu("small", e.source)), t("Height above floor (m)", e.height ?? .65, (t) => {
+			a.append(Uu("strong", D(e).name || e.sensor_id)), a.append(Uu("small", e.source)), t("Height above floor (m)", e.height ?? .65, (t) => {
 				e.height = Math.max(0, Math.min(6, t));
 			}), t("Mount", e.mount || "wall", (t) => {
 				e.mount = t;
@@ -12937,19 +12975,19 @@ function Wu(e, { onSave: t, onDirty: n }) {
 				"ceiling",
 				"pole-base"
 			]);
-			let n = Hu("label", "Sensor room"), r = document.createElement("select");
+			let n = Uu("label", "Sensor room"), r = document.createElement("select");
 			r.setAttribute("aria-label", "Sensor room");
 			for (let e of c.rooms) {
-				let t = Hu("option", e.name);
+				let t = Uu("option", e.name);
 				t.value = e.id, r.append(t);
 			}
 			r.value = e.room_id, r.addEventListener("change", () => j(() => {
 				e.room_id = r.value;
 				let t = c.rooms.find((e) => e.id === r.value);
-				e.position = Lu([t.rect[0] + t.rect[2] / 2, t.rect[1] + t.rect[3] / 2], t);
+				e.position = Ru([t.rect[0] + t.rect[2] / 2, t.rect[1] + t.rect[3] / 2], t);
 			})), n.append(r), a.append(n), ["Sensor X (m)", "Sensor Z (m)"].forEach((n, r) => t(n, e.position[r], (t) => {
-				e.position[r] = t, e.position = Lu(e.position, c.rooms.find((t) => t.id === e.room_id));
-			})), a.append(Hu("small", "Drag the marker inside its room, or change its room above. This never moves or controls the physical device."));
+				e.position[r] = t, e.position = Ru(e.position, c.rooms.find((t) => t.id === e.room_id));
+			})), a.append(Uu("small", "Drag the marker inside its room, or change its room above. This never moves or controls the physical device."));
 		} else if (l.kind === "rooms") t("Room name", e.name, (t) => {
 			e.name = t;
 		}), t("Level", bu(e, c), (t) => {
@@ -12961,7 +12999,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 			"Depth (m)"
 		].forEach((n, r) => t(n, e.rect[r], (t) => {
 			let n = [...e.rect];
-			e.rect[r] = r < 2 ? Math.max(-100, Math.min(100, t)) : Math.max(.5, Math.min(50, t)), Ru(v, e.id, n, e);
+			e.rect[r] = r < 2 ? Math.max(-100, Math.min(100, t)) : Math.max(.5, Math.min(50, t)), zu(v, e.id, n, e);
 		})), t("Floor material", e.floor, (t) => {
 			e.floor = t;
 		}, [
@@ -12969,19 +13007,19 @@ function Wu(e, { onSave: t, onDirty: n }) {
 			"walnut",
 			"tile",
 			"stone"
-		]), a.append(Hu("small", "Drag the room to move it; drag its corner to resize. Openings and furniture move independently."));
+		]), a.append(Uu("small", "Drag the room to move it; drag its corner to resize. Openings and furniture move independently."));
 		else if (l.kind === "furniture") {
 			t("Furniture type", e.type, (t) => {
 				e.type = t;
-			}, Vu), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.pos[r], (t) => {
+			}, Hu), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.pos[r], (t) => {
 				e.pos[r] = Math.max(-100, Math.min(100, t));
 			})), t("Rotation", e.rot || 0, (t) => {
 				e.rot = Math.max(-360, Math.min(360, t));
 			});
-			for (let [n, r] of zu(e)) t(`Furniture ${n}`, r, (t) => {
+			for (let [n, r] of Bu(e)) t(`Furniture ${n}`, r, (t) => {
 				e[n] = Math.max(.3, Math.min(10, t));
 			});
-			a.append(Hu("small", "Only dimensions supported by this furniture template are editable."));
+			a.append(Uu("small", "Only dimensions supported by this furniture template are editable."));
 		} else {
 			t("Opening type", e.type, (t) => {
 				e.type = t;
@@ -12996,7 +13034,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 				e.to = t === "horizontal" ? [Math.min(100, e.from[0] + n), e.from[1]] : [e.from[0], Math.min(100, e.from[1] + n)];
 			}, ["horizontal", "vertical"]), ["X (m)", "Z (m)"].forEach((n, r) => t(n, e.from[r], (t) => {
 				let n = t - e.from[r];
-				Nu(c, "openings", l.index, r === 0 ? n : 0, r === 1 ? n : 0);
+				Pu(c, "openings", l.index, r === 0 ? n : 0, r === 1 ? n : 0);
 			})), t("Opening length", Math.abs(e.to[0] - e.from[0]) + Math.abs(e.to[1] - e.from[1]), (t) => {
 				let r = Math.max(.5, Math.min(10, t));
 				e.to = n ? [Math.min(100, e.from[0] + r), e.from[1]] : [e.from[0], Math.min(100, e.from[1] + r)];
@@ -13032,66 +13070,66 @@ function Wu(e, { onSave: t, onDirty: n }) {
 			"openings"
 		]) c[e].forEach((t, n) => {
 			if (!S(t)) return;
-			let r = l?.kind === e && l.index === n, a = Uu("g", {
+			let r = l?.kind === e && l.index === n, a = Wu("g", {
 				"data-kind": e,
 				"data-index": n,
 				class: r ? "selected" : ""
 			}), s, c;
-			e === "rooms" ? ([s, c] = t.rect, a.append(Uu("rect", {
+			e === "rooms" ? ([s, c] = t.rect, a.append(Wu("rect", {
 				x: s,
 				y: c,
 				width: t.rect[2],
 				height: t.rect[3],
 				class: "editor-room"
-			})), a.append(Uu("text", {
+			})), a.append(Wu("text", {
 				x: s + t.rect[2] / 2,
 				y: c + t.rect[3] / 2,
 				class: "editor-name"
-			}, t.name)), r && a.append(Uu("circle", {
+			}, t.name)), r && a.append(Wu("circle", {
 				cx: s + t.rect[2],
 				cy: c + t.rect[3],
 				r: .22,
 				"data-resize": "true",
 				class: "editor-handle"
-			}))) : e === "furniture" ? ([s, c] = t.pos, a.append(Uu("rect", {
+			}))) : e === "furniture" ? ([s, c] = t.pos, a.append(Wu("rect", {
 				x: s - .4,
 				y: c - .3,
 				width: .8,
 				height: .6,
 				class: "editor-furniture",
 				transform: `rotate(${t.rot || 0},${s},${c})`
-			})), a.append(Uu("text", {
+			})), a.append(Wu("text", {
 				x: s,
 				y: c - .5,
 				class: "editor-name"
-			}, t.type))) : a.append(Uu("line", {
+			}, t.type))) : a.append(Wu("line", {
 				x1: t.from[0],
 				y1: t.from[1],
 				x2: t.to[0],
 				y2: t.to[1],
 				class: "editor-opening"
 			})), i.append(a);
-			let u = Hu("option", `${e === "rooms" ? "Room" : e === "furniture" ? "Furniture" : "Opening"}: ${t.name || t.type}`);
+			let u = Uu("option", `${e === "rooms" ? "Room" : e === "furniture" ? "Furniture" : "Opening"}: ${t.name || t.type}`);
 			u.value = `${e}:${n}`, o.append(u);
 		});
 		v.forEach((e, t) => {
 			if (!w("sensors", e)) return;
-			let n = Uu("g", {
+			let n = Wu("g", {
 				"data-kind": "sensors",
 				"data-index": t,
 				class: l?.kind === "sensors" && l.index === t ? "selected" : ""
 			});
-			n.append(Uu("circle", {
+			n.append(Wu("circle", {
 				cx: e.position[0],
 				cy: e.position[1],
 				r: .19,
 				class: "editor-sensor"
-			})), n.append(Uu("text", {
+			})), n.append(Wu("text", {
 				x: e.position[0],
 				y: e.position[1] - .4,
 				class: "editor-name"
 			}, D(e).name || e.sensor_id)), i.append(n);
-			let r = Hu("option", `Sensor: ${D(e).name || e.sensor_id}`);
+			let r = Uu("option", `Sensor: ${D(e).name || e.sensor_id}`);
 			r.value = `sensors:${t}`, o.append(r);
 		}), o.value = l ? `${l.kind}:${l.index}` : "", r("remove").disabled = !l, t && M();
 	}
@@ -13123,7 +13161,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 				})), v[e] = {
 					...v[e],
 					room_id: i.id,
-					position: Lu(t, i)
+					position: Ru(t, i)
 				}, l = {
 					kind: "sensors",
 					index: e
@@ -13136,7 +13174,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 					return;
 				}
 				c.rooms.push({
-					...Fu(t, t, crypto.randomUUID()),
+					...Iu(t, t, crypto.randomUUID()),
 					level: x
 				}), l = {
 					kind: "rooms",
@@ -13157,12 +13195,12 @@ function Wu(e, { onSave: t, onDirty: n }) {
 		if (!f) return;
 		let t = ee(e);
 		if (E(structuredClone(f.original)), f.draw) c.rooms[l.index] = {
-			...Fu(f.start, t, c.rooms[l.index].id),
+			...Iu(f.start, t, c.rooms[l.index].id),
 			level: x
 		};
 		else if (f.resize) {
 			let e = c.rooms[l.index], n = [...e.rect];
-			Pu(e, ...t), Ru(v, e.id, n, e);
+			Fu(e, ...t), zu(v, e.id, n, e);
 		} else O(t[0] - f.start[0], t[1] - f.start[1]);
 		N(!1, !1);
 	}), i.addEventListener("pointerup", () => {
@@ -13193,7 +13231,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 			})), v[n] = {
 				...v[n],
 				room_id: t.id,
-				position: Lu([t.rect[0] + t.rect[2] / 2, t.rect[1] + t.rect[3] / 2], t)
+				position: Ru([t.rect[0] + t.rect[2] / 2, t.rect[1] + t.rect[3] / 2], t)
 			}, l = {
 				kind: "sensors",
 				index: n
@@ -13204,7 +13242,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 	}), r("add-room").addEventListener("click", () => {
 		c.rooms.length >= 64 || j(() => {
 			c.rooms.push({
-				...Fu([0, 0], [3, 3], crypto.randomUUID()),
+				...Iu([0, 0], [3, 3], crypto.randomUUID()),
 				level: x
 			}), l = {
 				kind: "rooms",
@@ -13271,7 +13309,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 			c.name = e;
 		});
 	}), r("save").addEventListener("click", async () => {
-		r("save").disabled = !0, await t(structuredClone(c), Iu(s.bindings, c), structuredClone(v)) || k();
+		r("save").disabled = !0, await t(structuredClone(c), Lu(s.bindings, c), structuredClone(v)) || k();
 	}), {
 		get dirty() {
 			return h;
@@ -13296,7 +13334,7 @@ function Wu(e, { onSave: t, onDirty: n }) {
 			let t = r("sensor-picker"), n = t.value;
 			t.replaceChildren();
 			for (let e of y) {
-				let n = Hu("option", `${e.name} · ${e.source}${e.stale ? " · last recorded" : ""}`);
+				let n = Uu("option", `${e.name} · ${e.source}${e.stale ? " · last recorded" : ""}`);
 				n.value = _u(e), t.append(n);
 			}
 			y.some((e) => _u(e) === n) && (t.value = n), r("place-sensor").disabled = r("center-sensor").disabled = g || !y.length;
@@ -13311,34 +13349,34 @@ function Wu(e, { onSave: t, onDirty: n }) {
 }
 //#endregion
 //#region src/mains-chart.js
-var Gu = 960, Ku = 270, qu = 64, Ju = 18, Yu = [
+var Ku = 960, qu = 270, Ju = 64, Yu = 18, Xu = [
 	"Main",
 	"Mains_A",
 	"Mains_B"
 ];
-function Xu(e) {
+function Zu(e) {
 	let t = [], n = [];
 	for (let r = 0; r < e.length; r++) e[r] == null ? (n.length && t.push(n), n = []) : n.push([r, e[r]]);
 	return n.length && t.push(n), t;
 }
-function Zu(e) {
+function Qu(e) {
 	if (e.interval_seconds !== 60 || !Number.isFinite(Date.parse(e.start)) || Date.parse(e.end) - Date.parse(e.start) !== 864e5 || e.series?.length !== 3) throw Error("Invalid mains chart window");
 	let t = [];
 	e.series.forEach((e, n) => {
-		if (e.channel_name !== Yu[n] || e.values.length !== 1440 || e.values.some((e) => e !== null && !Number.isFinite(e))) throw Error("Invalid mains chart values");
+		if (e.channel_name !== Xu[n] || e.values.length !== 1440 || e.values.some((e) => e !== null && !Number.isFinite(e))) throw Error("Invalid mains chart values");
 		t.push(...e.values.filter((e) => e !== null));
 	});
-	let n = Math.min(0, ...t), r = Math.max(1, ...t), i = (e) => qu + e / 1440 * 876, a = (e) => Ju + (r - e) / (r - n) * 204;
+	let n = Math.min(0, ...t), r = Math.max(1, ...t), i = (e) => Ju + e / 1440 * 876, a = (e) => Yu + (r - e) / (r - n) * 204;
 	return {
 		min: n,
 		max: r,
 		x: i,
 		y: a,
 		empty: !t.length,
-		paths: e.series.map((e) => Xu(e.values).map((e) => e.map(([e, t], n) => `${n ? "L" : "M"}${i(e).toFixed(2)},${a(t).toFixed(2)}`).join(" ") + (e.length === 1 ? " l0.01,0" : "")).join(" "))
+		paths: e.series.map((e) => Zu(e.values).map((e) => e.map(([e, t], n) => `${n ? "L" : "M"}${i(e).toFixed(2)},${a(t).toFixed(2)}`).join(" ") + (e.length === 1 ? " l0.01,0" : "")).join(" "))
 	};
 }
-function Qu(e, t) {
+function $u(e, t) {
 	if (e.hidden = !t, !t) return;
 	e.replaceChildren();
 	let n = (e, t) => {
@@ -13346,7 +13384,7 @@ function Qu(e, t) {
 		return n.textContent = t, n;
 	}, r;
 	try {
-		r = Zu(t);
+		r = Qu(t);
 	} catch {
 		e.append(n("p", "Mains history chart unavailable: invalid recorded history."));
 		return;
@@ -13361,7 +13399,7 @@ function Qu(e, t) {
 		return;
 	}
 	let a = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-	a.setAttribute("viewBox", `0 0 ${Gu} ${Ku}`), a.setAttribute("role", "img"), a.setAttribute("aria-label", "24-hour Total, Leg A and Leg B power history. Missing minutes break each line. Use the minute slider for exact values.");
+	a.setAttribute("viewBox", `0 0 ${Ku} ${qu}`), a.setAttribute("role", "img"), a.setAttribute("aria-label", "24-hour Total, Leg A and Leg B power history. Missing minutes break each line. Use the minute slider for exact values.");
 	let o = (e, t, n) => {
 		let r = document.createElementNS(a.namespaceURI, e);
 		for (let [e, n] of Object.entries(t)) r.setAttribute(e, n);
@@ -13370,7 +13408,7 @@ function Qu(e, t) {
 	for (let e = 0; e <= 4; e++) {
 		let t = r.min + (r.max - r.min) * e / 4, n = r.y(t);
 		o("line", {
-			x1: qu,
+			x1: Ju,
 			x2: 940,
 			y1: n,
 			y2: n,
@@ -13394,7 +13432,7 @@ function Qu(e, t) {
 		d: r.paths[t],
 		class: `mains-line mains-line-${e.channel_name}`,
 		"data-channel": e.channel_name,
-		"data-segments": Xu(e.values).length
+		"data-segments": Zu(e.values).length
 	})), e.append(a);
 	let l = n("label", "Inspect minute "), u = document.createElement("input");
 	u.type = "range", u.min = "0", u.max = "1439", u.step = "1", u.value = e.dataset.minute || "1439", u.setAttribute("aria-label", "Mains history minute"), l.append(u), e.append(l);
@@ -13412,24 +13450,24 @@ function Qu(e, t) {
 		d.textContent = `${r} · ` + t.series.map((e) => `${e.name}: ${e.values[n] === null ? "Missing" : `${Math.round(e.values[n]).toLocaleString()} W`}`).join(" · "), u.setAttribute("aria-valuetext", d.textContent);
 	};
 	u.addEventListener("input", () => f(Number(u.value))), a.addEventListener("pointermove", (e) => {
-		let t = a.getBoundingClientRect(), n = (e.clientX - t.left) / t.width * Gu;
-		f(Math.max(0, Math.min(1439, Math.round((n - qu) / 876 * 1440))));
+		let t = a.getBoundingClientRect(), n = (e.clientX - t.left) / t.width * Ku;
+		f(Math.max(0, Math.min(1439, Math.round((n - Ju) / 876 * 1440))));
 	}), f(Number(u.value)), e.append(n("small", `Window: ${c(0).toLocaleString()} – ${new Date(t.end).toLocaleString()}. Recorded history remains visible if the live feed disconnects.`));
 }
 //#endregion
 //#region src/main.js
-var Q = (e) => document.getElementById(`home3d-${e}`), $u = (e, t) => e == null ? "Unknown" : t === "temperature_f" ? `${e.toFixed(1)} °F` : t === "watts" ? `${Math.round(e).toLocaleString()} W` : t === "kwh_24h" ? `${e.toFixed(2)} kWh` : `$${e.toFixed(2)}`, ed, $, td, nd, rd = !1, id = !1, ad = !1, od, sd = 0, cd = !1, ld = new URLSearchParams(location.search).get("level") || "", ud = null, dd = null, fd = null, pd = 0;
+var Q = (e) => document.getElementById(`home3d-${e}`), ed = (e, t) => e == null ? "Unknown" : t === "temperature_f" ? `${e.toFixed(1)} °F` : t === "watts" ? `${Math.round(e).toLocaleString()} W` : t === "kwh_24h" ? `${e.toFixed(2)} kWh` : `$${e.toFixed(2)}`, td, $, nd, rd, id = !1, ad = !1, od = !1, sd, cd = 0, ld = !1, ud = new URLSearchParams(location.search).get("level") || "", dd = null, fd = null, pd = null, md = 0;
 new URLSearchParams(location.search).get("metric") === "temperature_f" && (Q("metric").value = "temperature_f");
-var md = document.getElementById("home3d-editor"), hd = Wu(md, {
+var hd = document.getElementById("home3d-editor"), gd = Gu(hd, {
 	onSave: async (e, t, n) => {
-		let r = await Od(e, Iu(kd(), e), n);
-		return r || (md.querySelector("[data-editor=\"status\"]").textContent = Q("save-status").textContent), r;
+		let r = await kd(e, Lu(Ad(), e), n);
+		return r || (hd.querySelector("[data-editor=\"status\"]").textContent = Q("save-status").textContent), r;
 	},
 	onDirty: (e) => {
-		Q("save").disabled = e || ad || !rd;
+		Q("save").disabled = e || od || !id;
 	}
 });
-async function gd(e, t = {}) {
+async function _d(e, t = {}) {
 	let n = await fetch(`/api/house-control/${e}`, {
 		cache: "no-store",
 		signal: AbortSignal.timeout(1e4),
@@ -13440,112 +13478,112 @@ async function gd(e, t = {}) {
 	if (!n.ok) throw Error(r.error || `Collector request failed (${n.status})`);
 	return r;
 }
-function _d(e, t, n) {
+function vd(e, t, n) {
 	let r = document.createElement(e);
 	return r.textContent = t, n && (r.className = n), r;
 }
-function vd() {
-	let e = Su(ed.plan, ld), t = Q("metric").value, n = t === "temperature_f" && ud && dd !== null, r = n ? Ou(ud, dd) : $.sensors, i = Du($.rooms, r);
-	if (Q("temperature-controls").hidden = t !== "temperature_f", Q("temperature-time-label").textContent = n ? `Recorded ${new Date(ud.times[dd]).toLocaleString()} · ${ud.seconds / 60}-minute observation means; gaps are unknown` : "Live recorded temperatures · Scroll the timeline to look back", Q("status").textContent = `${$.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${$u($.current_watts, "watts")} · Last reading: ${$.last_reading || "none"}`, $.sensor_sync) {
+function yd() {
+	let e = Su(td.plan, ud), t = Q("metric").value, n = t === "temperature_f" && dd && fd !== null, r = n ? Ou(dd, fd) : $.sensors, i = Du($.rooms, r);
+	if (Q("temperature-controls").hidden = t !== "temperature_f", Q("temperature-time-label").textContent = n ? `Recorded ${new Date(dd.times[fd]).toLocaleString()} · ${dd.seconds / 60}-minute observation means; gaps are unknown` : "Live recorded temperatures · Scroll the timeline to look back", Q("status").textContent = `${$.online ? "Collector live" : "Collector offline or readings stale"} · Whole home: ${ed($.current_watts, "watts")} · Last reading: ${$.last_reading || "none"}`, $.sensor_sync) {
 		let e = $.sensor_sync.ok && $.online, t = document.getElementById("nav-status-label"), n = document.getElementById("nav-status-dot");
-		t && (t.textContent = e ? "SER8 live" : "SER8 power stale or unavailable"), n && (n.className = `status-dot ${e ? "live" : "stale"}`), Q("status").textContent = `Local preview · SER8 feed ${$.sensor_sync.ok ? "connected" : "unavailable; retained values are stale"} · Whole home: ${$u($.current_watts, "watts")} · Power ${$.online ? "recent" : "stale or unavailable"} · Last reading: ${$.last_reading || "none"} · Last refresh: ${$.sensor_sync.last_success || "none"}`;
+		t && (t.textContent = e ? "SER8 live" : "SER8 power stale or unavailable"), n && (n.className = `status-dot ${e ? "live" : "stale"}`), Q("status").textContent = `Local preview · SER8 feed ${$.sensor_sync.ok ? "connected" : "unavailable; retained values are stale"} · Whole home: ${ed($.current_watts, "watts")} · Power ${$.online ? "recent" : "stale or unavailable"} · Last reading: ${$.last_reading || "none"} · Last refresh: ${$.sensor_sync.last_success || "none"}`;
 	}
 	let a = Q("mains");
-	a.replaceChildren(), Qu(Q("mains-history"), $.mains_history), Q("mains-section").hidden = t === "temperature_f" || !$.mains?.length, Q("mains-history").hidden = t === "temperature_f", Q("room-title").textContent = t === "temperature_f" ? "Room temperatures" : "Mapped circuit totals", Q("room-description").textContent = t === "temperature_f" ? "Only placed room sensors supply temperature colors. Rooms without a reading stay unknown." : "Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.", Q("recording-basis").hidden = t === "temperature_f";
+	a.replaceChildren(), $u(Q("mains-history"), $.mains_history), Q("mains-section").hidden = t === "temperature_f" || !$.mains?.length, Q("mains-history").hidden = t === "temperature_f", Q("room-title").textContent = t === "temperature_f" ? "Room temperatures" : "Mapped circuit totals", Q("room-description").textContent = t === "temperature_f" ? "Only placed room sensors supply temperature colors. Rooms without a reading stay unknown." : "Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.", Q("recording-basis").hidden = t === "temperature_f";
 	for (let e of $.mains || []) {
-		let t = _d("article", "", "home3d-sensor");
-		t.append(_d("strong", e.name), _d("span", $u(e.watts, "watts")), _d("small", `${$u(e.kwh_24h, "kwh_24h")} · ${$u(e.cost_24h, "cost_24h")} recorded / 24h`), _d("small", `Last value: ${e.timestamp}${e.watts == null ? " · live power unavailable" : ""}`), _d("small", e.source || "SER8 recorded data")), e.observed_minutes != null && t.append(_d("small", `Coverage: ${e.observed_minutes}/${e.expected_minutes} minutes · ${e.complete ? "complete 24 hours" : "partial recorded total"}`)), a.append(t);
+		let t = vd("article", "", "home3d-sensor");
+		t.append(vd("strong", e.name), vd("span", ed(e.watts, "watts")), vd("small", `${ed(e.kwh_24h, "kwh_24h")} · ${ed(e.cost_24h, "cost_24h")} recorded / 24h`), vd("small", `Last value: ${e.timestamp}${e.watts == null ? " · live power unavailable" : ""}`), vd("small", e.source || "SER8 recorded data")), e.observed_minutes != null && t.append(vd("small", `Coverage: ${e.observed_minutes}/${e.expected_minutes} minutes · ${e.complete ? "complete 24 hours" : "partial recorded total"}`)), a.append(t);
 	}
 	Q("recording-basis").textContent = $.circuit_history_basis || "Circuit totals are recorded observations; gaps are not estimated.";
 	let o = Q("rooms");
 	o.replaceChildren();
 	for (let r of i.filter((t) => e.has(t.id))) {
-		let e = _d("button", "", "home3d-room");
-		e.type = "button", e.dataset.roomId = r.id, t === "temperature_f" && (e.dataset.band = Eu(r.temperature_f) || "unknown"), e.append(_d("strong", r.name), _d("span", $u(r[t], t)), ...t === "temperature_f" ? [_d("small", r.temperature_sensor_count ? `${r.temperature_sensor_count} room sensor(s) · ${n ? "recorded observation" : "recent observation"}` : "No fresh room reading · no temperature inferred")] : [_d("small", `${r.mapped_circuits} mapped · ${r.reporting_circuits} reporting`), _d("small", `${$u(r.kwh_24h, "kwh_24h")} · ${$u(r.cost_24h, "cost_24h")} recorded / 24h`)]), e.addEventListener("click", () => Cd(r.id)), o.append(e);
+		let e = vd("button", "", "home3d-room");
+		e.type = "button", e.dataset.roomId = r.id, t === "temperature_f" && (e.dataset.band = Eu(r.temperature_f) || "unknown"), e.append(vd("strong", r.name), vd("span", ed(r[t], t)), ...t === "temperature_f" ? [vd("small", r.temperature_sensor_count ? `${r.temperature_sensor_count} room sensor(s) · ${n ? "recorded observation" : "recent observation"}` : "No fresh room reading · no temperature inferred")] : [vd("small", `${r.mapped_circuits} mapped · ${r.reporting_circuits} reporting`), vd("small", `${ed(r.kwh_24h, "kwh_24h")} · ${ed(r.cost_24h, "cost_24h")} recorded / 24h`)]), e.addEventListener("click", () => wd(r.id)), o.append(e);
 	}
 	let s = Q("sensors");
-	s.replaceChildren(), $.sensors.length || s.append(_d("p", "No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically."));
+	s.replaceChildren(), $.sensors.length || s.append(vd("p", "No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically."));
 	for (let t of r.filter((t) => !t.placement || e.has(t.placement.room_id))) {
-		let e = _d("article", "", "home3d-sensor");
+		let e = vd("article", "", "home3d-sensor");
 		e.dataset.sensorSource = t.source;
-		let r = ed.plan.rooms.find((e) => e.id === t.placement?.room_id);
-		e.append(_d("strong", t.name), _d("span", vu(t)), _d("small", `${t.source} · ${r?.name || "Unplaced"} · ${n ? "History bucket" : t.stale ? "Last recorded (stale)" : "Recent observation"}${t.placement?.mount === "pole-base" ? " · pole base" : ""}`), _d("small", t.timestamp ? new Date(t.timestamp).toLocaleString() : "No observation available"), ...t.measurement_time_known === !1 ? [_d("small", "Controller observation; sensor measurement time unknown")] : []), s.append(e);
+		let r = td.plan.rooms.find((e) => e.id === t.placement?.room_id);
+		e.append(vd("strong", t.name), vd("span", vu(t)), vd("small", `${t.source} · ${r?.name || "Unplaced"} · ${n ? "History bucket" : t.stale ? "Last recorded (stale)" : "Recent observation"}${t.placement?.mount === "pole-base" ? " · pole base" : ""}`), vd("small", t.timestamp ? new Date(t.timestamp).toLocaleString() : "No observation available"), ...t.measurement_time_known === !1 ? [vd("small", "Controller observation; sensor measurement time unknown")] : []), s.append(e);
 	}
-	hd.refreshSensors($.sensors), td?.update(i, t, $u, r);
+	gd.refreshSensors($.sensors), nd?.update(i, t, ed, r);
 }
-async function yd() {
-	let e = ++pd, t = new URLSearchParams({ window: Q("temperature-window").value });
-	fd && t.set("end", fd);
+async function bd() {
+	let e = ++md, t = new URLSearchParams({ window: Q("temperature-window").value });
+	pd && t.set("end", pd);
 	try {
-		let n = await gd(`temperatures?${t}`);
-		if (e !== pd) return;
-		if (n.revision !== ed.revision) throw Error("Floor plan changed; reload the saved plan.");
-		ud = n;
+		let n = await _d(`temperatures?${t}`);
+		if (e !== md) return;
+		if (n.revision !== td.revision) throw Error("Floor plan changed; reload the saved plan.");
+		dd = n;
 		let r = Q("temperature-time");
-		r.disabled = !1, r.max = n.times.length - 1, r.value = n.times.length - 1, fd && (dd = n.times.length - 1), Q("temperature-newer").disabled = !fd, vd();
+		r.disabled = !1, r.max = n.times.length - 1, r.value = n.times.length - 1, pd && (fd = n.times.length - 1), Q("temperature-newer").disabled = !pd, yd();
 	} catch (t) {
-		e === pd && (Q("temperature-time-label").textContent = `History unavailable: ${t.message}`);
+		e === md && (Q("temperature-time-label").textContent = `History unavailable: ${t.message}`);
 	}
 }
-function bd(e) {
-	if (!ud) return;
-	let t = Date.parse(ud.end) - Date.parse(ud.start), n = Date.parse(ud.end) + e * t;
-	fd = n >= Date.now() - 6e4 ? null : new Date(n).toISOString(), dd = fd ? 0 : null, yd();
+function xd(e) {
+	if (!dd) return;
+	let t = Date.parse(dd.end) - Date.parse(dd.start), n = Date.parse(dd.end) + e * t;
+	pd = n >= Date.now() - 6e4 ? null : new Date(n).toISOString(), fd = pd ? 0 : null, bd();
 }
-function xd() {
-	let e = yu(ed.plan), t = Q("level");
-	ld !== "all" && !e.some((e) => e.id === ld) && (ld = e[0].id), t.replaceChildren();
+function Sd() {
+	let e = yu(td.plan), t = Q("level");
+	ud !== "all" && !e.some((e) => e.id === ud) && (ud = e[0].id), t.replaceChildren();
 	for (let n of [...e, {
 		id: "all",
 		name: "All floors · stacked"
 	}]) {
-		let e = _d("option", n.name);
+		let e = vd("option", n.name);
 		e.value = n.id, t.append(e);
 	}
-	t.value = ld;
+	t.value = ud;
 }
-function Sd() {
-	if (!ed || !$) return;
-	ld = Q("level").value;
+function Cd() {
+	if (!td || !$) return;
+	ud = Q("level").value;
 	let e = new URL(location.href);
-	e.searchParams.set("level", ld), history.replaceState(null, "", e), td?.setLevel(ld), hd.setLevel(ld), vd();
+	e.searchParams.set("level", ud), history.replaceState(null, "", e), nd?.setLevel(ud), gd.setLevel(ud), yd();
 }
-function Cd(e) {
+function wd(e) {
 	for (let t of Q("rooms").children) t.setAttribute("aria-pressed", String(t.dataset.roomId === e));
 	let t = $.rooms.find((t) => t.id === e);
 	t && (Q("save-status").textContent = `${t.name}: ` + ($.circuits.filter((t) => t.room_id === e).map((e) => e.display_name).join(", ") || "No circuits assigned"));
 }
-function wd(e) {
+function Td(e) {
 	return JSON.stringify([e.active_device_gid, e.circuits.map((e) => e.channel_name).sort()]);
 }
-function Td() {
-	od = wd($), Q("panel").textContent = `Panel: ${$.active_device_gid || "No readings yet"}. ` + ($.other_panel_bindings ? `${$.other_panel_bindings} mappings from other panels are preserved.` : "");
+function Ed() {
+	sd = Td($), Q("panel").textContent = `Panel: ${$.active_device_gid || "No readings yet"}. ` + ($.other_panel_bindings ? `${$.other_panel_bindings} mappings from other panels are preserved.` : "");
 	let e = Q("mappings");
 	e.replaceChildren();
 	for (let t of $.circuits) {
-		let n = _d("label", t.display_name + (t.missing ? " (not reported)" : "")), r = document.createElement("select");
+		let n = vd("label", t.display_name + (t.missing ? " (not reported)" : "")), r = document.createElement("select");
 		r.setAttribute("aria-label", `Room for ${t.display_name}`), r.dataset.channel = t.channel_name;
-		let i = _d("option", "Unassigned");
+		let i = vd("option", "Unassigned");
 		i.value = "", r.append(i);
-		for (let e of ed.plan.rooms) {
-			let t = _d("option", `${Cu(ed.plan, e)} · ${e.name}`);
+		for (let e of td.plan.rooms) {
+			let t = vd("option", `${Cu(td.plan, e)} · ${e.name}`);
 			t.value = e.id, r.append(t);
 		}
 		r.value = t.room_id || "", r.addEventListener("change", () => {
-			rd = !0, Q("save").disabled = ad || hd.dirty, Q("save-status").textContent = "Unsaved room mappings";
+			id = !0, Q("save").disabled = od || gd.dirty, Q("save-status").textContent = "Unsaved room mappings";
 		}), n.append(r), e.append(n);
 	}
 }
-async function Ed() {
-	if (!ed || id || document.hidden) return;
-	id = !0;
-	let e = sd;
+async function Dd() {
+	if (!td || ad || document.hidden) return;
+	ad = !0;
+	let e = cd;
 	try {
-		let t = await gd("state");
-		if (e !== sd || ((t.revision !== ed.revision || wd(t) !== od) && (ad = !0, hd.block(!0), Q("save").disabled = !0, Q("save-status").textContent = "The saved plan or panel circuits changed. Reload the saved plan before editing."), t.revision !== ed.revision)) return;
-		$ = t, vd();
+		let t = await _d("state");
+		if (e !== cd || ((t.revision !== td.revision || Td(t) !== sd) && (od = !0, gd.block(!0), Q("save").disabled = !0, Q("save-status").textContent = "The saved plan or panel circuits changed. Reload the saved plan before editing."), t.revision !== td.revision)) return;
+		$ = t, yd();
 	} catch (t) {
-		if (e !== sd) return;
+		if (e !== cd) return;
 		$ && ($ = {
 			...$,
 			online: !1,
@@ -13567,51 +13605,51 @@ async function Ed() {
 				watts: null,
 				reporting_circuits: 0
 			}))
-		}, vd()), Q("status").textContent = `${t.message} Last received history retained; live power unavailable.`;
+		}, yd()), Q("status").textContent = `${t.message} Last received history retained; live power unavailable.`;
 	} finally {
-		id = !1;
+		ad = !1;
 	}
 }
-async function Dd() {
-	let e = ++sd;
+async function Od() {
+	let e = ++cd;
 	Q("save").disabled = !0;
-	let t = await gd("config"), n = await gd("state");
-	if (e === sd) {
+	let t = await _d("config"), n = await _d("state");
+	if (e === cd) {
 		if (n.revision !== t.revision) throw Error("Plan changed while loading. Reload the saved plan.");
-		ed = t, $ = n, ud = null, dd = null, ++pd, rd = !1, ad = !1, Q("name").textContent = `${ed.plan.name}${ed.example ? " · Example layout, not your measured home" : ""}`, Q("save-status").textContent = "", Td(), xd(), hd.setConfig(ed, $.sensors), hd.setLevel(ld), md.hidden = !1, td?.dispose(), td = null, Q("render-error").hidden = !0;
+		td = t, $ = n, dd = null, fd = null, ++md, id = !1, od = !1, Q("name").textContent = `${td.plan.name}${td.example ? " · Example layout, not your measured home" : ""}`, Q("save-status").textContent = "", Ed(), Sd(), gd.setConfig(td, $.sensors), gd.setLevel(ud), hd.hidden = !1, nd?.dispose(), nd = null, Q("render-error").hidden = !0;
 		try {
-			td = Au(Q("canvas"), Q("labels"), ed.plan, Cd);
+			nd = ju(Q("canvas"), Q("labels"), td.plan, wd);
 		} catch (e) {
 			Q("render-error").hidden = !1, Q("render-error").textContent = "3D rendering is unavailable in this browser. Room data and mappings still work below.", console.warn("Home 3D renderer unavailable:", e.message);
 		}
-		td?.setLevel(ld), vd(), Q("metric").value === "temperature_f" && yd(), location.hash === "#home3d-floor-plan" && Q("floor-plan").scrollIntoView({ block: "start" });
+		nd?.setLevel(ud), yd(), Q("metric").value === "temperature_f" && bd(), location.hash === "#home3d-floor-plan" && Q("floor-plan").scrollIntoView({ block: "start" });
 	}
 }
-async function Od(e, t, n = ed.sensors) {
-	if (cd) return !1;
-	cd = !0, hd.setSaving(!0), Q("save-status").textContent = "Saving...";
+async function kd(e, t, n = td.sensors) {
+	if (ld) return !1;
+	ld = !0, gd.setSaving(!0), Q("save-status").textContent = "Saving...";
 	for (let e of Q("mappings").querySelectorAll("select")) e.disabled = !0;
 	Q("save").disabled = !0;
 	try {
-		return await gd("config", {
+		return await _d("config", {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				plan: e,
 				bindings: t,
 				sensors: n,
-				revision: ed.revision
+				revision: td.revision
 			})
-		}), await Dd(), Q("save-status").textContent = "Saved", !0;
+		}), await Od(), Q("save-status").textContent = "Saved", !0;
 	} catch (e) {
-		return Q("save-status").textContent = e.message, Q("save").disabled = ad || !rd, !1;
+		return Q("save-status").textContent = e.message, Q("save").disabled = od || !id, !1;
 	} finally {
-		cd = !1, hd.setSaving(!1);
+		ld = !1, gd.setSaving(!1);
 		for (let e of Q("mappings").querySelectorAll("select")) e.disabled = !1;
 	}
 }
-function kd() {
-	let e = new Set($.circuits.map((e) => e.channel_name)), t = ed.bindings.filter((t) => t.device_gid !== $.active_device_gid || !e.has(t.channel_name));
+function Ad() {
+	let e = new Set($.circuits.map((e) => e.channel_name)), t = td.bindings.filter((t) => t.device_gid !== $.active_device_gid || !e.has(t.channel_name));
 	for (let e of Q("mappings").querySelectorAll("select")) e.value && t.push({
 		device_gid: $.active_device_gid,
 		channel_name: e.dataset.channel,
@@ -13619,55 +13657,55 @@ function kd() {
 	});
 	return t;
 }
-Q("save").addEventListener("click", () => Od(ed.plan, kd())), Q("level").addEventListener("change", Sd), Q("metric").addEventListener("change", () => {
+Q("save").addEventListener("click", () => kd(td.plan, Ad())), Q("level").addEventListener("change", Cd), Q("metric").addEventListener("change", () => {
 	if (!$) return;
 	let e = new URL(location.href);
-	e.searchParams.set("metric", Q("metric").value), history.replaceState(null, "", e), vd(), Q("metric").value === "temperature_f" && !ud && yd();
+	e.searchParams.set("metric", Q("metric").value), history.replaceState(null, "", e), yd(), Q("metric").value === "temperature_f" && !dd && bd();
 }), Q("temperature-window").addEventListener("change", () => {
-	dd = null, yd();
+	fd = null, bd();
 }), Q("temperature-time").addEventListener("input", () => {
-	dd = Number(Q("temperature-time").value), vd();
+	fd = Number(Q("temperature-time").value), yd();
 }), Q("temperature-time").addEventListener("wheel", (e) => {
-	if (!ud || Q("temperature-time").disabled) return;
+	if (!dd || Q("temperature-time").disabled) return;
 	e.preventDefault();
 	let t = Q("temperature-time");
-	t.value = Math.max(0, Math.min(Number(t.max), Number(t.value) + (e.deltaY > 0 ? -1 : 1))), dd = Number(t.value), vd();
-}, { passive: !1 }), Q("temperature-older").addEventListener("click", () => bd(-1)), Q("temperature-newer").addEventListener("click", () => bd(1)), Q("temperature-live").addEventListener("click", () => {
-	fd = null, dd = null, vd(), yd();
-}), Q("reset").addEventListener("click", () => td?.reset()), Q("refresh").addEventListener("click", Ed), Q("reload").addEventListener("click", () => {
-	(!rd && !hd.dirty || confirm("Discard unsaved floor-plan and mapping changes and reload?")) && Dd().catch((e) => {
+	t.value = Math.max(0, Math.min(Number(t.max), Number(t.value) + (e.deltaY > 0 ? -1 : 1))), fd = Number(t.value), yd();
+}, { passive: !1 }), Q("temperature-older").addEventListener("click", () => xd(-1)), Q("temperature-newer").addEventListener("click", () => xd(1)), Q("temperature-live").addEventListener("click", () => {
+	pd = null, fd = null, yd(), bd();
+}), Q("reset").addEventListener("click", () => nd?.reset()), Q("refresh").addEventListener("click", Dd), Q("reload").addEventListener("click", () => {
+	(!id && !gd.dirty || confirm("Discard unsaved floor-plan and mapping changes and reload?")) && Od().catch((e) => {
 		Q("status").textContent = e.message;
 	});
 }), Q("import").addEventListener("change", async (e) => {
 	let t = e.target.files[0];
-	if (e.target.value = "", t && ed) try {
+	if (e.target.value = "", t && td) try {
 		if (t.size > 256e3) throw Error("Floor plan must be smaller than 250 KB.");
 		let e = JSON.parse(await t.text());
-		confirm("Replace the floor plan and clear all saved room mappings and sensor placements, including other panels?") && await Od(e, [], []);
+		confirm("Replace the floor plan and clear all saved room mappings and sensor placements, including other panels?") && await kd(e, [], []);
 	} catch (e) {
 		Q("save-status").textContent = e.message;
 	}
 }), Q("export").addEventListener("click", () => {
-	if (!ed) return;
-	let e = URL.createObjectURL(new Blob([JSON.stringify(ed.plan, null, 2)], { type: "application/json" })), t = document.createElement("a");
+	if (!td) return;
+	let e = URL.createObjectURL(new Blob([JSON.stringify(td.plan, null, 2)], { type: "application/json" })), t = document.createElement("a");
 	t.href = e, t.download = "floor-plan.json", t.click(), setTimeout(() => URL.revokeObjectURL(e), 1e3);
 }), document.addEventListener("visibilitychange", () => {
-	document.hidden || Ed();
+	document.hidden || Dd();
 }), window.addEventListener("beforeunload", (e) => {
-	(rd || hd.dirty) && (e.preventDefault(), e.returnValue = "");
+	(id || gd.dirty) && (e.preventDefault(), e.returnValue = "");
 }), window.addEventListener("pagehide", () => {
-	clearInterval(nd), td?.dispose(), td = null;
+	clearInterval(rd), nd?.dispose(), nd = null;
 }), window.addEventListener("pageshow", (e) => {
-	e.persisted && Ad();
+	e.persisted && jd();
 });
-async function Ad() {
-	clearInterval(nd);
+async function jd() {
+	clearInterval(rd);
 	try {
-		await Dd();
+		await Od();
 	} catch (e) {
 		Q("status").textContent = e.message;
 	}
-	nd = setInterval(Ed, 3e4);
+	rd = setInterval(Dd, 3e4);
 }
-Ad();
+jd();
 //#endregion

@@ -123,6 +123,17 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
   const leaders = options.compactTemperatures ? document.createElementNS('http://www.w3.org/2000/svg','svg') : null;
   if(leaders){leaders.classList.add('temperature-leaders');labelContainer.prepend(leaders);}
 
+  function projectedHouseBounds() {
+    const projected={left:Infinity,right:-Infinity,top:Infinity,bottom:-Infinity};
+    for(const x of [bounds.min.x,bounds.max.x])for(const y of [bounds.min.y,bounds.max.y])for(const z of [bounds.min.z,bounds.max.z]){
+      const point=new THREE.Vector3(x,y,z).project(camera);
+      const sx=(point.x+1)*canvas.clientWidth/2,sy=(1-point.y)*canvas.clientHeight/2;
+      projected.left=Math.min(projected.left,sx);projected.right=Math.max(projected.right,sx);
+      projected.top=Math.min(projected.top,sy);projected.bottom=Math.max(projected.bottom,sy);
+    }
+    return projected;
+  }
+
   function render() {
     if (disposed || document.hidden) return;
     renderer.render(scene, camera);
@@ -145,7 +156,7 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
           priority:label.node.dataset.band==='hot'?3:label.node.dataset.status==='recent'?2:1};
       });
       for(const item of candidates)item.label.node.hidden=true;
-      for(const item of placeTemperatureLabels(candidates,rect.width,rect.height)){
+      for(const item of placeTemperatureLabels(candidates,rect.width,rect.height,options.outsideTemperatureLabels?projectedHouseBounds():null)){
         const node=item.label.node;node.hidden=false;node.style.left=`${item.x}px`;node.style.top=`${item.y}px`;
         const line=document.createElementNS(leaders.namespaceURI,'line');
         line.setAttribute('x1',item.anchorX);line.setAttribute('y1',item.anchorY);
@@ -161,7 +172,10 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
     controls.target.copy(center);
     const elevation = config.camera.elevation * Math.PI / 180;
     const halfVertical = camera.fov * Math.PI / 360;
-    const halfHorizontal = Math.atan(Math.tan(halfVertical) * camera.aspect);
+    // Reserve outer gutters for the native sensor callouts without changing the web view.
+    const gutter=options.outsideTemperatureLabels?Math.min(130,canvas.clientWidth*.24):0;
+    const framingAspect=gutter?Math.max(.25,(canvas.clientWidth-2*gutter)/Math.max(1,canvas.clientHeight)):camera.aspect;
+    const halfHorizontal = Math.atan(Math.tan(halfVertical) * framingAspect);
     const distance = sphere.radius / Math.sin(Math.min(halfVertical, halfHorizontal)) * 1.06;
     controls.maxDistance = Math.max(span * 5, distance * 1.5);
     camera.position.copy(center).add(new THREE.Vector3(direction.x * Math.cos(elevation),

@@ -120,8 +120,10 @@ floors, saved furniture, windows, doors, stair treads, and stacked levels. Choos
 and use **Reset view** to frame the home again. The dropdown starts 12 degrees farther
 overhead than the saved camera, with upper floors at 45% opacity. Use the **Floors**
 slider to adjust transparency; the ground floor stays solid. Click a room to open its first mapped
-temperature sensor's history. Temperature badges show the room and a large sensor
-reading, with collision-free placement and lines back to the sensor location. Select
+temperature sensor's history. Compact temperature badges sit outside the projected house bounds, with
+connector lines anchored to the meter points. The camera reserves side space for these
+callouts; badges stay separated and remain available in the sensor list when zooming
+leaves no room outside the home. Select
 a badge for that exact sensor's history. Recent readings use the temperature bands;
 last-recorded readings use a grey dashed border and never color room averages. Recent
 readings below 68°F have a light-blue badge with a frosted white base; readings above

@@ -57,7 +57,7 @@ window.renderHouse = data => {
       }
       if (![...picker.options].some(option => option.value === selected)) selected = 'all';
       picker.value = selected;
-      view = createView(canvas, labels, plan, room => window.webkit?.messageHandlers.history.postMessage(room), {floorOpacity: Number(document.querySelector('#opacity').value) / 100, compactTemperatures:true, onSensorPick:openSensor});
+      view = createView(canvas, labels, plan, room => window.webkit?.messageHandlers.history.postMessage(room), {floorOpacity: Number(document.querySelector('#opacity').value) / 100, compactTemperatures:true, outsideTemperatureLabels:true, onSensorPick:openSensor});
       view.setLevel(selected); signature = next;
     }
     update();
