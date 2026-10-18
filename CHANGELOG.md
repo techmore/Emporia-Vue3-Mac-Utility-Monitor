@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.64 - 2026-10-18
+
+- Hue the rooms themselves in Home 3D and the Wingpanel 3D view: each room with a recent reading fills with a translucent volume in its temperature band colour (blue <70, yellow 70–75, amber 75–78, red ≥78 °F). Rooms without a recent reading stay clear; upper floors fade with the Floors slider but keep their colour.
+- When no sensor has a recent reading, the dropdown shows one stale-collector line instead of one warning per sensor.
+
 ## 2.3.63 - 2026-10-18
 
 - Rebuild the Wingpanel Temperatures dropdown natively: an indoor-average overview with warmest/coolest rooms, humidity and a clickable comfort-scale strip; a "needs attention" row for offline sensors, low batteries, fast warming/cooling and humid or dry rooms; and a sortable sensor list (by floor, warmest, coolest, changing fastest) with °F/h trends, humidity, last-update age and hoverable 24-hour sparklines over the comfortable band.
