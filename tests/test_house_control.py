@@ -50,12 +50,20 @@ class HouseControlTests(unittest.TestCase):
         config = {'plan': copy.deepcopy(house_control.DEFAULT_PLAN), 'bindings': [self.binding()],
                   'sensors': [{'source': 'private-device', 'sensor_id': 'private-id'}]}
         config['plan']['private_equipment'] = 'do not project'
+        config['plan']['furniture'] = [{'type': 'sofa', 'pos': [2, 2], 'width': 2.5,
+                                     'rot': 90, 'device_secret': 'do not project'}]
+        config['plan']['openings'] = [{'type': 'window', 'from': [0, 1], 'to': [0, 2],
+                                    'device_secret': 'do not project'}]
         preview = house_control.house_preview(config)
         self.assertEqual(preview['rooms'][0]['rect'], config['plan']['rooms'][0]['rect'])
         self.assertEqual(preview['levels'], [{'id': 'first', 'name': 'First floor', 'elevation': 0}])
         self.assertNotIn('bindings', preview)
         self.assertNotIn('sensors', preview)
         self.assertNotIn('private_equipment', preview)
+        self.assertEqual(preview['rooms'][0]['floor'], config['plan']['rooms'][0]['floor'])
+        self.assertEqual(preview['furniture'], [{'type': 'sofa', 'pos': [2, 2],
+                                              'width': 2.5, 'rot': 90}])
+        self.assertEqual(preview['openings'], [{'type': 'window', 'from': [0, 1], 'to': [0, 2]}])
         config['plan']['levels'] = [{'id': 'upper', 'name': 'Upstairs', 'elevation': 3}]
         config['plan']['rooms'][0]['level'] = 'upper'
         config['plan']['accesses'] = [{'id': 'hatch', 'level': 'upper', 'toLevel': 'attic',

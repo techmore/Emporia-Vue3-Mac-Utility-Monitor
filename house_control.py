@@ -345,7 +345,9 @@ def house_preview(config: dict | None = None) -> dict:
     config = config or load_config()
     plan = config['plan']
     fields = {
-        'rooms': ('id', 'name', 'rect', 'level'),
+        'rooms': ('id', 'name', 'rect', 'level', 'floor'),
+        'openings': ('type', 'from', 'to', 'level'),
+        'furniture': ('type', 'pos', 'size', 'width', 'height', 'rot', 'level'),
         'levels': ('id', 'name', 'elevation'),
         'stairs': ('id', 'level', 'toLevel', 'path', 'width'),
         'accesses': ('id', 'name', 'level', 'toLevel', 'rect'),

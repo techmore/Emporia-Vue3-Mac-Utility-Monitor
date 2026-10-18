@@ -113,7 +113,12 @@ The client installs `temperatures.py` alongside `energy_monitor.py`; it uses the
 same authenticated HTTPS session and private response cache as the existing app.
 
 The Wingpanel **Temperatures** view includes the saved house preview above the sensor
-cards. Its floor picker retains your selection when new readings arrive. Room hues use
+cards. It opens in a native orthographic **3D cutaway**, with low walls, floor materials,
+saved furniture footprints, windows and doors, stairs, and attic hatches. **Floor plan**
+switches back to the overhead view. The cutaway is a compact schematic; the full Home 3D
+view remains available from the floor shortcuts. Its floor picker and view choice retain
+your selection when new readings arrive. Missing architecture from older collectors is
+supported; updated collectors include those details in the summary cache. Room hues use
 only recent mapped observations (blue below 70°F, yellow 70–75°F, amber above 75°F and
 below 78°F, red from 78°F); grey rooms have no recent mapped temperature. Sensor dots
 open recorded history. Stairs and service hatches use the same saved floor coordinates
