@@ -111,3 +111,11 @@ and Now to return. History windows are 4 hours, 24 hours, 7 days and 30 days.
 Missing/offline buckets remain gaps, and retained offline history is labeled cached.
 The client installs `temperatures.py` alongside `energy_monitor.py`; it uses the
 same authenticated HTTPS session and private response cache as the existing app.
+
+The Wingpanel **Temperatures** view includes the saved house preview above the sensor
+cards. Its floor picker retains your selection when new readings arrive. Room hues use
+only recent mapped observations (blue below 70°F, yellow 70–75°F, amber above 75°F and
+below 78°F, red from 78°F); grey rooms have no recent mapped temperature. Sensor dots
+open recorded history. Stairs and service hatches use the same saved floor coordinates
+as Home 3D. The preview receives its layout through the existing authenticated HTTPS
+summary cache and needs no separate connection.

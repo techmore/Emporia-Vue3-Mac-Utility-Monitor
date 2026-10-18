@@ -46,6 +46,29 @@ class HouseControlTests(unittest.TestCase):
                     {'channel_name': 'Kitchen', 'display_name': 'Kitchen outlets', 'watts': 0},
                     {'channel_name': None, 'display_name': 'Empty', 'watts': None}]}
 
+    def test_native_preview_projects_saved_geometry_without_equipment_or_bindings(self):
+        config = {'plan': copy.deepcopy(house_control.DEFAULT_PLAN), 'bindings': [self.binding()],
+                  'sensors': [{'source': 'private-device', 'sensor_id': 'private-id'}]}
+        config['plan']['private_equipment'] = 'do not project'
+        preview = house_control.house_preview(config)
+        self.assertEqual(preview['rooms'][0]['rect'], config['plan']['rooms'][0]['rect'])
+        self.assertEqual(preview['levels'], [{'id': 'first', 'name': 'First floor', 'elevation': 0}])
+        self.assertNotIn('bindings', preview)
+        self.assertNotIn('sensors', preview)
+        self.assertNotIn('private_equipment', preview)
+        config['plan']['levels'] = [{'id': 'upper', 'name': 'Upstairs', 'elevation': 3}]
+        config['plan']['rooms'][0]['level'] = 'upper'
+        config['plan']['accesses'] = [{'id': 'hatch', 'level': 'upper', 'toLevel': 'attic',
+                                     'rect': [1, 2, 1, 1]}]
+        projected = house_control.house_preview(config)
+        self.assertEqual(projected['rooms'][0]['level'], 'upper')
+        self.assertEqual(projected['accesses'], config['plan']['accesses'])
+        config['sensors'] = []
+        with patch.object(house_control, 'load_config', return_value=config):
+            summary = self.client.get('/api/menu-summary')
+        self.assertEqual(summary.status_code, 200)
+        self.assertEqual(summary.json['house_preview'], projected)
+
     def test_default_is_example_and_does_not_create_runtime_configuration(self):
         config = self.client.get('/api/house-control/config')
         self.assertTrue(config.json['example'])

@@ -4498,6 +4498,7 @@ def _build_menu_summary_payload() -> dict:
     circuits.sort(key=lambda row: (-(row["watts"] or 0), row["display_name"]))
     total = energy.get_main_total(24, gid)
     this_month = next(iter(energy.get_monthly_costs(1, gid)), None)
+    house_config = house_control.load_config()
     return {
         "version": VERSION, "online": online, "current_watts": watts,
         "active_device_gid": gid,
@@ -4512,7 +4513,8 @@ def _build_menu_summary_payload() -> dict:
         "last_reading": main["timestamp"] if main else None,
         "top_circuits": circuits[:5],
         "radon_reading": radon.get_latest_indicator(),
-        "temperature_sensors": house_control.temperature_sensors(),
+        "temperature_sensors": house_control.temperature_sensors(house_config),
+        "house_preview": house_control.house_preview(house_config),
     }
 
 

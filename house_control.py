@@ -339,6 +339,26 @@ def temperature_sensors(config: dict | None = None) -> list[dict]:
     return result
 
 
+
+def house_preview(config: dict | None = None) -> dict:
+    """Small saved-plan projection for native menus; omit equipment and circuit data."""
+    config = config or load_config()
+    plan = config['plan']
+    fields = {
+        'rooms': ('id', 'name', 'rect', 'level'),
+        'levels': ('id', 'name', 'elevation'),
+        'stairs': ('id', 'level', 'toLevel', 'path', 'width'),
+        'accesses': ('id', 'name', 'level', 'toLevel', 'rect'),
+    }
+    preview = {'name': plan.get('name', 'Home'), 'example': bool(config.get('example'))}
+    for key, keys in fields.items():
+        preview[key] = [{field: row[field] for field in keys if field in row}
+                        for row in plan.get(key, [])]
+    if not preview['levels']:
+        preview['levels'] = [{'id': 'first', 'name': 'First floor', 'elevation': 0}]
+    return preview
+
+
 def temperature_history(window: str = '24h', end: str | None = None) -> dict:
     """Bounded recorded UTC buckets; never interpolate gaps or contact devices."""
     if window not in ('4h', '24h', '7d', '30d'):
