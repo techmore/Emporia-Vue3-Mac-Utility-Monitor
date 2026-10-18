@@ -86,6 +86,20 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
   const house={floors:models.flatMap(model=>model.floors)};
   const volumes=new Map(models.flatMap(model=>model.volumes.map(mesh=>[mesh.userData.id,{mesh,upper:model.level.elevation>levels[0].elevation}])));
   let upperOpacity=options.floorOpacity ?? 1;
+  // The Floors slider thins upper floors so lower ones show through; a floor viewed on its own keeps its full hue.
+  const volumeOpacity=upper=>hueOpacity(upper && selectedLevel==='all',upperOpacity);
+  function applyOpacity() {
+    const opacity=selectedLevel==='all'?upperOpacity:1;
+    for (const {mesh,upper} of volumes.values()) mesh.material.opacity = volumeOpacity(upper);
+    for (const model of models.filter(model => model.level.elevation > levels[0].elevation)) {
+      for (const floor of model.floors) {
+        floor.material.transparent = opacity < 1;
+        floor.material.opacity = opacity;
+        floor.material.depthWrite = opacity >= 1;
+        floor.material.needsUpdate = true;
+      }
+    }
+  }
   const accesses=(plan.accesses || []).map(access=>{
     const group=new THREE.Group(),[x,z,w,d]=access.rect;
     const elevation=levels.find(level=>level.id===access.toLevel).elevation;
@@ -235,19 +249,12 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
     setFloorOpacity(opacity) {
       opacity = Math.max(.15, Math.min(1, opacity));
       upperOpacity = opacity;
-      for (const {mesh,upper} of volumes.values()) mesh.material.opacity = hueOpacity(upper, opacity);
-      for (const model of models.filter(model => model.level.elevation > levels[0].elevation)) {
-        for (const floor of model.floors) {
-          floor.material.transparent = opacity < 1;
-          floor.material.opacity = opacity;
-          floor.material.depthWrite = opacity >= 1;
-          floor.material.needsUpdate = true;
-        }
-      }
+      applyOpacity();
       render();
     },
     setLevel(id) {
       selectedLevel=id;
+      applyOpacity();
       for(const model of models)model.group.visible=id==='all' || model.level.id===id;
       for(const flight of flights)flight.group.visible=id==='all' || flight.stair.level===id || flight.stair.toLevel===id;
       for(const {access,group} of accesses)group.visible=id==='all' || access.level===id || access.toLevel===id;
@@ -319,7 +326,7 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
           if(band)material.color.set(color);
           if(volume && band){
             volume.mesh.material.color.set(color);
-            volume.mesh.material.opacity=hueOpacity(volume.upper,upperOpacity);
+            volume.mesh.material.opacity=volumeOpacity(volume.upper);
             volume.mesh.visible=true;
           }
           continue;

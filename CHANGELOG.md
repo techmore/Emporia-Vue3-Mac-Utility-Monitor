@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.65 - 2026-10-18
+
+- Show a single floor at full strength in the 3D views: the Floors slider still thins upper floors in Whole home, but a floor chosen on its own keeps opaque floors and full room temperature hues.
+
 ## 2.3.64 - 2026-10-18
 
 - Hue the rooms themselves in Home 3D and the Wingpanel 3D view: each room with a recent reading fills with a translucent volume in its temperature band colour (blue <70, yellow 70–75, amber 75–78, red ≥78 °F). Rooms without a recent reading stay clear; upper floors fade with the Floors slider but keep their colour.
