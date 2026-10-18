@@ -4,7 +4,46 @@ This client connects to an existing collector; it does not start another Emporia
 Run `bash linux/install.sh` with GTK 4, WebKitGTK 6, Python GI/Cairo and the Wingpanel 9
 build dependencies installed. The installer adds a desktop launcher, login autostart,
 and a native Wingpanel indicator. Choose **Collector Connection** to configure an
-HTTPS origin or a loopback SSH tunnel. Never disable TLS verification.
+HTTPS origin. The default is `https://energy.stoverparc.org` over ordinary
+internet HTTPS. The native app uses a separately enrolled device credential;
+it does not need SSH, Tailscale, or Google sign-in in WebKit. Never disable TLS
+verification. The public browser sign-in remains available for regular browsers.
+
+One-time administrator enrollment for a new desktop (SSH/Incus is used only
+for provisioning, never during app startup or normal operation):
+
+```sh
+python3 linux/enroll_device.py --ssh-target ADMIN@COLLECTOR --device-name energy-my-desktop
+```
+
+This saves `~/.config/energy-monitor/device.json` with mode 0600 and registers
+only its bcrypt password hash in `/etc/energy-device.htpasswd`. Each desktop
+must have a distinct name. The gateway supports this alongside Google OAuth;
+its password login form stays hidden. Protect and back up the private device
+file, and never commit it. Remove the device's server hash to prevent new logins;
+already-issued gateway sessions expire within 24 hours.
+
+The app exchanges the credential for a secure HttpOnly gateway cookie at startup,
+renews after 12 hours, and retries failed authentication after network recovery.
+Credentials are sent only in an HTTPS POST body to their exact enrolled origin;
+redirects are never followed with credentials. Switching origins does not send
+the device password to the other server.
+
+The installer enables `energy-monitor-client.service` under the graphical user
+session, replacing the old desktop autostart entry. After reboot and desktop
+login, systemd starts the app and restarts it after a crash. The network may come
+up later: authentication and loading retry automatically. The independent server
+collector continues without the laptop. Check with:
+
+```sh
+systemctl --user status energy-monitor-client.service
+systemctl --user is-enabled energy-monitor-client.service
+```
+
+Choose `https://energy.stoverparc.org` in **Collector Connection** for installations
+that still point to a loopback port or private Tailscale endpoint. The legacy SSH
+forward can remain disabled. For an app rollback, disable the user service before
+restoring the saved `.desktop.pre-service` autostart file.
 
 The dashboard retains the collector's web functionality, authentication cookies and
 downloads. The native menu shows power, recorded totals and circuit history with
@@ -21,15 +60,38 @@ preserved instead of shifting subsequent circuits. Styles are scoped to this cli
 they do not recolor other panel indicators. Desktop GTK light/dark preferences are
 followed. The embedded dashboard already uses the same palette from the collector.
 
-For a private collector reachable through Tailscale SSH, forward its loopback port:
+For a private collector, install a persistent SSH forward after verifying that
+`ssh USER@HOST` works with a trusted host key and noninteractive authentication:
 
 ```sh
-tailscale ssh USER@HOST -N -o ExitOnForwardFailure=yes \
-  -L 127.0.0.1:15001:127.0.0.1:15033
+python3 linux/install_tunnel.py --ssh-target USER@HOST \
+  --local-port 15001 --remote-port 15033
 ```
 
-Then configure `http://127.0.0.1:15001`. Keep the collector bound to loopback.
-Host keys are verified through Tailscale SSH. No account keys belong in this repo.
+Then configure `http://127.0.0.1:15001` in **Collector Connection**. Use the
+same local port as the configured client origin (for example, `--local-port 5052`
+for an existing `http://127.0.0.1:5052` connection). The installer leaves client
+settings and collector data untouched. Keep the collector bound to loopback.
+No account keys belong in this repo.
+
+The user service starts at login, retries after network/SSH failures, and uses SSH
+keepalives to detect stalled connections. It requires `/usr/bin/ssh` and systemd;
+Tailscale must already be available if the host is reachable only through it.
+Verify the connection and fresh readings:
+
+```sh
+systemctl --user status energy-collector-tunnel.service
+curl --fail http://127.0.0.1:15001/api/menu-summary
+```
+
+A running SSH process alone does not prove the collector has fresh data. Check
+`online` and `last_reading`. To remove this forward:
+
+```sh
+systemctl --user disable --now energy-collector-tunnel.service
+rm ~/.config/systemd/user/energy-collector-tunnel.service
+systemctl --user daemon-reload
+```
 
 Validation:
 

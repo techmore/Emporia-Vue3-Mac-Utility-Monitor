@@ -11,6 +11,11 @@
 .energy-monitor button.energy-circuit:focus-visible { outline: 2px solid #8a9269; outline-offset: 1px; }
 .energy-monitor .energy-warn { border-color: #b07d2a; }
 .energy-monitor .energy-danger { border-color: #c0392b; }
+.energy-monitor .energy-peak { color: #d9a441; }
+.energy-monitor .energy-heat { border-color: #c0392b; }
+.energy-monitor .energy-high { border-color: #b07d2a; }
+.energy-monitor progressbar.energy-load-bar > trough { min-height: 3px; }
+.energy-monitor progressbar.energy-load-bar > trough > progress { min-height: 3px; background-color: #8a9269; border-radius: 2px; }
 .energy-monitor drawingarea.energy-card { color: #8a9269; }
 
 .energy-monitor.energy-menu { border-radius: 12px; padding: 2px; }

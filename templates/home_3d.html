@@ -9,7 +9,8 @@
   </div>
   <div class="home3d-layout">
     <section class="card home3d-stage" aria-label="Interactive floor plan"><canvas id="home3d-canvas" aria-label="3D floor plan. Drag to rotate; scroll or pinch to zoom."></canvas><div id="home3d-labels" aria-hidden="true"></div><p id="home3d-render-error" hidden></p></section>
-    <section class="card home3d-rooms" aria-label="Room energy summaries"><h2>Mapped circuit totals</h2><p>Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.</p><div id="home3d-rooms"></div></section>
+    <section class="card home3d-rooms" aria-label="Room energy summaries"><h2>Mapped circuit totals</h2><p>Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.</p><p id="home3d-recording-basis" class="muted"></p>
+<div id="home3d-rooms"></div></section>
   </div>
   <p class="home3d-caption">Room positions come from your plan. No circuits are assigned automatically. Missing readings remain unknown. Usage cost excludes the monthly fixed charge.</p>
   <section class="card home3d-setup" aria-label="Recorded environmental sensors"><h2>Environmental sensors</h2><p>Recorded observations, not a device-control interface. Temperature defaults to Fahrenheit. Climate/Aqara data older than 3 minutes and radon data older than 3 hours are marked stale.</p><div id="home3d-sensors"></div></section>

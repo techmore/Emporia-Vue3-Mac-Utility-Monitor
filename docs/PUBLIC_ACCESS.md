@@ -1,5 +1,25 @@
 # Public HTTPS deployment gates
 
+## Native desktop update (2026-10-18, supersedes private access below)
+
+The native app now uses this public HTTPS gateway with an individually registered
+device credential. oauth2-proxy verifies its bcrypt hash and issues a normal
+secure session cookie; Google browser login remains available. Anonymous requests
+remain gated. linux/README.md documents enrollment, expiry and user-service
+startup. SSH and Tailscale are not needed for native runtime access. The later
+CONNECTION_RECOVERY.md receipt supersedes the earlier private Tailscale path.
+
+## Linux native access update (2026-10-18)
+
+The public site now responds over valid HTTPS with Google OAuth redirects; the
+historical deployment gates below are not a fresh authentication audit. The
+Linux native app instead uses private Tailscale HTTPS at
+`https://sdolbec-ser8.tailf80972.ts.net:8445`, with an exact configured user
+identity. It requires Tailscale connectivity, not SSH or Google login in WebKit.
+The public site's Google gateway is retained. See CONNECTION_RECOVERY.md for
+the deployed direct connection and rollback; no public authentication bypass was
+added. Full public OAuth/passkey round-trip validation belongs in a regular browser.
+
 ## Verified state (2026-10-12)
 
 SER8's Incus instance serves the reviewed collector on guest loopback port 5051,

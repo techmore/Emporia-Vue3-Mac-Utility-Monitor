@@ -189,6 +189,8 @@ def sensor_catalog(now: datetime | None = None) -> list[dict]:
             'humidity_pct': number(row['humidity'], 0, 100),
             'battery_pct': number(row['battery'], 0, 100),
         }, 180, row['online'])
+        rows[-1]['observation_kind'] = row['source']
+        rows[-1]['measurement_time_known'] = False
     for row in climate.get_latest_sensors():
         add('climate:' + row['source'], row['sensor_id'], row['name'], row['timestamp'], {
             'temperature_f': temperature(row['temperature_c']),
@@ -284,6 +286,9 @@ def save_config(data: dict, known_circuits: dict[str, set[str]] | None = None) -
 
 def project_state(config: dict, menu: dict, summary: list[dict]) -> dict:
     """Project only the active panel; never attribute one circuit to multiple rooms."""
+    if any(r.get("device_gid", menu["active_device_gid"]) != menu["active_device_gid"]
+           for r in summary):
+        raise ValueError("Cross-panel room energy is not allowed")
     totals = {r["channel_name"]: r for r in summary}
     gid = menu["active_device_gid"]
     rooms = {r["id"]: [] for r in config["plan"]["rooms"]}

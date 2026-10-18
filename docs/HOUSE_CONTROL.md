@@ -261,3 +261,12 @@ Redistributions must keep `static/house-control/LICENSES.txt` with the bundle.
 venv/bin/python3 -m unittest discover -s tests -p 'test_house_control.py' -v
 node scripts/test_home3d_editor.mjs
 ```
+
+## Recording audit — 2026-10-18
+
+The standard `/api/house-control/state` route now exposes measured mains totals,
+coverage and the same UTC chart as the preview. Earlier preview-only statements
+above describe the prior implementation. No full production release was deployed
+by this audit. Room circuit sums remain labeled as legacy poll observations.
+Aqara cards distinguish controller observation time from unknown physical sensor
+measurement time. See RECORDING-AUDIT-2026-10-18.md for findings and verification.

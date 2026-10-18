@@ -13013,8 +13013,9 @@ function ed() {
 	t.replaceChildren(), zu(Q("mains-history"), $.mains_history), Q("mains-section").hidden = !$.mains?.length;
 	for (let e of $.mains || []) {
 		let n = $u("article", "", "home3d-sensor");
-		n.append($u("strong", e.name), $u("span", Bu(e.watts, "watts")), $u("small", `${Bu(e.kwh_24h, "kwh_24h")} · ${Bu(e.cost_24h, "cost_24h")} recorded / 24h`), $u("small", `Measured: ${e.timestamp}${e.watts == null ? " · live power unavailable" : ""}`), $u("small", e.source || "SER8 recorded data")), e.observed_minutes != null && n.append($u("small", `Coverage: ${e.observed_minutes}/${e.expected_minutes} minutes · ${e.complete ? "complete 24 hours" : "partial recorded total"}`)), t.append(n);
+		n.append($u("strong", e.name), $u("span", Bu(e.watts, "watts")), $u("small", `${Bu(e.kwh_24h, "kwh_24h")} · ${Bu(e.cost_24h, "cost_24h")} recorded / 24h`), $u("small", `Last value: ${e.timestamp}${e.watts == null ? " · live power unavailable" : ""}`), $u("small", e.source || "SER8 recorded data")), e.observed_minutes != null && n.append($u("small", `Coverage: ${e.observed_minutes}/${e.expected_minutes} minutes · ${e.complete ? "complete 24 hours" : "partial recorded total"}`)), t.append(n);
 	}
+	Q("recording-basis").textContent = $.circuit_history_basis || "Circuit totals are recorded observations; gaps are not estimated.";
 	let n = Q("rooms");
 	n.replaceChildren();
 	for (let t of $.rooms) {
@@ -13027,7 +13028,7 @@ function ed() {
 		let t = $u("article", "", "home3d-sensor");
 		t.dataset.sensorSource = e.source;
 		let n = Vu.plan.rooms.find((t) => t.id === e.placement?.room_id);
-		t.append($u("strong", e.name), $u("span", gu(e)), $u("small", `${e.source} · ${n?.name || "Unplaced"} · ${e.stale ? "Last recorded (stale)" : "Recent observation"}`), $u("small", e.timestamp ? new Date(e.timestamp).toLocaleString() : "No observation available")), r.append(t);
+		t.append($u("strong", e.name), $u("span", gu(e)), $u("small", `${e.source} · ${n?.name || "Unplaced"} · ${e.stale ? "Last recorded (stale)" : "Recent observation"}`), $u("small", e.timestamp ? new Date(e.timestamp).toLocaleString() : "No observation available"), ...e.measurement_time_known === !1 ? [$u("small", "Controller observation; sensor measurement time unknown")] : []), r.append(t);
 	}
 	Zu.refreshSensors($.sensors), Hu?.update($.rooms, e, Bu, $.sensors);
 }

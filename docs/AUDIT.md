@@ -162,3 +162,11 @@ initially timed out; semantic/browser-state checks were used for that round.
 start on a separate branch. Release archives contain a SHA-256 file manifest and
 an archive checksum. A Git tag pins source, not the mutable database or credentials.
 Remote publication is a separate action from local packaging/tagging.
+
+## 2026-10-18 — recording and Home 3D audit
+
+See [the detailed audit](RECORDING-AUDIT-2026-10-18.md). Recovered the stalled
+Matter controller and scoped attribute events to their actual sensor. Added
+startup readiness, timezone-correct freshness, atomic number validation, malformed
+HA timestamp handling and explicit mains coverage in the regular Home 3D route.
+Legacy poll sums are not continuous measured energy coverage.

@@ -10,7 +10,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -61,8 +61,28 @@ def _public_origin_from_environment() -> str | None:
     return f"https://{parsed.hostname.lower()}"
 
 
+def _tailnet_access_from_environment() -> tuple[str | None, str | None]:
+    """Opt in to one Serve origin and one verified Tailscale user identity."""
+    origin = os.environ.get("ENERGY_TAILNET_ORIGIN", "").strip()
+    user = os.environ.get("ENERGY_TAILNET_USER", "").strip()
+    if not origin and not user:
+        return None, None
+    parsed = urlsplit(origin)
+    if (parsed.scheme != "https" or not parsed.hostname
+            or not parsed.hostname.endswith(".ts.net") or parsed.username or parsed.password
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+            or not user or "@" not in user or any(c.isspace() for c in user)):
+        raise ValueError("Configure an exact HTTPS .ts.net origin and ENERGY_TAILNET_USER")
+    port = parsed.port
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("Invalid tailnet HTTPS port")
+    suffix = f":{port}" if port not in (None, 443) else ""
+    return f"https://{parsed.hostname.lower()}{suffix}", user
+
+
 PUBLIC_ORIGIN = _public_origin_from_environment()
-if PUBLIC_ORIGIN:
+TAILNET_ORIGIN, TAILNET_USER = _tailnet_access_from_environment()
+if PUBLIC_ORIGIN or TAILNET_ORIGIN:
     # The service remains loopback-only; trust exactly one reverse-proxy hop.
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=0, x_proto=1, x_host=1, x_port=0, x_prefix=0)
 
@@ -72,7 +92,7 @@ _dashboard_cache: dict[str, object] = {"latest_timestamp": None, "active_device_
 
 @app.before_request
 def validate_local_request():
-    """Keep local-only by default; optionally accept one trusted HTTPS proxy origin."""
+    """Keep local-only by default; optionally accept explicitly configured HTTPS proxy origins."""
     if request.path == '/api/panel-photos' and request.method == 'POST':
         request.max_content_length = panel_photos.MAX_BYTES + 64 * 1024
     if request.path.startswith(('/api/kasa/', '/api/mitsubishi')):
@@ -84,7 +104,11 @@ def validate_local_request():
     request_origin = request.host_url.rstrip("/")
     local_host = urlsplit(request_origin).hostname in {"localhost", "127.0.0.1", "::1"}
     public_host = bool(PUBLIC_ORIGIN and request_origin == PUBLIC_ORIGIN)
-    if not local_host and not public_host:
+    tailnet_host = bool(TAILNET_ORIGIN and request_origin == TAILNET_ORIGIN)
+    if tailnet_host and (not TAILNET_USER or
+                         request.headers.get("Tailscale-User-Login") != TAILNET_USER):
+        return jsonify({"error": "Authorized Tailscale identity required"}), 403
+    if not local_host and not public_host and not tailnet_host:
         return jsonify({"error": "Local host required"}), 403
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         origin = request.headers.get("Origin")
@@ -3204,7 +3228,9 @@ def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
     if not reading or not reading.get("timestamp"):
         return False
     try:
-        age = (datetime.now() - datetime.fromisoformat(reading["timestamp"][:19])).total_seconds()
+        stamp = datetime.fromisoformat(reading["timestamp"].replace('Z', '+00:00'))
+        reference = datetime.now(timezone.utc) if stamp.tzinfo else datetime.now()
+        age = (reference - stamp).total_seconds()
         return -60 <= age < max_age_secs
     except Exception:
         return False
@@ -4333,7 +4359,30 @@ def house_control_state():
     menu = _build_menu_summary_payload()
     gid = menu["active_device_gid"]
     summary = energy.get_summary(24, gid) if gid else []
-    response = jsonify(house_control.project_state(house_control.load_config(), menu, summary))
+    payload = house_control.project_state(house_control.load_config(), menu, summary)
+    # Use measured UTC intervals for mains totals; never substitute legacy poll sums.
+    now = datetime.now(timezone.utc)
+    measured = energy.get_mains_history(gid, now) if gid else {}
+    latest = {row['channel_name']: row for row in energy.get_latest(gid)} if gid else {}
+    payload['mains'] = []
+    for name, label in (('Main', 'Total'), ('Mains_A', 'Leg A'), ('Mains_B', 'Leg B')):
+        row = latest.get(name)
+        total = measured.get(name, {})
+        if row is None and not total:
+            continue
+        payload['mains'].append({
+            'channel_name': name, 'name': label,
+            'watts': _watts_estimate(row['usage_kwh']) if row and menu['online']
+                     and _reading_fresh(row, 180) and row['usage_kwh'] is not None else None,
+            'timestamp': row['timestamp'] if row else total.get('last_interval'),
+            'kwh_24h': total.get('kwh_24h'), 'cost_24h': total.get('cost_24h'),
+            'observed_minutes': total.get('observed_minutes', 0),
+            'expected_minutes': 1440, 'complete': total.get('complete', False),
+            'source': 'Measured UTC minute intervals; missing intervals stay unknown',
+        })
+    payload['mains_history'] = energy.get_mains_history_chart(gid, now) if gid else None
+    payload['circuit_history_basis'] = 'Legacy poll observations; not continuous measured coverage'
+    response = jsonify(payload)
     response.headers["Cache-Control"] = "no-store"
     return response
 

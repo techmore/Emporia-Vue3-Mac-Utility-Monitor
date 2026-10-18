@@ -5,6 +5,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private Gtk.Box menu;
     private Gtk.Box readings;
     private Gtk.Label status;
+    private Gtk.Label panel_title;
     private uint timer;
     private string previous = "";
     private Gtk.CssProvider css;
@@ -27,15 +28,15 @@ public class EnergyIndicator : Wingpanel.Indicator {
         load_theme ();
         Gtk.Settings.get_default ().notify["gtk-application-prefer-dark-theme"].connect (() => { load_theme (); });
         Gtk.Settings.get_default ().notify["gtk-theme-name"].connect (() => { load_theme (); });
-        var title = new Gtk.Label ("Energy Monitor") { xalign = 0, hexpand = true };
-        title.add_css_class ("energy-title");
+        panel_title = new Gtk.Label ("Energy Monitor") { xalign = 0, hexpand = true };
+        panel_title.add_css_class ("energy-title");
         status = new Gtk.Label ("Waiting for collector connection") {
             xalign = 1, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 30
         };
         status.add_css_class ("energy-muted");
         status.add_css_class ("energy-timestamp");
         var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
-        header.append (title);
+        header.append (panel_title);
         header.append (status);
         menu.append (header);
         readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
@@ -49,6 +50,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         add_action ("Collector Settings…", {"--settings"});
         add_action ("Collector Connection…", {"--connection"});
         add_action ("Refresh", {"--refresh"});
+        add_action ("Quit", {"--quit"});
         update ();
         timer = Timeout.add_seconds (3, () => { update (); return Source.CONTINUE; });
         display_box.destroy.connect (() => { if (timer != 0) Source.remove (timer); });
@@ -83,7 +85,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         return format.printf (obj.get_double_member (key));
     }
 
-    private Gtk.Widget metric_card (string name, string value, bool hero = false) {
+    private Gtk.Widget metric_card (string name, string value, string detail = "") {
         var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 1) { hexpand = true };
         var caption = new Gtk.Label (name) { xalign = 0 };
         caption.add_css_class ("energy-caption");
@@ -91,7 +93,12 @@ public class EnergyIndicator : Wingpanel.Indicator {
         var number = new Gtk.Label (value) { xalign = 0 };
         number.add_css_class ("energy-value");
         box.append (number);
-        box.add_css_class (hero ? "energy-hero" : "energy-card");
+        if (detail != "") {
+            var detail_label = new Gtk.Label (detail) { xalign = 0 };
+            detail_label.add_css_class ("energy-muted");
+            box.append (detail_label);
+        }
+        box.add_css_class ("energy-card");
         return box;
     }
 
@@ -109,6 +116,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
             string fingerprint = text + (live ? "live" : "offline");
             if (previous == fingerprint) return;
             previous = fingerprint;
+            panel_title.label = string_member (root, "panel_label", "Energy Monitor");
             power.label = live ? metric (root, "current_watts", "%.0f W") : "";
             string stamp = string_member (root, "last_reading");
             int separator = stamp.index_of ("T");
@@ -135,7 +143,12 @@ public class EnergyIndicator : Wingpanel.Indicator {
             var grid = new Gtk.Grid () { column_spacing = 6, row_spacing = 6, column_homogeneous = true };
             grid.attach (metric_card ("RECORDED · 24 HOURS", metric (root, "recorded_kwh", "%.2f kWh")), 0, 0);
             grid.attach (metric_card ("COST · 24 HOURS", metric (root, "cost_24h", "$%.2f")), 1, 0);
-            grid.attach (metric_card ("RECORDED MONTH COST", metric (root, "month_cost", "$%.2f")), 0, 1, 2);
+            string month_detail = "";
+            if (root.has_member ("month_days_recorded") && !root.get_member ("month_days_recorded").is_null ()) {
+                int month_days = (int) root.get_int_member ("month_days_recorded");
+                month_detail = "%d day%s recorded".printf (month_days, month_days == 1 ? "" : "s");
+            }
+            grid.attach (metric_card ("RECORDED MONTH COST", metric (root, "month_cost", "$%.2f"), month_detail), 0, 1, 2);
             readings.append (grid);
             if (root.has_member ("breaker_slots")) {
                 var section = new Gtk.Label ("CIRCUITS") { xalign = 0, margin_top = 5, margin_bottom = 1 };
@@ -153,7 +166,18 @@ public class EnergyIndicator : Wingpanel.Indicator {
                 }
                 last_slot = int.min (int.max (last_slot, 0), 96);
                 for (int slot = 1; slot <= last_slot; slot++) {
-                    var empty = new Gtk.Label ("%02d  ·  Unassigned".printf (slot)) { xalign = 0, hexpand = true };
+                    string slot_state = "empty";
+                    for (uint j = 0; j < uint.min (slots.get_length (), 96); j++) {
+                        var candidate = slots.get_object_element (j);
+                        if ((int) candidate.get_int_member ("slot") == slot) {
+                            slot_state = string_member (candidate, "slot_state", "empty");
+                            break;
+                        }
+                    }
+                    string empty_text = slot_state == "unmonitored"
+                        ? "%02d  ·  Unmonitored".printf (slot)
+                        : "%02d  ·  Unassigned".printf (slot);
+                    var empty = new Gtk.Label (empty_text) { xalign = 0, hexpand = true };
                     empty.add_css_class ("energy-muted");
                     empty.add_css_class ("energy-empty-slot");
                     panel.attach (empty, (slot - 1) % 2, (slot - 1) / 2);
@@ -166,16 +190,28 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     if (channel == "") continue;
                     var card = new Gtk.Box (Gtk.Orientation.VERTICAL, 1);
                     var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4);
-                    box.append (new Gtk.Label ("%02d  %s".printf ((int) circuit.get_int_member ("slot"),
+                    box.append (new Gtk.Label ("%02d  %s".printf (slot,
                         string_member (circuit, "display_name", channel))) {
-                        xalign = 0, hexpand = true, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 16
+                        xalign = 0, hexpand = true, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 14
                     });
+                    if (circuit.has_member ("is_peak") && !circuit.get_member ("is_peak").is_null ()
+                            && circuit.get_boolean_member ("is_peak")) {
+                        var star = new Gtk.Image.from_icon_name ("starred-symbolic") { pixel_size = 10 };
+                        star.add_css_class ("energy-peak");
+                        star.tooltip_text = "Top usage";
+                        box.append (star);
+                    }
                     card.append (box);
                     var detail = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
                     var watts = new Gtk.Label (live ? metric (circuit, "watts", "%.0f W") : "—") { xalign = 0, hexpand = true };
                     watts.add_css_class ("energy-circuit-value");
                     detail.append (watts);
-                    var rating = new Gtk.Label (metric (circuit, "amps", "%.0f A")) { width_chars = 4, xalign = 1 };
+                    string rating_text = "—";
+                    if (circuit.has_member ("amps") && !circuit.get_member ("amps").is_null ()) {
+                        int poles = circuit.has_member ("poles") ? (int) circuit.get_int_member ("poles") : 1;
+                        rating_text = "%dP/%dA".printf (poles, (int) circuit.get_int_member ("amps"));
+                    }
+                    var rating = new Gtk.Label (rating_text) { width_chars = 6, xalign = 1 };
                     rating.add_css_class ("energy-muted");
                     detail.append (rating);
                     var arrow = new Gtk.Image.from_icon_name ("go-next-symbolic") { pixel_size = 12 };
@@ -186,6 +222,15 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     button.tooltip_text = "View recorded history for " + string_member (circuit, "display_name", channel);
                     string load_state = string_member (circuit, "load_state");
                     if (load_state == "warn" || load_state == "danger") button.add_css_class ("energy-" + load_state);
+                    string usage_state = string_member (circuit, "usage_state");
+                    if (usage_state == "heat" || usage_state == "high") button.add_css_class ("energy-" + usage_state);
+                    if (live && circuit.has_member ("load_percent") && !circuit.get_member ("load_percent").is_null ()) {
+                        double percent = circuit.get_double_member ("load_percent");
+                        var bar = new Gtk.ProgressBar ();
+                        bar.fraction = double.min (double.max (percent / 100.0, 0.0), 1.0);
+                        bar.add_css_class ("energy-load-bar");
+                        card.append (bar);
+                    }
                     button.clicked.connect (() => { launch ({"--history", channel}); });
                     var placeholder = panel.get_child_at ((slot - 1) % 2, (slot - 1) / 2);
                     if (placeholder != null) panel.remove (placeholder);

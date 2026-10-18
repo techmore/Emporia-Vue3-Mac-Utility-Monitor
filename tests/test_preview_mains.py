@@ -91,7 +91,8 @@ class PreviewMainsTests(unittest.TestCase):
         channels = [{'channel_id': name, 'has_data': name != 'Mains_C'}
                     for name in ('Mains', 'Mains_A', 'Mains_B', 'Mains_C')]
 
-        def get(url, headers, params=None, timeout=None):
+        def get(url, headers, params=None, timeout=None, allow_redirects=True):
+            self.assertFalse(allow_redirects)
             self.assertEqual(headers, {'Authorization': 'remote-only'})
             if params is None:
                 data = {'devices': [{'device_gid': 551741, 'channels': channels}]}
@@ -99,7 +100,7 @@ class PreviewMainsTests(unittest.TestCase):
                 calls.append(params)
                 data = {'firstUsageInstant': params['start'],
                         'usageList': [0.003084773050110197, 0.0029958173073662653, 0.003000787438286675]}
-            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
+            return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: data)
 
         output = io.StringIO()
         with patch.dict('sys.modules', {'pyemvue': SimpleNamespace(PyEmVue=lambda: vue)}), \

@@ -97,3 +97,66 @@ only the verified tunnel's remote port to 15033. HTTP returned 2.3.35, status
 returned healthy, and cached history caught up. A container restart restored
 services and the existing Mac connection without launching another app.
 See INCUS_DEPLOYMENT.md for that separate deployment receipt.
+
+## Linux desktop tunnel recovery — 2026-10-18
+
+The elementary client was configured for loopback port 5052, but no SSH forward
+survived the machine reboot. The independent SER8 collector remained reachable
+on host loopback 15033 and returned recorded readings. The unrelated local
+5051 deployment had no credentials and was not the client's data source.
+
+`linux/install_tunnel.py` now installs an enabled systemd user service with
+noninteractive SSH, strict known-host verification, loopback-only binding,
+keepalive failure detection and unlimited delayed reconnect attempts. Installed
+on this desktop with local 5052 and the verified SER8 destination; the existing
+client origin was retained. HTTP summary returned 2.3.43, online=true and recorded
+power. See `linux/README.md` for setup and rollback. Login/reboot behavior follows
+the enabled service configuration; a full reboot has not been performed.
+
+## Direct Linux HTTPS connection — 2026-10-18
+
+The final desktop origin is `https://sdolbec-ser8.tailf80972.ts.net:8445`.
+The optional SSH forward is stopped and disabled. A first attempt to use the
+public Google gateway failed in the embedded WebKitGTK browser (passkeys are
+unsupported), so that is not the native client's connection path.
+
+SER8 now uses persistent Tailscale Serve HTTPS port 8445 to proxy host loopback
+15033, preserving its existing 8443/8444 services. No Funnel is enabled. The
+collector accepts the exact `ENERGY_TAILNET_ORIGIN` only with the configured
+`ENERGY_TAILNET_USER` matching Serve's verified `Tailscale-User-Login` header.
+Both settings are opt-in; absent settings preserve the previous host policy.
+Deploy only behind Tailscale Serve, which supplies the verified identity header,
+and keep the backend loopback-bound. A caller-supplied header is not authentication
+on a directly exposed backend. Same-origin writes remain enforced.
+
+The public Google-protected site remains unchanged. Valid-certificate private
+HTTPS returns recorded power; requests to the tailnet origin without the identity
+header return 403. Client Tailscale connectivity is required; no SSH process is
+required. The existing collector/poller and database are retained.
+
+Rollback: switch the client origin back, disable only this Serve handler with
+`tailscale serve --https=8445 off`, remove the two ENERGY_TAILNET settings and
+restart only energy-dashboard. Deployment backups of web.py and the private
+environment file use the suffix `.pre-tailnet-20261018` inside the container.
+
+## Public native HTTPS and reboot recovery — 2026-10-18
+
+The final desktop path is now `https://energy.stoverparc.org`, not the earlier
+private Tailscale endpoint. The gateway accepts a per-device random password via
+its existing htpasswd support and returns its normal secure HttpOnly session.
+The server stores only bcrypt; the desktop stores the origin-bound credential
+privately. Google sign-in remains available for browsers. No public route was
+exempted from authentication and no Google password was stored by this work.
+
+The client performs the HTTPS session exchange on a background thread at startup,
+renews after 12 hours and retries outages. No password-bearing redirect is
+followed. Its enabled systemd user service starts at graphical login and restarts
+a crashed client; the gateway, dashboard and poller are enabled on SER8. The
+legacy SSH service stays disabled. See linux/README.md for enrollment and rollback.
+
+Verification: removed only the app's public gateway session, restarted the
+client, and it reauthenticated and returned Connected/live readings without a
+browser login. A forced client termination exercises systemd restart. Public DNS
+resolves to 71.162.207.117 and the route uses the physical network interface,
+not tailscale0. Full host reboot is not performed during the owner's other work.
+The gateway config backup is `/etc/energy-oauth2-proxy.cfg.pre-device-20261018`.

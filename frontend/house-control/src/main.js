@@ -60,12 +60,13 @@ function renderState() {
     const card=node('article','','home3d-sensor');
     card.append(node('strong',row.name),node('span',format(row.watts,'watts')),
       node('small',`${format(row.kwh_24h,'kwh_24h')} · ${format(row.cost_24h,'cost_24h')} recorded / 24h`),
-      node('small',`Measured: ${row.timestamp}${row.watts==null?' · live power unavailable':''}`),
+      node('small',`Last value: ${row.timestamp}${row.watts==null?' · live power unavailable':''}`),
       node('small',row.source || 'SER8 recorded data'));
     if(row.observed_minutes!=null) card.append(node('small',
       `Coverage: ${row.observed_minutes}/${row.expected_minutes} minutes · ${row.complete?'complete 24 hours':'partial recorded total'}`));
     mains.append(card);
   }
+  $('recording-basis').textContent = state.circuit_history_basis || 'Circuit totals are recorded observations; gaps are not estimated.';
   const container = $('rooms');
   container.replaceChildren();
   for (const room of state.rooms) {
@@ -86,7 +87,8 @@ function renderState() {
     const room=config.plan.rooms.find(room=>room.id===row.placement?.room_id);
     card.append(node('strong',row.name),node('span',sensorReading(row)),
       node('small',`${row.source} · ${room?.name || 'Unplaced'} · ${row.stale?'Last recorded (stale)':'Recent observation'}`),
-      node('small',row.timestamp ? new Date(row.timestamp).toLocaleString() : 'No observation available'));
+      node('small',row.timestamp ? new Date(row.timestamp).toLocaleString() : 'No observation available'),
+      ...(row.measurement_time_known===false ? [node('small','Controller observation; sensor measurement time unknown')] : []));
     sensors.append(card);
   }
   editor.refreshSensors(state.sensors);

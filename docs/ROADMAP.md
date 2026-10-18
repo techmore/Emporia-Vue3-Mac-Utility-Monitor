@@ -59,3 +59,30 @@ checks and rollback notes. Do not bundle a structural rewrite with new analytics
    the tested archive. Keep credentials/database out of Git and releases.
 6. For each following release, review dependency updates and audit findings; require
    tests for data conversions, billing changes and process ownership changes.
+
+## Linux connection reliability — 2026-10-18
+
+Persistent user SSH tunnel implemented; recovery tests cover loopback binding,
+SSH verification and reconnect policy. Live local-port outage repaired against
+the existing SER8 collector. Next: confirm recovery through a full login/reboot.
+
+Direct private HTTPS over Tailscale is now the Linux default. The owner's desktop
+uses SER8 Serve port 8445 with an exact origin/user allowlist; its SSH forward is
+disabled. Public Google sign-in stays in a regular browser because embedded
+WebKitGTK cannot handle passkeys. Next: confirm direct HTTPS after full reboot.
+
+## Public native HTTPS across reboots — 2026-10-18
+
+Supersedes the private Tailscale default: the native app now uses the public HTTPS
+gateway with a separate origin-bound device credential and automatic cookie
+renewal. It starts at graphical login through an enabled systemd user service
+with crash restart and network retry. Cold-session reauthentication is verified;
+full machine reboot remains untested. SSH/Tailscale are not runtime dependencies.
+
+## Recording audit follow-up — 2026-10-18
+
+Matter boot readiness and event attribution are fixed; the regular Home 3D route
+now includes measured mains intervals and explicit coverage. Remaining: continuous
+source-interval collection for individual circuits, physical sensor report-time
+provenance, full reboot verification and reviewed deployment of the 3D release.
+Do not fabricate the October 15–18 sensor outage or rescale legacy poll sums.
