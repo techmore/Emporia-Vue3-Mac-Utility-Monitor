@@ -1,11 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { normalize } from '../vendor/config.js';
 import { buildHouse } from '../vendor/three/house.js';
 import { buildFurniture } from '../vendor/three/furniture.js';
 import { sensorKey, sensorReading } from './sensors.js';
+import { levelsFor, itemLevel, planForLevel, stairTreads, floorTiles } from './levels.js';
 
 export function createView(canvas, labelContainer, plan, onPick) {
+  const levels = levelsFor(plan);
   const config = normalize(plan);
   const css = getComputedStyle(document.documentElement);
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'low-power' });
@@ -16,9 +19,42 @@ export function createView(canvas, labelContainer, plan, onPick) {
   const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 2000);
   const direction = new THREE.Vector3(Math.sin(config.camera.azimuth * Math.PI / 180), 0,
                                      Math.cos(config.camera.azimuth * Math.PI / 180));
-  const house = buildHouse(config, direction);
-  const furniture = buildFurniture(config.furniture);
-  scene.add(house.group, furniture);
+  const models=levels.map(level=>{
+    const raw=planForLevel(plan,level.id);
+    if(!raw.rooms.length)return {level,group:new THREE.Group(),floors:[]};
+    const normalized=normalize(raw),house=buildHouse(normalized,direction);
+    if(level.elevation>levels[0].elevation){
+      const plinth=house.group.children[0];house.group.remove(plinth);
+      plinth.geometry.dispose();plinth.material.dispose();
+    }
+    const openings=(plan.stairs || []).filter(stair=>stair.toLevel===level.id);
+    if(openings.length)for(const floor of house.floors){
+      const room=raw.rooms.find(room=>room.id===floor.userData.id);
+      const pieces=floorTiles(room.rect,openings).map(([x,z,w,d])=>{
+        const geometry=new THREE.PlaneGeometry(w,d);geometry.rotateX(-Math.PI/2);
+        geometry.translate(x+w/2,0,z+d/2);
+        const pos=geometry.attributes.position,uv=geometry.attributes.uv;
+        for(let i=0;i<pos.count;i++)uv.setXY(i,pos.getX(i),pos.getZ(i));
+        return geometry;
+      });
+      floor.geometry.dispose();floor.geometry=pieces.length?mergeGeometries(pieces):new THREE.BufferGeometry();
+      pieces.forEach(piece=>piece.dispose());
+    }
+    const group=new THREE.Group();group.position.y=level.elevation;
+    group.add(house.group,buildFurniture(normalized.furniture));scene.add(group);
+    return {level,group,floors:house.floors};
+  });
+  const flights=(plan.stairs || []).map(stair=>{
+    const group=new THREE.Group();
+    for(const tread of stairTreads(stair,levels)){
+      const mesh=new THREE.Mesh(new THREE.BoxGeometry(tread.horizontal?tread.run:tread.width,
+        .1,tread.horizontal?tread.width:tread.run),
+        new THREE.MeshStandardMaterial({color:css.getPropertyValue('--olive-600').trim()}));
+      mesh.position.set(tread.x,tread.y-.05,tread.z);group.add(mesh);
+    }
+    scene.add(group);return {stair,group};
+  });
+  const house={floors:models.flatMap(model=>model.floors)};
   scene.add(new THREE.HemisphereLight(0xffffff, 0x555544, 2.3));
   const sun = new THREE.DirectionalLight(0xffffff, 2);
   sun.position.set(8, 18, 10);
@@ -33,29 +69,40 @@ export function createView(canvas, labelContainer, plan, onPick) {
   const span = Math.max(maxX - minX, maxZ - minZ);
   controls.minDistance = span * 0.65;
   controls.maxDistance = span * 5;
-  const bounds = new THREE.Box3().setFromObject(house.group);
-  bounds.union(new THREE.Box3().setFromObject(furniture));
+  const bounds = new THREE.Box3();
+  for(const model of models)bounds.union(new THREE.Box3().setFromObject(model.group));
   const sphere = bounds.getBoundingSphere(new THREE.Sphere());
   const center = sphere.center;
   const labels = config.rooms.map(room => {
     const node = document.createElement('span');
     node.className = 'home3d-label';
     labelContainer.append(node);
-    return { id: room.id, node, point: new THREE.Vector3(room.x + room.w / 2, 0.3, room.z + room.d / 2) };
+    const level=itemLevel(plan.rooms.find(item=>item.id===room.id),plan);
+    const elevation=levels.find(item=>item.id===level).elevation;
+    return { id: room.id, level, node, point: new THREE.Vector3(room.x + room.w / 2, elevation+0.3, room.z + room.d / 2) };
+  });
+  const levelLabels=models.filter(model=>model.floors.length).map(({level})=>{
+    const node=document.createElement('span');node.className='home3d-label';labelContainer.append(node);
+    node.textContent=level.name;
+    const rooms=planForLevel(plan,level.id).rooms;
+    return {node,onlyAll:true,point:new THREE.Vector3(Math.min(...rooms.map(room=>room.rect[0]))-.5,
+      level.elevation+.3,Math.min(...rooms.map(room=>room.rect[1])))};
   });
   const floors = new Map(house.floors.map(floor => {
     floor.material = floor.material.clone();
     return [floor.userData.id, floor];
   }));
   const sensorLabels=new Map();
-  let disposed = false;
+  let disposed = false, selectedLevel='all';
   function render() {
     if (disposed || document.hidden) return;
     renderer.render(scene, camera);
     const rect = canvas.getBoundingClientRect();
-    for (const label of [...labels,...sensorLabels.values()]) {
+    for (const label of [...labels,...levelLabels,...sensorLabels.values()]) {
       const point = label.point.clone().project(camera);
-      label.node.hidden = point.z < -1 || point.z > 1;
+      label.node.hidden = (label.onlyAll ? selectedLevel!=='all' :
+        labels.includes(label) && selectedLevel==='all' || selectedLevel!=='all' && label.level!==selectedLevel)
+        || point.z < -1 || point.z > 1;
       label.node.style.left = `${(point.x + 1) * rect.width / 2}px`;
       label.node.style.top = `${(1 - point.y) * rect.height / 2}px`;
     }
@@ -91,7 +138,7 @@ export function createView(canvas, labelContainer, plan, onPick) {
     const rect = canvas.getBoundingClientRect();
     ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1,
       1 - (event.clientY - rect.top) / rect.height * 2), camera);
-    const hit = ray.intersectObjects(house.floors, false)[0];
+    const hit = ray.intersectObjects(models.filter(model=>model.group.visible).flatMap(model=>model.floors), false)[0];
     if (hit) onPick(hit.object.userData.id);
   };
   canvas.addEventListener('pointerdown', pointerDown);
@@ -100,6 +147,15 @@ export function createView(canvas, labelContainer, plan, onPick) {
   resize();
   return {
     reset,
+    setLevel(id) {
+      selectedLevel=id;
+      for(const model of models)model.group.visible=id==='all' || model.level.id===id;
+      for(const flight of flights)flight.group.visible=id==='all' || flight.stair.level===id || flight.stair.toLevel===id;
+      bounds.makeEmpty();
+      for(const model of models.filter(model=>model.group.visible))bounds.union(new THREE.Box3().setFromObject(model.group));
+      if(!bounds.isEmpty()){bounds.getBoundingSphere(sphere);center.copy(sphere.center);}
+      reset();
+    },
     update(rooms, metric, format, sensors=[]) {
       const placed=sensors.filter(row=>row.placement);
       const keys=new Set(placed.map(sensorKey));
@@ -111,7 +167,10 @@ export function createView(canvas, labelContainer, plan, onPick) {
           labelContainer.append(node);sensorLabels.set(key,{node,point:new THREE.Vector3()});
         }
         const label=sensorLabels.get(key);
-        label.point.set(row.placement.position[0],.65,row.placement.position[1]);
+        const room=plan.rooms.find(room=>room.id===row.placement.room_id);
+        label.level=room ? itemLevel(room,plan) : null;
+        const elevation=levels.find(level=>level.id===label.level)?.elevation || 0;
+        label.point.set(row.placement.position[0],elevation+.65,row.placement.position[1]);
         label.node.dataset.sensorSource=row.source;
         label.node.classList.toggle('stale',row.stale);
         label.node.textContent=`${row.name} · ${sensorReading(row)}${row.stale?' · stale':''}`;

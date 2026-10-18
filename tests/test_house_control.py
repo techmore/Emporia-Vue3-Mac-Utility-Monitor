@@ -85,6 +85,44 @@ class HouseControlTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(result))
         self.assertEqual(len(result['rooms']), 4)
 
+    def test_stacked_levels_round_trip_without_moving_sensor_or_circuit_identities(self):
+        self.seed_sensors()
+        payload = self.payload([self.binding()])
+        payload['plan']['levels'] = [
+            {'id': 'first', 'name': 'First floor', 'elevation': 0},
+            {'id': 'upstairs', 'name': 'Upstairs', 'elevation': 2.9}]
+        payload['plan']['rooms'].append({'id': 'upper', 'name': 'Upstairs living room',
+                                         'rect': [0, 0, 5, 4], 'floor': 'oak', 'level': 'upstairs'})
+        payload['plan']['stairs'] = [{'id': 'rear', 'level': 'first', 'toLevel': 'upstairs',
+                                      'path': [[4, 1], [4, 3], [1, 3]], 'width': 1, 'steps': 14}]
+        payload['sensors'] = [{**self.placement(), 'room_id': 'upper', 'position': [2, 2]}]
+        result = house_control.save_config(payload)
+        self.assertEqual(result['plan']['levels'], payload['plan']['levels'])
+        self.assertEqual(result['plan']['stairs'], payload['plan']['stairs'])
+        self.assertEqual(result['sensors'], payload['sensors'])
+        self.assertEqual(result['bindings'], payload['bindings'])
+        saved = house_control.load_config()
+        self.assertEqual(saved, result)
+
+    def test_invalid_levels_and_stairs_are_rejected_without_saving(self):
+        plan = copy.deepcopy(house_control.DEFAULT_PLAN)
+        plan['levels'] = [{'id': 'first', 'name': 'First floor', 'elevation': 0},
+                          {'id': 'upstairs', 'name': 'Upstairs', 'elevation': 2.9}]
+        variants = []
+        for levels in ([], [{'id': 'first', 'name': 'First', 'elevation': float('nan')}],
+                       [plan['levels'][0], plan['levels'][0]],
+                       [plan['levels'][0], {**plan['levels'][1], 'elevation': 0}]):
+            variants.append({**plan, 'levels': levels})
+        variants.append({**plan, 'rooms': [{**plan['rooms'][0], 'level': 'missing'}]})
+        for change in ({'toLevel': 'first'}, {'toLevel': 'missing'}, {'steps': True},
+                       {'path': [[0, 0], [1, 1]]}, {'path': [[0, 0], [0, 0]]}):
+            variants.append({**plan, 'stairs': [{'id': 's', 'level': 'first',
+                'toLevel': 'upstairs', 'path': [[0, 0], [0, 2]], **change}]})
+        for raw in variants:
+            with self.subTest(plan=raw), self.assertRaises(ValueError):
+                house_control.save_config({**self.payload(), 'plan': raw})
+        self.assertFalse(house_control._path().exists())
+
     def test_malformed_or_unbounded_geometry_never_saves(self):
         changes = [('rooms', []), ('wallHeight', float('nan')),
                    ('wallHeight', True), ('wallHeight', 10 ** 1000), ('camera', []),

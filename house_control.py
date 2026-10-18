@@ -68,6 +68,32 @@ def validate_plan(raw: dict) -> dict:
         raise ValueError("Plan requires 1 to 64 rooms")
     plan = {"name": _text(raw.get("name", "Home"), "Plan name"), "rooms": [],
             "openings": [], "furniture": []}
+    levels = raw.get('levels', [{'id': 'first', 'name': 'First floor', 'elevation': 0}])
+    if not isinstance(levels, list) or not 1 <= len(levels) <= 12:
+        raise ValueError('Plan requires 1 to 12 levels')
+    level_ids, elevations, clean_levels = set(), set(), []
+    for level in levels:
+        if not isinstance(level, dict):
+            raise ValueError('Each level must be an object')
+        identifier = _text(level.get('id'), 'Level id', 80)
+        elevation = _number(level.get('elevation'), 'Level elevation', 0, 40)
+        if identifier == 'all' or identifier in level_ids or elevation in elevations:
+            raise ValueError('Levels require unique ids and elevations')
+        level_ids.add(identifier)
+        elevations.add(elevation)
+        clean_levels.append({'id': identifier, 'name': _text(level.get('name'), 'Level name'),
+                             'elevation': elevation})
+    if 'levels' in raw:
+        plan['levels'] = sorted(clean_levels, key=lambda level: level['elevation'])
+    default_level = min(clean_levels, key=lambda level: level['elevation'])['id']
+
+    def assign_level(item, clean):
+        level = item.get('level', default_level)
+        if not isinstance(level, str) or level not in level_ids:
+            raise ValueError('Geometry must belong to a known level')
+        if 'levels' in raw or 'level' in item:
+            clean['level'] = level
+
     ids = set()
     for room in rooms:
         if not isinstance(room, dict):
@@ -87,6 +113,7 @@ def validate_plan(raw: dict) -> dict:
         plan["rooms"].append({"id": identifier, "name": _text(room.get("name", identifier),
                                                               "Room name"),
                               "rect": rect, "floor": floor})
+        assign_level(room, plan['rooms'][-1])
     height = _number(raw.get("wallHeight", 2.6), "Wall height", 0.5, 6)
     plan["wallHeight"] = height
     plan["interiorWallHeight"] = _number(raw.get("interiorWallHeight", min(1.25, height)),
@@ -143,7 +170,37 @@ def validate_plan(raw: dict) -> dict:
                     if type(item["upper"]) is not bool:
                         raise ValueError("Furniture upper must be boolean")
                     clean["upper"] = item["upper"]
+            assign_level(item, clean)
             plan[name].append(clean)
+    stairs = raw.get('stairs', [])
+    if not isinstance(stairs, list) or len(stairs) > 24:
+        raise ValueError('Stairs must contain at most 24 flights')
+    if 'stairs' in raw:
+        plan['stairs'] = []
+    stair_ids = set()
+    heights = {level['id']: level['elevation'] for level in clean_levels}
+    for stair in stairs:
+        if not isinstance(stair, dict):
+            raise ValueError('Each stair must be an object')
+        identifier = _text(stair.get('id'), 'Stair id', 80)
+        lower, upper = stair.get('level'), stair.get('toLevel')
+        if (identifier in stair_ids or not isinstance(lower, str) or not isinstance(upper, str)
+                or lower not in heights or upper not in heights or heights[lower] >= heights[upper]):
+            raise ValueError('Stairs must connect a lower level to a higher level')
+        stair_ids.add(identifier)
+        path = stair.get('path')
+        if not isinstance(path, list) or not 2 <= len(path) <= 8:
+            raise ValueError('Stair path requires 2 to 8 points')
+        path = [_point(point, 'Stair point') for point in path]
+        for start, end in zip(path, path[1:]):
+            if start == end or (start[0] != end[0] and start[1] != end[1]):
+                raise ValueError('Stair paths must have nonempty axis-aligned segments')
+        steps = stair.get('steps', 14)
+        if type(steps) is not int or not 4 <= steps <= 40:
+            raise ValueError('Stair steps must be an integer between 4 and 40')
+        plan['stairs'].append({'id': identifier, 'level': lower, 'toLevel': upper, 'path': path,
+                               'width': _number(stair.get('width', 1), 'Stair width', .5, 3),
+                               'steps': steps})
     return plan
 
 

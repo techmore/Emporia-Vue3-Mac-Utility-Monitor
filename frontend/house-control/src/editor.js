@@ -1,5 +1,6 @@
 import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, snap, clampSensor, relocateSensors, furnitureDimensions } from './plan-edit.js';
 import { sensorKey } from './sensors.js';
+import { levelsFor, itemLevel } from './levels.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const furnitureTypes = ['rug','sofa','armchair','coffeeTable','tv','sideboard','diningSet','island',
@@ -17,6 +18,11 @@ export function createEditor(root, { onSave, onDirty }) {
   let config, plan, selected = { kind: 'rooms', index: 0 }, past = [], future = [], gesture, draw = false;
   let base, changed = false, blocked = false, saving = false;
   let placements = [], catalog = [], placing = false;
+  let activeLevel='first';
+  const onLevel=item=>Boolean(item) && itemLevel(item,plan)===activeLevel;
+  const firstRoom=()=>plan.rooms.find(onLevel) || plan.rooms[0];
+  const itemVisible=(kind,item)=>Boolean(item) && (kind==='sensors'
+    ? onLevel(plan.rooms.find(room=>room.id===item.room_id)) : onLevel(item));
   const snapshot = () => structuredClone({plan,placements});
   const restore = value => { plan=value.plan; placements=value.placements; };
   function sensor(row) { return catalog.find(item => sensorKey(item)===sensorKey(row)) || row; }
@@ -80,12 +86,13 @@ export function createEditor(root, { onSave, onDirty }) {
       inspector.append(element('small','Drag the marker inside its room, or change its room above. This never moves or controls the physical device.'));
     } else if (selected.kind === 'rooms') {
       field('Room name', item.name, value => { item.name = value; });
+      field('Level', itemLevel(item,plan), value => {item.level=value;selected=null;}, levelsFor(plan).map(level=>level.id));
       ['X (m)','Z (m)','Width (m)','Depth (m)'].forEach((name, i) => field(name, item.rect[i], value => {
         const before=[...item.rect];
         item.rect[i] = i < 2 ? Math.max(-100, Math.min(100, value)) : Math.max(0.5, Math.min(50, value));
         relocateSensors(placements,item.id,before,item);
       }));
-      field('Floor', item.floor, value => { item.floor = value; }, ['oak','walnut','tile','stone']);
+      field('Floor material', item.floor, value => { item.floor = value; }, ['oak','walnut','tile','stone']);
       inspector.append(element('small', 'Drag the room to move it; drag its corner to resize. Openings and furniture move independently.'));
     } else if (selected.kind === 'furniture') {
       field('Furniture type', item.type, value => { item.type = value; }, furnitureTypes);
@@ -112,15 +119,20 @@ export function createEditor(root, { onSave, onDirty }) {
     }
   }
   function render(refit = true, updateFields = true) {
+    if(selected && !itemVisible(selected.kind,(selected.kind==='sensors'?placements:plan[selected.kind])[selected.index])) {
+      const index=plan.rooms.findIndex(onLevel);selected=index<0?null:{kind:'rooms',index};
+    }
     get('name').value = plan.name;
     if (refit) {
-      const xs = plan.rooms.flatMap(room => [room.rect[0],room.rect[0]+room.rect[2]]);
-      const zs = plan.rooms.flatMap(room => [room.rect[1],room.rect[1]+room.rect[3]]);
+      const rooms=plan.rooms.filter(onLevel);
+      const xs = (rooms.length?rooms:[{rect:[0,0,10,10]}]).flatMap(room => [room.rect[0],room.rect[0]+room.rect[2]]);
+      const zs = (rooms.length?rooms:[{rect:[0,0,10,10]}]).flatMap(room => [room.rect[1],room.rect[1]+room.rect[3]]);
       const x = Math.min(...xs)-3, z = Math.min(...zs)-3;
       canvas.setAttribute('viewBox', `${x} ${z} ${Math.max(...xs)-x+3} ${Math.max(...zs)-z+3}`);
     }
     canvas.replaceChildren(); picker.replaceChildren();
     for (const kind of ['rooms','furniture','openings']) plan[kind].forEach((item, index) => {
+      if(!onLevel(item))return;
       const active = selected?.kind === kind && selected.index === index;
       const group = svgNode('g', { 'data-kind':kind, 'data-index':index, class:active ? 'selected' : '' });
       let x, z;
@@ -139,6 +151,7 @@ export function createEditor(root, { onSave, onDirty }) {
       option.value = `${kind}:${index}`; picker.append(option);
     });
     placements.forEach((item,index)=>{
+      if(!itemVisible('sensors',item))return;
       const active=selected?.kind==='sensors' && selected.index===index;
       const group=svgNode('g',{'data-kind':'sensors','data-index':index,class:active?'selected':''});
       group.append(svgNode('circle',{cx:item.position[0],cy:item.position[1],r:.19,class:'editor-sensor'}));
@@ -172,7 +185,7 @@ export function createEditor(root, { onSave, onDirty }) {
     checkpoint();
     if (draw) {
       if (plan.rooms.length >= 64) { past.pop(); get('status').textContent='Maximum 64 rooms.'; return; }
-      plan.rooms.push(drawnRoom(start,start,crypto.randomUUID())); selected={kind:'rooms',index:plan.rooms.length-1};
+      plan.rooms.push({...drawnRoom(start,start,crypto.randomUUID()),level:activeLevel}); selected={kind:'rooms',index:plan.rooms.length-1};
     } else selected={kind:target.dataset.kind,index:Number(target.dataset.index)};
     gesture={start,original:snapshot(),draw,resize:event.target.hasAttribute('data-resize')};
     canvas.setPointerCapture(event.pointerId); render(false); event.preventDefault();
@@ -180,7 +193,7 @@ export function createEditor(root, { onSave, onDirty }) {
   canvas.addEventListener('pointermove', event => {
     if (!gesture) return;
     const end=point(event); restore(structuredClone(gesture.original));
-    if (gesture.draw) plan.rooms[selected.index]=drawnRoom(gesture.start,end,plan.rooms[selected.index].id);
+    if (gesture.draw) plan.rooms[selected.index]={...drawnRoom(gesture.start,end,plan.rooms[selected.index].id),level:activeLevel};
     else if (gesture.resize) {
       const room=plan.rooms[selected.index],before=[...room.rect];resizeRoom(room,...end);
       relocateSensors(placements,room.id,before,room);
@@ -205,7 +218,8 @@ export function createEditor(root, { onSave, onDirty }) {
   get('center-sensor').addEventListener('click',()=>{
     const row=catalog.find(item=>sensorKey(item)===get('sensor-picker').value);
     if(!row)return;
-    const room=selected?.kind==='rooms' ? plan.rooms[selected.index] : plan.rooms[0];
+    const room=selected?.kind==='rooms' ? plan.rooms[selected.index] : firstRoom();
+    if(!room || !onLevel(room)){get('status').textContent='Add or select a room on this floor first.';return;}
     edit(()=>{
       let index=placements.findIndex(item=>sensorKey(item)===sensorKey(row));
       if(index<0){index=placements.length;placements.push({source:row.source,sensor_id:row.sensor_id});}
@@ -217,16 +231,16 @@ export function createEditor(root, { onSave, onDirty }) {
   get('draw').addEventListener('click', () => { draw=!draw;placing=false;get('place-sensor').setAttribute('aria-pressed','false'); get('draw').setAttribute('aria-pressed',String(draw)); get('status').textContent=draw?'Drag on the plan to draw a room.':'Select an item to edit.'; });
   get('add-room').addEventListener('click', () => {
     if (plan.rooms.length>=64) return;
-    edit(()=>{plan.rooms.push(drawnRoom([0,0],[3,3],crypto.randomUUID()));selected={kind:'rooms',index:plan.rooms.length-1};});
+    edit(()=>{plan.rooms.push({...drawnRoom([0,0],[3,3],crypto.randomUUID()),level:activeLevel});selected={kind:'rooms',index:plan.rooms.length-1};});
   });
   get('add-furniture').addEventListener('click', () => {
     if(plan.furniture.length>=256)return;
-    edit(()=>{plan.furniture.push({type:'sofa',pos:[1,1]});selected={kind:'furniture',index:plan.furniture.length-1};});
+    edit(()=>{plan.furniture.push({type:'sofa',pos:[1,1],level:activeLevel});selected={kind:'furniture',index:plan.furniture.length-1};});
   });
   get('add-opening').addEventListener('click', () => {
     if(plan.openings.length>=256)return;
-    const room=plan.rooms[0], [x,z]=room.rect;
-    edit(()=>{plan.openings.push({type:'door',from:[x+.5,z],to:[x+1.5,z]});selected={kind:'openings',index:plan.openings.length-1};});
+    const room=firstRoom();if(!room || !onLevel(room))return;const [x,z]=room.rect;
+    edit(()=>{plan.openings.push({type:'door',from:[x+.5,z],to:[x+1.5,z],level:activeLevel});selected={kind:'openings',index:plan.openings.length-1};});
   });
   get('remove').addEventListener('click', () => {
     if(!selected)return;
@@ -250,6 +264,15 @@ export function createEditor(root, { onSave, onDirty }) {
   });
   return {
     get dirty(){return changed;},
+    setLevel(id) {
+      activeLevel=id==='all'?levelsFor(plan)[0].id:id;
+      gesture=null;draw=false;placing=false;
+      get('draw').setAttribute('aria-pressed','false');get('place-sensor').setAttribute('aria-pressed','false');
+      selected={kind:'rooms',index:plan.rooms.findIndex(onLevel)};
+      if(selected.index<0)selected=null;
+      get('status').textContent=`Editing ${levelsFor(plan).find(level=>level.id===activeLevel).name}. Changes remain drafts until saved.`;
+      render();
+    },
     setConfig(next, sensors=[]) {config=next;plan=structuredClone(next.plan);placements=structuredClone(next.sensors || []);base=JSON.stringify({plan,placements});past=[];future=[];selected={kind:'rooms',index:0};blocked=false;gesture=null;draw=false;placing=false;get('draw').setAttribute('aria-pressed','false');get('place-sensor').setAttribute('aria-pressed','false');get('name').value=plan.name;get('status').textContent='Drag rooms, furniture or sensors. Save to update the 3D view.';this.refreshSensors(sensors);render();changedState();},
     refreshSensors(sensors){
       catalog=sensors;const picker=get('sensor-picker'),previous=picker.value;picker.replaceChildren();

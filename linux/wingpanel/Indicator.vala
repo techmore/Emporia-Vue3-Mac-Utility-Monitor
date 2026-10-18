@@ -47,6 +47,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
         menu.append (scroll);
         menu.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
         add_action ("Dashboard", {});
+        add_action ("Barn · First floor", {"--floor", "first"});
+        add_action ("Barn · Upstairs", {"--floor", "upstairs"});
         add_action ("Collector Settings…", {"--settings"});
         add_action ("Collector Connection…", {"--connection"});
         add_action ("Refresh", {"--refresh"});

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.55 - 2026-10-18
+
+- Stack floor levels at their saved elevations and switch between First floor,
+  Upstairs and All floors using the Home 3D dropdown. Keep rooms, sensors and the
+  visual editor on the selected floor, with stair treads and an upstairs opening.
+- Add Barn floor shortcuts to the Linux app menu and Wingpanel dropdown.
+- Preserve sensor identities, circuit mappings and older single-floor plans.
+
 ## 2.3.54 - 2026-10-15
 
 - Add a preview-only 24-hour measured mains power chart: separate olive Total,
