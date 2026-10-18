@@ -86,3 +86,12 @@ now includes measured mains intervals and explicit coverage. Remaining: continuo
 source-interval collection for individual circuits, physical sensor report-time
 provenance, full reboot verification and reviewed deployment of the 3D release.
 Do not fabricate the October 15–18 sensor outage or rescale legacy poll sums.
+
+## House-control deployed — 2026-10-18
+
+Release 2.3.54, including PR #150 and audit PR #154, is merged to main and running
+on the existing SER8 collector with preserved history/settings and public HTTPS
+native access. See INCUS_DEPLOYMENT.md for the verified cutover. The plan is still
+an example until the owner enters real geometry and circuit mappings. Remaining:
+continuous source-interval history for branch circuits, sensor measurement-time
+provenance and a separately authorized full reboot test.

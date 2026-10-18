@@ -170,3 +170,10 @@ Matter controller and scoped attribute events to their actual sensor. Added
 startup readiness, timezone-correct freshness, atomic number validation, malformed
 HA timestamp handling and explicit mains coverage in the regular Home 3D route.
 Legacy poll sums are not continuous measured energy coverage.
+
+## 2026-10-18 — audited integration deployed
+
+PR #150 plus #154 are now merged to main and deployed as 2.3.54. The deployment
+receipt in INCUS_DEPLOYMENT.md supersedes earlier not-deployed statements. Existing
+tables/rows survived verified backup and migration; measured UTC mains backfill,
+public authenticated access and the Linux client are working.
