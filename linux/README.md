@@ -112,7 +112,22 @@ Missing/offline buckets remain gaps, and retained offline history is labeled cac
 The client installs `temperatures.py` alongside `energy_monitor.py`; it uses the
 same authenticated HTTPS session and private response cache as the existing app.
 
-The Wingpanel **Temperatures** view includes the saved house preview above the sensor
+The Wingpanel **Temperatures** view opens with an overview: the indoor average of recent
+placed sensors, the warmest and coolest rooms with their trend, average humidity, any unplaced
+sensor, and a comfort-scale strip with one marker per recent sensor (hover for its name, click for
+its history). A **needs attention** row appears only when a sensor has no recent reading, a
+battery is at or below 20%, a room is warming or cooling by 3 °F/h or more, or a placed room's
+humidity is ≥65% or ≤30%; each entry opens that sensor's history. The sensor list can be sorted
+**By floor** (grouped under the saved plan's floor names), **Warmest first**, **Coolest first** or
+**Changing fastest**. Each row shows the reading, its °F/h trend over the last recorded hour or two,
+humidity, low battery, update age and a 24-hour sparkline with the comfortable 70–75 °F band
+shaded; hover the sparkline to read a recorded half-hour bucket. Stale sensors keep their last
+recorded value greyed and dashed, never feed the averages, and sort last. The dropdown remembers
+the Power/Temperatures choice, the sort and which sections are open in
+`~/.config/energy-monitor/wingpanel.ini`. Build checks include `meson test` for the trend,
+age and band helpers.
+
+The **House view** section holds the saved house preview above the sensor
 cards. **3D home** now embeds the same Three.js scene builder as the web Home 3D
 page, bundled locally in WebKit. It shows full walls with automatic cutaways, textured
 floors, saved furniture, windows, doors, stair treads, and stacked levels. The attic has a

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.63 - 2026-10-18
+
+- Rebuild the Wingpanel Temperatures dropdown natively: an indoor-average overview with warmest/coolest rooms, humidity and a clickable comfort-scale strip; a "needs attention" row for offline sensors, low batteries, fast warming/cooling and humid or dry rooms; and a sortable sensor list (by floor, warmest, coolest, changing fastest) with °F/h trends, humidity, last-update age and hoverable 24-hour sparklines over the comfortable band.
+- Remember the Power/Temperatures choice, sort order and expanded sections across refreshes and Wingpanel restarts; the sensor list no longer collapses on each update.
+- Show the band legend once; the embedded Home 3D view no longer repeats the summary, legend and sensor list.
+
 ## 2.3.62 - 2026-10-18
 
 - Keep live power fresh without double-counting energy already covered by imported intervals; serialize polling and imports.

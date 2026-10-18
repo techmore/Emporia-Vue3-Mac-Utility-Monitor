@@ -6,6 +6,7 @@ public class HousePreview : Gtk.Box {
     private Gtk.DrawingArea canvas;
     private Gtk.Label title;
     private Gtk.Box room_list;
+    private Gtk.Label hint;
     private Gtk.Stack scene;
     private WebHouseView? home;
     private Json.Object? plan;
@@ -45,7 +46,7 @@ public class HousePreview : Gtk.Box {
             perspective = spatial.active; positioned = false;
             scene.visible_child_name = perspective && home != null ? "home" : "plan";
             floors.visible = !perspective || home == null;
-            get_last_child ().visible = !perspective || home == null;
+            get_last_child ().visible = !perspective || home == null; hint.visible = !perspective || home == null;
             canvas.queue_draw ();
         });
         views.append (spatial); views.append (flat); append (views);
@@ -58,7 +59,7 @@ public class HousePreview : Gtk.Box {
         scene = new Gtk.Stack ();
         scene.add_named (canvas, "plan");
         append (scene);
-        var hint = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F\nGrey = no recent reading · • sensor → history") { xalign = 0, wrap = true };
+        hint = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F\nGrey = no recent reading · • sensor → history") { xalign = 0, wrap = true };
         hint.add_css_class ("energy-muted");
         append (hint);
         room_list = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
@@ -122,7 +123,7 @@ public class HousePreview : Gtk.Box {
         if (home != null) home.set_state (root, cache_fresh);
         scene.visible_child_name = perspective && home != null ? "home" : "plan";
         floors.visible = !perspective || home == null;
-        get_last_child ().visible = !perspective || home == null;
+        get_last_child ().visible = !perspective || home == null; hint.visible = !perspective || home == null;
         update_room_list ();
         canvas.queue_draw ();
     }

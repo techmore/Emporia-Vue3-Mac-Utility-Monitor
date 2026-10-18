@@ -30,9 +30,12 @@ jobs:
           sudo apt-get install -y valac libgtk-4-dev libwebkitgtk-6.0-dev libjson-glib-dev xvfb xauth
           valac --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala tests/wingpanel_house_preview.vala -o /tmp/test-house-preview
           xvfb-run -a /tmp/test-house-preview
+          valac --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/TemperatureView.vala linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala linux/wingpanel/test_temperature_view.vala -o /tmp/test-temperature-view
+          /tmp/test-temperature-view
           glib-compile-resources linux/wingpanel/theme.gresource.xml --sourcedir=linux --sourcedir=static/house-control --generate-source --target=/tmp/native-house-resources.c
           valac --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/WebHouseView.vala tests/wingpanel_web_house.vala /tmp/native-house-resources.c -o /tmp/test-web-house
-          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a /tmp/test-web-house tests/fixtures/native-house.json
+          # GitHub runners cannot create WebKit's bubblewrap namespaces; the fixture page is local and offline.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a /tmp/test-web-house tests/fixtures/native-house.json
 
   linux-service:
     runs-on: ubuntu-latest
