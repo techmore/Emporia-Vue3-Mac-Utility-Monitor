@@ -10,7 +10,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -3228,7 +3228,9 @@ def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
     if not reading or not reading.get("timestamp"):
         return False
     try:
-        age = (datetime.now() - datetime.fromisoformat(reading["timestamp"][:19])).total_seconds()
+        stamp = datetime.fromisoformat(reading["timestamp"].replace('Z', '+00:00'))
+        reference = datetime.now(timezone.utc) if stamp.tzinfo else datetime.now()
+        age = (reference - stamp).total_seconds()
         return -60 <= age < max_age_secs
     except Exception:
         return False
@@ -4357,7 +4359,30 @@ def house_control_state():
     menu = _build_menu_summary_payload()
     gid = menu["active_device_gid"]
     summary = energy.get_summary(24, gid) if gid else []
-    response = jsonify(house_control.project_state(house_control.load_config(), menu, summary))
+    payload = house_control.project_state(house_control.load_config(), menu, summary)
+    # Use measured UTC intervals for mains totals; never substitute legacy poll sums.
+    now = datetime.now(timezone.utc)
+    measured = energy.get_mains_history(gid, now) if gid else {}
+    latest = {row['channel_name']: row for row in energy.get_latest(gid)} if gid else {}
+    payload['mains'] = []
+    for name, label in (('Main', 'Total'), ('Mains_A', 'Leg A'), ('Mains_B', 'Leg B')):
+        row = latest.get(name)
+        total = measured.get(name, {})
+        if row is None and not total:
+            continue
+        payload['mains'].append({
+            'channel_name': name, 'name': label,
+            'watts': _watts_estimate(row['usage_kwh']) if row and menu['online']
+                     and _reading_fresh(row, 180) and row['usage_kwh'] is not None else None,
+            'timestamp': row['timestamp'] if row else total.get('last_interval'),
+            'kwh_24h': total.get('kwh_24h'), 'cost_24h': total.get('cost_24h'),
+            'observed_minutes': total.get('observed_minutes', 0),
+            'expected_minutes': 1440, 'complete': total.get('complete', False),
+            'source': 'Measured UTC minute intervals; missing intervals stay unknown',
+        })
+    payload['mains_history'] = energy.get_mains_history_chart(gid, now) if gid else None
+    payload['circuit_history_basis'] = 'Legacy poll observations; not continuous measured coverage'
+    response = jsonify(payload)
     response.headers["Cache-Control"] = "no-store"
     return response
 

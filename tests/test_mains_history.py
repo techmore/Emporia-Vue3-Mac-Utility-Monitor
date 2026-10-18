@@ -120,7 +120,8 @@ class MainsHistoryTests(unittest.TestCase):
         calls = []
         vue = SimpleNamespace(auth=SimpleNamespace(tokens={'id_token': 'remote-only'}))
 
-        def get(url, headers, params=None, timeout=None):
+        def get(url, headers, params=None, timeout=None, allow_redirects=True):
+            self.assertFalse(allow_redirects)
             if params is None:
                 data = {'devices': [{'device_gid': 551741, 'channels': [
                     {'channel_id': name, 'has_data': True} for name in ('Mains', 'Mains_A', 'Mains_B')]}]}
@@ -130,7 +131,7 @@ class MainsHistoryTests(unittest.TestCase):
                 count = int((last - first).total_seconds() / 60) + 1
                 self.assertLessEqual(count, 720)
                 data = {'firstUsageInstant': first.isoformat(), 'usageList': [.003] * count}
-            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
+            return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: data)
 
         with patch('requests.get', side_effect=get):
             snapshot = mains.collect(vue, '551741', self.start, self.end - timedelta(minutes=1))

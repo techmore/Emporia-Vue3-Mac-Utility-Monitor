@@ -50,7 +50,9 @@ def collect(vue, gid: str, start: datetime, end: datetime) -> dict:
 
     def get(path, params=None):
         response = requests.get('https://api.emporiaenergy.com' + path,
-                                headers=headers, params=params, timeout=(5, 10))
+                                headers=headers, params=params, timeout=(5, 10), allow_redirects=False)
+        if 300 <= response.status_code < 400:
+            raise ValueError("Emporia API redirect rejected")
         response.raise_for_status()
         return response.json()
 

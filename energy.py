@@ -1311,105 +1311,116 @@ def poll_and_store(vue, device_gids):
     global RATE_CENTS
     RATE_CENTS = _read_rate_cents()
     conn = _connect()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    usage_dict = None
-    for attempt in range(1, 4):
-        try:
-            usage_dict = vue.get_device_list_usage(
-                deviceGids=device_gids,
-                instant=None,
-                scale=Scale.MINUTE.value,
-                unit=Unit.KWH.value,
-            )
-            break
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            if attempt == 3:
-                conn.close()
-                raise
-            logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
-            time.sleep(2 * attempt)
+        usage_dict = None
+        for attempt in range(1, 4):
+            try:
+                usage_dict = vue.get_device_list_usage(
+                    deviceGids=device_gids,
+                    instant=None,
+                    scale=Scale.MINUTE.value,
+                    unit=Unit.KWH.value,
+                )
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                if attempt == 3:
+                    conn.close()
+                    raise
+                logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
+                time.sleep(2 * attempt)
 
-    now = datetime.now().isoformat()
+        # Validate the complete response before mutating any channel history.
+        for device in usage_dict.values():
+            for channel in device.channels.values():
+                value = channel.usage
+                if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                    conn.close()
+                    raise ValueError("Emporia returned invalid channel energy")
 
-    for gid, device in usage_dict.items():
-        capability = {
-            "has_main": False,
-            "has_mains_a": False,
-            "has_mains_b": False,
-            "has_mains_c": False,
-        }
-        for channelnum, channel in device.channels.items():
-            if channel.usage is None:
-                continue
-            channel_name = _normalize_channel_name(channel.name)
-            if channel_name == "Main":
-                capability["has_main"] = True
-            elif channel_name == "Mains_A":
-                capability["has_mains_a"] = True
-            elif channel_name == "Mains_B":
-                capability["has_mains_b"] = True
-            elif channel_name == "Mains_C":
-                capability["has_mains_c"] = True
+        now = datetime.now().isoformat()
 
-            cost = channel.usage * RATE_CENTS
+        for gid, device in usage_dict.items():
+            capability = {
+                "has_main": False,
+                "has_mains_a": False,
+                "has_mains_b": False,
+                "has_mains_c": False,
+            }
+            for channelnum, channel in device.channels.items():
+                if channel.usage is None:
+                    continue
+                channel_name = _normalize_channel_name(channel.name)
+                if channel_name == "Main":
+                    capability["has_main"] = True
+                elif channel_name == "Mains_A":
+                    capability["has_mains_a"] = True
+                elif channel_name == "Mains_B":
+                    capability["has_mains_b"] = True
+                elif channel_name == "Mains_C":
+                    capability["has_mains_c"] = True
 
-            c.execute(
-                """INSERT INTO readings
-                   (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (now, gid, channelnum, channel_name, channel.usage, cost),
-            )
-            _upsert_latest_snapshot_with_conn(
+                cost = channel.usage * RATE_CENTS
+
+                c.execute(
+                    """INSERT INTO readings
+                       (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (now, gid, channelnum, channel_name, channel.usage, cost),
+                )
+                _upsert_latest_snapshot_with_conn(
+                    conn,
+                    device_gid=str(gid),
+                    channel_name=channel_name,
+                    channel_num=channelnum,
+                    usage_kwh=channel.usage,
+                    cost_cents=cost,
+                    timestamp=now,
+                )
+            _save_device_capabilities_with_conn(
                 conn,
                 device_gid=str(gid),
-                channel_name=channel_name,
-                channel_num=channelnum,
-                usage_kwh=channel.usage,
-                cost_cents=cost,
-                timestamp=now,
+                service_mode=_classify_service_mode(**capability),
+                has_main=capability["has_main"],
+                has_mains_a=capability["has_mains_a"],
+                has_mains_b=capability["has_mains_b"],
+                has_mains_c=capability["has_mains_c"],
+                mains_c_no_ct=False,
+                source="live_poll",
             )
-        _save_device_capabilities_with_conn(
-            conn,
-            device_gid=str(gid),
-            service_mode=_classify_service_mode(**capability),
-            has_main=capability["has_main"],
-            has_mains_a=capability["has_mains_a"],
-            has_mains_b=capability["has_mains_b"],
-            has_mains_c=capability["has_mains_c"],
-            mains_c_no_ct=False,
-            source="live_poll",
-        )
 
-    # Prune old rows to keep the database from growing unboundedly.
-    cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
-    c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
-    global _last_compaction
-    compacted = 0
-    if time.monotonic() - _last_compaction > 3600:
-        _last_compaction = time.monotonic()
-        compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+        # Prune old rows to keep the database from growing unboundedly.
+        cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
+        c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
+        global _last_compaction
+        compacted = 0
+        if time.monotonic() - _last_compaction > 3600:
+            _last_compaction = time.monotonic()
+            compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+            conn.commit()
+            for report in write_monthly_reports():
+                logger.info("Wrote monthly report %s", report)
+        if compacted:
+            logger.info("Compacted %s minute rows into hourly rows", compacted)
+
         conn.commit()
-        for report in write_monthly_reports():
-            logger.info("Wrote monthly report %s", report)
-    if compacted:
-        logger.info("Compacted %s minute rows into hourly rows", compacted)
+        conn.close()
+        if os.environ.get('EMPORIA_MAINS_HISTORY', '1') != '0':
+            for gid in usage_dict:
+                if str(gid) == _GHOST_DEVICE or not any(
+                        _normalize_channel_name(channel.name) == 'Main'
+                        for channel in usage_dict[gid].channels.values()):
+                    continue
+                try:
+                    collect_mains_history(vue, str(gid))
+                except Exception as exc:
+                    # Phase collection must not interrupt existing branch collection or leak auth errors.
+                    logger.warning('Mains history collection failed for %s: %s', gid, type(exc).__name__)
+        logger.info("[%s] Recorded readings", now)
 
-    conn.commit()
-    conn.close()
-    if os.environ.get('EMPORIA_MAINS_HISTORY', '1') != '0':
-        for gid in usage_dict:
-            if str(gid) == _GHOST_DEVICE or not any(
-                    _normalize_channel_name(channel.name) == 'Main'
-                    for channel in usage_dict[gid].channels.values()):
-                continue
-            try:
-                collect_mains_history(vue, str(gid))
-            except Exception as exc:
-                # Phase collection must not interrupt existing branch collection or leak auth errors.
-                logger.warning('Mains history collection failed for %s: %s', gid, type(exc).__name__)
-    logger.info("[%s] Recorded readings", now)
-
+    finally:
+        conn.close()
 
 _last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
 

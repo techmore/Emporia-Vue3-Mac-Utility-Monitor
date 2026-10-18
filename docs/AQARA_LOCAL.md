@@ -76,3 +76,13 @@ clear the online indicator; do not interpret cached snapshots as missing-device
 proof. Tests validate null sentinels, finite/ranged values, unknown reachability,
 local page routing and spreadsheet-safe streaming export. They do not prove
 physical sensor accuracy or commissioning/reboot recovery.
+
+## Boot readiness and event attribution — 2026-10-18
+
+Install `scripts/check_matter_ready.py` as `__MATTER_ROOT__/check-ready.py` when
+rendering the updated aqara-matter.service template. The interface precondition
+retries startup until the configured interface exists; the bounded loopback API
+check rejects a Node process that failed internally without exiting. Existing
+commissioned fabric storage is retained. Attribute events now record only the
+sensor owning the changed endpoint. Whole-node events remain cached snapshots.
+Neither source proves the physical measurement time; see the recording audit.
