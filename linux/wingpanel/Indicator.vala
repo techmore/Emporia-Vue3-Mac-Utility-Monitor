@@ -9,7 +9,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private uint timer;
     private string previous = "";
     private Gtk.CssProvider css;
-    private Gtk.DropDown view_picker;
+    private Gtk.ToggleButton[] view_buttons = {};
+    private int current_view = 0;
     private HousePreview house_preview;
     private TemperatureView temperature_view;
     private EnergyPrefs prefs;
@@ -31,26 +32,41 @@ public class EnergyIndicator : Wingpanel.Indicator {
         css = new Gtk.CssProvider ();
         Gtk.StyleContext.add_provider_for_display (Gdk.Display.get_default (), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
         load_theme ();
-        Gtk.Settings.get_default ().notify["gtk-application-prefer-dark-theme"].connect (() => { load_theme (); });
-        Gtk.Settings.get_default ().notify["gtk-theme-name"].connect (() => { load_theme (); });
         panel_title = new Gtk.Label ("Energy Monitor") { xalign = 0, hexpand = true };
         panel_title.add_css_class ("energy-title");
-        status = new Gtk.Label ("Waiting for collector connection") {
+                status = new Gtk.Label ("Waiting for collector connection") {
             xalign = 1, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 30
         };
-        status.add_css_class ("energy-muted");
+        status.add_css_class (Granite.CssClass.DIM);
         status.add_css_class ("energy-timestamp");
         var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
         header.append (panel_title);
         header.append (status);
         menu.append (header);
         prefs = new EnergyPrefs ();
-        view_picker = new Gtk.DropDown.from_strings ({"Power", "Temperatures"}) { selected = prefs.view };
-        view_picker.notify["selected"].connect (() => {
-            prefs.view = (int) view_picker.selected; prefs.save ();
-            previous = ""; update ();
-        });
-        menu.append (view_picker);
+        current_view = prefs.view;
+        // A linked pair of toggle buttons is elementary's segmented control (see Quick Settings).
+        var switcher = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) { homogeneous = true };
+        switcher.add_css_class ("linked");
+        switcher.add_css_class ("energy-switcher");
+        string[] view_names = {"Power", "Temperatures"};
+        for (int i = 0; i < view_names.length; i++) {
+            var toggle = new Gtk.ToggleButton.with_label (view_names[i]);
+            if (i > 0) toggle.group = view_buttons[0];
+            view_buttons += toggle;
+            switcher.append (toggle);
+        }
+        view_buttons[current_view].active = true;
+        for (int i = 0; i < view_buttons.length; i++) {
+            int index = i;
+            var toggle = view_buttons[i];
+            toggle.toggled.connect (() => {
+                if (!toggle.active || current_view == index) return;
+                current_view = index; prefs.view = index; prefs.save ();
+                previous = ""; update ();
+            });
+        }
+        menu.append (switcher);
         house_preview = new HousePreview ();
         house_preview.sensor_selected.connect ((source, identity) => { launch ({"--temperature", source, identity}); });
         temperature_view = new TemperatureView (house_preview, prefs);
@@ -74,6 +90,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         add_action ("Collector Settings…", {"--settings"}, extra);
         add_action ("Collector Connection…", {"--connection"}, extra);
         add_action ("Refresh", {"--refresh"}, extra);
+        menu.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
         add_action ("Quit", {"--quit"});
         update ();
         timer = Timeout.add_seconds (3, () => { update (); return Source.CONTINUE; });
@@ -81,9 +98,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private void load_theme () {
-        var settings = Gtk.Settings.get_default ();
-        bool dark = settings.gtk_application_prefer_dark_theme || settings.gtk_theme_name.down ().contains ("dark");
-        css.load_from_resource (dark ? "/org/techmore/energy/theme-dark.css" : "/org/techmore/energy/theme-light.css");
+        // One stylesheet built on the elementary named colours: light, dark and accent follow the system.
+        css.load_from_resource ("/org/techmore/energy/theme.css");
     }
 
     private void launch (string[] options) {
@@ -127,7 +143,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private void update () {
-        bool showing_temperatures = view_picker.selected == 1;
+        bool showing_temperatures = current_view == 1;
         int screen_height = 900, screen_width = 1200;
         var monitor = Gdk.Display.get_default ().get_monitors ().get_item (0) as Gdk.Monitor;
         if (monitor != null) { var bounds = monitor.get_geometry (); screen_height = bounds.height; screen_width = bounds.width; }

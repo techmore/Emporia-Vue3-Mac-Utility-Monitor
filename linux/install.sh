@@ -10,7 +10,8 @@ install -Dm644 "$repo/linux/native_auth.py" "$HOME/.local/lib/energy-monitor/nat
 install -Dm644 "$repo/linux/client_core.py" "$HOME/.local/lib/energy-monitor/client_core.py"
 install -Dm644 "$repo/linux/temperatures.py" "$HOME/.local/lib/energy-monitor/temperatures.py"
 install -Dm755 "$repo/linux/energy_monitor.py" "$HOME/.local/lib/energy-monitor/energy_monitor.py"
-install -m644 "$repo/linux/"theme-*.css "$HOME/.local/lib/energy-monitor/"
+install -m644 "$repo/linux/theme.css" "$HOME/.local/lib/energy-monitor/theme.css"
+rm -f "$HOME/.local/lib/energy-monitor/theme-light.css" "$HOME/.local/lib/energy-monitor/theme-dark.css"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.config/autostart"
 cat > "$HOME/.local/bin/energy-monitor" <<'APP'
 #!/usr/bin/env bash

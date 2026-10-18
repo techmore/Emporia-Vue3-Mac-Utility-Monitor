@@ -52,13 +52,16 @@ when disconnected, live readings are cleared and recorded history remains labele
 as cached. This is not yet the Mac client's full SQLite history download/Keychain
 sync implementation.
 
-The native menu and history windows mirror `EnergyMonitorApp/Sources/Theme.swift`:
-olive/stone light and dark palettes, serif numeric readings, dark service-feed card,
-rounded metric cards and compact circuit buttons. Circuits follow physical breaker
-positions in two columns (odd slots left, even slots right), with unassigned positions
-preserved instead of shifting subsequent circuits. Styles are scoped to this client;
-they do not recolor other panel indicators. Desktop GTK light/dark preferences are
-followed. The embedded dashboard already uses the same palette from the collector.
+The native menu, history windows and dialogs use the elementary OS stylesheet rather than a
+palette of their own: `linux/theme.css` is built on the stylesheet's named colours (`@fg_color`,
+`@accent_color`, `@borders`, `@warning_color`, `@error_color`), so light/dark mode and the user's
+accent colour apply automatically with no theme detection. Type is the system font with tabular
+figures. The dropdown's Power/Temperatures switch is a linked toggle pair like Quick Settings;
+windows use header-bar Cancel/Connect buttons, Escape/Enter, Ctrl+R/Ctrl+Q and sectioned menus.
+Charts have neutral gridlines, system-font axes and gap-preserving runs. Temperature bands use the
+elementary palette (Blueberry, Banana, Orange, Strawberry) as borders and translucent fills only.
+Styles are scoped to this client; they do not recolor other panel indicators. The embedded web
+dashboard still uses its own olive palette, shared with the Mac app.
 
 For a private collector, install a persistent SSH forward after verifying that
 `ssh USER@HOST` works with a trusted host key and noninteractive authentication:

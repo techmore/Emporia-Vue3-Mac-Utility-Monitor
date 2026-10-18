@@ -14,7 +14,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("WebKit", "6.0")
 gi.require_version("Soup", "3.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, WebKit, Soup
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo, WebKit, Soup
 
 from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key, display_state, private_json,
                          read_json, validate_origin, validate_summary, validate_temperature_history,
@@ -25,6 +25,26 @@ from native_auth import load_credentials, session_cookie
 STATE = Path(GLib.get_user_state_dir()) / "energy-monitor"
 CONFIG = Path(GLib.get_user_config_dir()) / "energy-monitor/client.json"
 DATA = Path(GLib.get_user_data_dir()) / "energy-monitor"
+
+
+def draw_axis(area, cr, color, left, top, plot_w, plot_h, labels):
+    """Hairline grid plus top/bottom axis labels in the widget's own font, using the foreground colour."""
+    cr.set_line_width(1)
+    for fraction in (0, 0.5, 1):
+        y = round(top + plot_h * fraction) + 0.5
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.25 if fraction else 0.5)
+        cr.move_to(left, y)
+        cr.line_to(left + plot_w, y)
+        cr.stroke()
+    layout = area.create_pango_layout("")
+    font = Pango.FontDescription.from_string("Sans 9")
+    layout.set_font_description(font)
+    for text, y in zip(labels, (top, top + plot_h)):
+        layout.set_text(text, -1)
+        _, extent = layout.get_pixel_extents()
+        cr.set_source_rgba(0.5, 0.5, 0.5, 1)
+        cr.move_to(left - extent.width - 6, y - extent.height / 2)
+        PangoCairo.show_layout(cr, layout)
 
 
 class EnergyMonitor(Gtk.Application):
@@ -58,9 +78,6 @@ class EnergyMonitor(Gtk.Application):
         self.css = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), self.css,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        settings = Gtk.Settings.get_default()
-        settings.connect("notify::gtk-application-prefer-dark-theme", lambda *_: self.load_theme())
-        settings.connect("notify::gtk-theme-name", lambda *_: self.load_theme())
         self.load_theme()
         self.hold()
         for name, callback in (("dashboard", lambda *_: self.open_path("/")),
@@ -76,6 +93,9 @@ class EnergyMonitor(Gtk.Application):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             self.add_action(action)
+        for action, keys in (("app.refresh", ["<Control>r", "F5"]), ("app.quit", ["<Control>q"]),
+                             ("app.dashboard", ["<Control>1"]), ("app.temperatures", ["<Control>2"])):
+            self.set_accels_for_action(action, keys)
         self.build_window()
         self.restore_cache()
         if not self.authenticate_device():
@@ -83,9 +103,8 @@ class EnergyMonitor(Gtk.Application):
         GLib.timeout_add_seconds(30, self.refresh)
 
     def load_theme(self):
-        settings = Gtk.Settings.get_default()
-        dark = settings.get_property("gtk-application-prefer-dark-theme") or "dark" in settings.get_property("gtk-theme-name").lower()
-        self.css.load_from_path(str(Path(__file__).with_name("theme-dark.css" if dark else "theme-light.css")))
+        # One stylesheet built on the elementary named colours: light, dark and accent follow the system.
+        self.css.load_from_path(str(Path(__file__).with_name("theme.css")))
 
     def do_activate(self):
         self.window.present()
@@ -136,23 +155,31 @@ class EnergyMonitor(Gtk.Application):
         self.window.connect("close-request", self.hide_window)
         header = Gtk.HeaderBar()
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
-        refresh.set_tooltip_text("Refresh")
+        refresh.set_tooltip_text("Refresh (Ctrl+R)")
         refresh.connect("clicked", lambda *_: self.web.reload())
         header.pack_start(refresh)
         menu = Gio.Menu()
-        for label, action in (("Dashboard", "dashboard"), ("Collector Settings", "settings"),
-                              ("Barn · First floor", "barn-first"), ("Barn · Upstairs", "barn-upstairs"),
-                              ("Barn · Attic", "barn-attic"), ("Temperatures", "temperatures"),
-                              ("Temperature floor plan", "temperature-plan"),
-                              ("Collector Connection…", "connection"), ("Quit", "quit")):
-            menu.append(label, "app." + action)
-        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
+        # Sections draw the separators elementary menus use between groups of related items.
+        for section in ((("Dashboard", "dashboard"), ("Temperatures", "temperatures"),
+                         ("Temperature floor plan", "temperature-plan")),
+                        (("Barn · First floor", "barn-first"), ("Barn · Upstairs", "barn-upstairs"),
+                         ("Barn · Attic", "barn-attic")),
+                        (("Collector Settings", "settings"), ("Collector Connection…", "connection")),
+                        (("Refresh", "refresh"), ("Quit", "quit"))):
+            part = Gio.Menu()
+            for label, action in section:
+                part.append(label, "app." + action)
+            menu.append_section(None, part)
+        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, tooltip_text="Menu"))
         self.window.set_titlebar(header)
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.status = Gtk.Label(label="Connecting to the energy collector…", xalign=0,
-                                margin_start=12, margin_end=12, margin_top=6, margin_bottom=6)
+                                margin_start=12, margin_end=12, margin_top=6, margin_bottom=6,
+                                ellipsize=Pango.EllipsizeMode.END)
         self.status.add_css_class("dim-label")
+        self.status.add_css_class("caption")
         content.append(self.status)
+        content.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
         session = WebKit.NetworkSession.new(str(DATA / "web-data"), str(DATA / "web-cache"))
         cookies = session.get_cookie_manager()
@@ -470,33 +497,38 @@ class EnergyMonitor(Gtk.Application):
             self.history_windows[channel][0].present()
             return
         window = Gtk.ApplicationWindow(application=self, title=channel + " · Recorded Usage",
-                                       default_width=640, default_height=470)
+                                       default_width=680, default_height=500)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                      margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         window.add_css_class("energy-monitor")
-        window.set_titlebar(Gtk.HeaderBar())
-        title = Gtk.Label(label=channel, xalign=0, ellipsize=3)
+        header = Gtk.HeaderBar()
+        window.set_titlebar(header)
+        title = Gtk.Label(label=channel, xalign=0, ellipsize=Pango.EllipsizeMode.END)
         title.add_css_class("energy-history-title")
         status = Gtk.Label(label="Loading recorded history…", xalign=0, wrap=True)
         period = Gtk.DropDown.new_from_strings(["1 day", "7 days", "30 days"])
+        period.set_valign(Gtk.Align.CENTER)
+        header.pack_start(period)
         totals = Gtk.Label(xalign=0, wrap=True)
-        chart = Gtk.DrawingArea(content_width=580, content_height=220, hexpand=True, vexpand=True)
-        buttons = Gtk.Box(spacing=6)
+        chart = Gtk.DrawingArea(content_width=620, content_height=240, hexpand=True, vexpand=True)
+        buttons = Gtk.Box(spacing=6, halign=Gtk.Align.END)
         refresh = Gtk.Button(label="Refresh")
         full = Gtk.Button(label="Open Full Circuit Page")
+        full.add_css_class("suggested-action")
         full.connect("clicked", lambda *_: self.open_path("/circuit/" + quote(channel, safe="")))
         refresh.connect("clicked", lambda *_: self.fetch_history(channel))
         buttons.append(refresh)
         buttons.append(full)
-        for child in (title, status, period, totals, chart, buttons):
+        for child in (title, status, totals, chart, buttons):
             box.append(child)
         window.set_child(box)
         data = {"record": None, "cached": True}
         box.add_css_class("energy-monitor")
-        status.add_css_class("energy-muted")
-        totals.add_css_class("energy-value")
+        status.add_css_class("dim-label")
         totals.add_css_class("energy-card")
+        totals.add_css_class("numeric")
         chart.add_css_class("energy-card")
+        chart.add_css_class("energy-chart")
         self.history_windows[channel] = (window, data, status, period, totals, chart)
         window.connect("close-request", lambda *_: self.history_windows.pop(channel, None) and False)
         period.connect("notify::selected", lambda *_: self.render_history(channel))
@@ -591,38 +623,83 @@ class EnergyMonitor(Gtk.Application):
         values = [value for value in points if isinstance(value, (int, float)) and value >= 0]
         if len(points) < 2 or not values:
             return
-        color = self.history_windows[channel][5].get_color()
-        cr.set_source_rgba(color.red, color.green, color.blue, 0.75)
-        cr.set_line_width(2)
+        area = self.history_windows[channel][5]
+        color = area.get_color()
         maximum = max(max(values), 0.001)
-        connected = False
+        left, right, top, bottom = 66, 12, 12, 10
+        plot_w, plot_h = width - left - right, height - top - bottom
+        if plot_w <= 0 or plot_h <= 0:
+            return
+        draw_axis(area, cr, color, left, top, plot_w, plot_h, ["%.2f kWh" % maximum, "0"])
+
+        def point(index, value):
+            return left + index * plot_w / (len(points) - 1), top + plot_h - value * plot_h / maximum
+
+        cr.set_source_rgba(color.red, color.green, color.blue, 0.85)
+        cr.set_line_width(2)
+        cr.set_line_join(1)
+        run = []
+        runs = []
         for index, value in enumerate(points):
-            if value is None:
-                cr.stroke()
-                connected = False
+            if not isinstance(value, (int, float)) or value < 0:
+                if run:
+                    runs.append(run)
+                run = []
                 continue
-            x = 8 + index * (width - 16) / (len(points) - 1)
-            y = height - 8 - value * (height - 16) / maximum
-            if connected:
+            run.append(point(index, value))
+        if run:
+            runs.append(run)
+        for run in runs:
+            # Translucent fill under each recorded run; gaps stay empty because gaps are not zero usage.
+            if len(run) > 1:
+                cr.move_to(run[0][0], top + plot_h)
+                for x, y in run:
+                    cr.line_to(x, y)
+                cr.line_to(run[-1][0], top + plot_h)
+                cr.close_path()
+                cr.set_source_rgba(color.red, color.green, color.blue, 0.14)
+                cr.fill()
+            cr.set_source_rgba(color.red, color.green, color.blue, 0.9)
+            cr.move_to(*run[0])
+            for x, y in run[1:]:
                 cr.line_to(x, y)
-            else:
-                cr.move_to(x, y)
-            connected = True
-        cr.stroke()
+            cr.stroke()
+            if len(run) == 1:
+                cr.arc(run[0][0], run[0][1], 2.5, 0, 6.283185)
+                cr.fill()
 
     def connection_dialog(self):
         window = Gtk.Window(title="Collector Connection", transient_for=self.window, modal=True,
-                            default_width=540)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                      margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
-        box.append(Gtk.Label(label="Connect directly over HTTPS. Sign in when prompted to access your collector.",
-                             wrap=True, xalign=0))
-        entry = Gtk.Entry(text=self.origin, placeholder_text=DEFAULT_ORIGIN)
-        box.append(entry)
-        error = Gtk.Label(wrap=True, xalign=0)
-        box.append(error)
+                            default_width=480, resizable=False)
+        window.add_css_class("energy-monitor")
+        header = Gtk.HeaderBar(show_title_buttons=False)
+        window.set_titlebar(header)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.connect("clicked", lambda *_: window.destroy())
+        header.pack_start(cancel)
         save = Gtk.Button(label="Connect")
         save.add_css_class("suggested-action")
+        header.pack_end(save)
+        window.set_default_widget(save)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        heading = Gtk.Label(label="Collector address", xalign=0)
+        heading.add_css_class("energy-heading")
+        box.append(heading)
+        entry = Gtk.Entry(text=self.origin, placeholder_text=DEFAULT_ORIGIN, activates_default=True)
+        box.append(entry)
+        help_text = Gtk.Label(label="Connects directly over HTTPS. Sign in when prompted to access your collector.",
+                              wrap=True, xalign=0)
+        help_text.add_css_class("dim-label")
+        help_text.add_css_class("caption")
+        box.append(help_text)
+        error = Gtk.Label(wrap=True, xalign=0)
+        error.add_css_class("error")
+        box.append(error)
+        escape = Gtk.ShortcutController()
+        escape.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"),
+                                             Gtk.CallbackAction.new(lambda *_: window.destroy() or True)))
+        window.add_controller(escape)
         def connect(*_):
             try:
                 origin = validate_origin(entry.get_text())
@@ -645,9 +722,9 @@ class EnergyMonitor(Gtk.Application):
             window.destroy()
             self.window.present()
         save.connect("clicked", connect)
-        box.append(save)
         window.set_child(box)
         window.present()
+        entry.grab_focus()
 
 
 if __name__ == "__main__":
