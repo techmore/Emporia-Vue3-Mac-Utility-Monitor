@@ -366,6 +366,9 @@ class EnergyMonitor(Gtk.Application):
             self.record = {"origin": self.origin, "fetched_at": time.time(), "data": summary}
             private_json(self.cache_file(), self.record)
             if previous_identity != self.identity():
+                self.temperature_callbacks.clear()
+                if self.temperature_window:
+                    self.temperature_window.reset_collector(self.identity()[0])
                 for channel, widgets in self.history_windows.items():
                     widgets[1].update(record=None, cached=True)
                     self.render_history(channel)
@@ -423,7 +426,7 @@ class EnergyMonitor(Gtk.Application):
             return
         self.temperature_request += 1
         ticket = self.temperature_request
-        self.temperature_callbacks[ticket] = (self.origin, callback)
+        self.temperature_callbacks[ticket] = (self.origin, self.identity()[0], callback)
         # One temperature window; discard superseded requests and their callbacks.
         for old in list(self.temperature_callbacks):
             if old != ticket:
@@ -448,8 +451,8 @@ class EnergyMonitor(Gtk.Application):
                 return
             message = json.loads(raw)
             saved = self.temperature_callbacks.pop(message['ticket'], None)
-            if saved and saved[0] == self.origin:
-                saved[1](None if message.get('error') else message.get('data'))
+            if saved and saved[0] == self.origin and saved[1] == self.identity()[0]:
+                saved[2](None if message.get('error') else message.get('data'))
         except (ValueError, KeyError, TypeError):
             return
 

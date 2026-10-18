@@ -1171,9 +1171,11 @@ def _delta_badge(pct, label: str, invert: bool = False) -> str:
     return f'<span class="delta {cls}">{arrow} {abs(pct):.1f}% vs {label}</span>'
 
 
-def _watts_estimate(kwh_per_minute: float) -> float:
-    """Convert kWh reading (1-minute scale) to approximate watts."""
-    return kwh_per_minute * 60 * 1000
+def _watts_estimate(reading) -> float:
+    """Presentation fallback is zero; live API fields remain null when unknown."""
+    if not isinstance(reading, dict) or reading.get('observation_source') != 'live_poll':
+        return 0
+    return energy.reading_average_watts(reading) or 0
 
 
 def _fill_gaps(rows: list[dict], key: str, hourly: bool = False) -> list[dict]:
@@ -3227,6 +3229,8 @@ _SKIP_NAMES  = {"Balance"}
 def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
     if not reading or not reading.get("timestamp"):
         return False
+    if 'observation_source' in reading and reading['observation_source'] != 'live_poll':
+        return False
     try:
         stamp = datetime.fromisoformat(reading["timestamp"].replace('Z', '+00:00'))
         reference = datetime.now(timezone.utc) if stamp.tzinfo else datetime.now()
@@ -3322,7 +3326,7 @@ def _seed_layout_from_latest(
 
 
 def _build_mains_cards(
-    latest_map: dict[str, float],
+    latest_map: dict[str, dict],
     hours: int = 24,
     active_device_gid: str | None = None,
 ) -> tuple[dict | None, list[dict]]:
@@ -3364,7 +3368,7 @@ def _build_mains_cards(
 
 
 def _infer_live_leg_watts(
-    latest_map: dict[str, float],
+    latest_map: dict[str, dict],
     layout: dict[int, dict],
 ) -> tuple[float, float, bool]:
     leg_a_watts = 0.0
@@ -3389,7 +3393,7 @@ def _infer_live_leg_watts(
 
 def _detect_service_feed(
     latest_rows: list[dict],
-    latest_map: dict[str, float],
+    latest_map: dict[str, dict],
     layout: dict[int, dict],
     active_device_gid: str | None = None,
 ) -> tuple[dict | None, list[dict], str]:
@@ -3440,7 +3444,7 @@ def _detect_service_feed(
 def _build_dashboard_context(panel_label: str, active_device_gid: str | None = None) -> dict:
     ctx = energy.get_now_vs_context(60, active_device_gid)
     trend = energy.get_trend(14, active_device_gid)
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in ctx["latest"]}
+    latest_map = {r["channel_name"]: r for r in ctx["latest"]}
     summary_24 = energy.get_summary(24, active_device_gid)
     main_24h = energy.get_main_total(24, active_device_gid)
     total_24h = main_24h or {
@@ -3449,7 +3453,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     }
 
     main_now = next((r for r in ctx["latest"] if r["channel_name"] == "Main"), None)
-    current_watts = _watts_estimate(main_now["usage_kwh"]) if main_now else 0
+    current_watts = _watts_estimate(main_now) if main_now else 0
     summary_24_map = {row["channel_name"]: row for row in summary_24}
     circuits_24 = [
         row for row in summary_24
@@ -3711,11 +3715,11 @@ def reports_page():
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest = energy.get_latest()
     standby = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
+        {"name": row["channel_name"], "watts": _watts_estimate(row)}
         for row in latest
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
-        and 1 <= _watts_estimate(row["usage_kwh"]) <= 50
+        and 1 <= _watts_estimate(row) <= 50
     ]
     standby.sort(key=lambda x: x["watts"], reverse=True)
     standby_total_w = sum(s["watts"] for s in standby)
@@ -3723,7 +3727,7 @@ def reports_page():
     layout = {row["slot"]: row for row in energy.get_panel_layout()}
     for row in latest:
         name = row["channel_name"]
-        watts = _watts_estimate(row["usage_kwh"])
+        watts = _watts_estimate(row)
         panel_row = next((slot for slot in layout.values() if slot.get("channel_name") == name), None)
         if not panel_row or name in _MAINS_NAMES or not watts:
             continue
@@ -3819,7 +3823,7 @@ def recommendations_page():
 def circuits_page():
     com = _common()
     latest_rows = energy.get_latest(com["active_device_gid"])
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in latest_rows}
+    latest_map = {r["channel_name"]: r for r in latest_rows}
 
     # Per-period summaries
     sum_24h  = {r["channel_name"]: r for r in energy.get_summary(24, com["active_device_gid"])}
@@ -3923,7 +3927,7 @@ def circuits_page():
         top_live_circuits.append({
             "channel_name": name,
             "display_name": usage_row_map.get(name, {}).get("display_name", name),
-            "watts": _watts_estimate(row["usage_kwh"]),
+            "watts": _watts_estimate(row),
         })
     top_live_circuits.sort(key=lambda r: r["watts"], reverse=True)
 
@@ -4067,20 +4071,20 @@ def trends_page():
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest_rows = energy.get_latest(com["active_device_gid"])
     standby_circuits = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
+        {"name": row["channel_name"], "watts": _watts_estimate(row)}
         for row in latest_rows
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
-        and 1 <= _watts_estimate(row["usage_kwh"]) <= 50
+        and 1 <= _watts_estimate(row) <= 50
     ]
     standby_circuits.sort(key=lambda x: x["watts"], reverse=True)
     top_live_circuits = [
-        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": _watts_estimate(row["usage_kwh"])}
+        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": _watts_estimate(row)}
         for row in latest_rows
         if row["channel_name"] not in _MAINS_NAMES and row["channel_name"] not in _SKIP_NAMES
     ]
     top_live_circuits.sort(key=lambda x: x["watts"], reverse=True)
-    latest_map = {r["channel_name"]: r["usage_kwh"] for r in latest_rows}
+    latest_map = {r["channel_name"]: r for r in latest_rows}
     safety_breakers = []
     for row in energy.get_panel_layout():
         name = row.get("channel_name")
@@ -4366,7 +4370,7 @@ def house_control_state():
             continue
         payload['mains'].append({
             'channel_name': name, 'name': label,
-            'watts': _watts_estimate(row['usage_kwh']) if row and menu['online']
+            'watts': _watts_estimate(row) if row and menu['online']
                      and _reading_fresh(row, 180) and row['usage_kwh'] is not None else None,
             'timestamp': row['timestamp'] if row else total.get('last_interval'),
             'kwh_24h': total.get('kwh_24h'), 'cost_24h': total.get('cost_24h'),
@@ -4399,7 +4403,7 @@ def _build_menu_summary_payload() -> dict:
     main = next((row for row in latest if row["channel_name"] == "Main"), None)
     status = _poller_status_snapshot()
     online = bool(status.get("ok") and status.get("poller_running") and _reading_fresh(main, 180))
-    watts = _watts_estimate(main["usage_kwh"]) if online and main["usage_kwh"] is not None else None
+    watts = _watts_estimate(main) if online and main["usage_kwh"] is not None else None
     saved_layout = energy.get_panel_layout()
     labels = {row["channel_name"]: row.get("label") for row in saved_layout}
     layout = {row.get("slot", index + 1): row for index, row in enumerate(saved_layout)}
@@ -4413,7 +4417,7 @@ def _build_menu_summary_payload() -> dict:
     )
     watts_by_name = {
         row["channel_name"]: (
-            _watts_estimate(row["usage_kwh"])
+            _watts_estimate(row)
             if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None
             else None
         )
@@ -4485,7 +4489,7 @@ def _build_menu_summary_payload() -> dict:
         {
             "channel_name": row["channel_name"],
             "display_name": labels.get(row["channel_name"]) or row["channel_name"],
-            "watts": _watts_estimate(row["usage_kwh"]) if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None else None,
+            "watts": _watts_estimate(row) if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None else None,
         }
         for row in latest if row["channel_name"] not in energy.META_CHANNELS
     ]

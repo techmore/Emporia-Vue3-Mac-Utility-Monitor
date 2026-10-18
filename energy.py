@@ -73,17 +73,29 @@ def read_poller_status() -> dict:
         return {"ok": None, "timestamp": None, "error": "Status file not found — poller may not be running", "consecutive_errors": 0}
 
 # Rate can come from env, settings.json, or default
+def _validated_rate(value) -> float:
+    if isinstance(value, bool):
+        raise ValueError('Rate must be finite and positive')
+    try:
+        rate = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError('Rate must be finite and positive') from exc
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError('Rate must be finite and positive')
+    return rate
+
+
 def _read_rate_cents() -> float:
     if os.environ.get("RATE_CENTS"):
-        return float(os.environ["RATE_CENTS"])
+        return _validated_rate(os.environ["RATE_CENTS"])
     try:
         with open("settings.json") as f:
-            v = json.load(f).get("rate_cents")
-            if v is not None:
-                return float(v)
-    except Exception:
-        pass
-    return 11.04
+            value = json.load(f).get("rate_cents")
+    except FileNotFoundError:
+        return 11.04
+    if value is None:
+        return 11.04
+    return _validated_rate(value)
 
 RATE_CENTS = _read_rate_cents()
 
@@ -346,6 +358,17 @@ def ensure_table():
             usage_kwh REAL,
             cost_cents REAL
         );
+        CREATE TABLE IF NOT EXISTS reading_provenance (
+            reading_id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL CHECK(source IN ('live_poll','csv_import')),
+            interval_seconds REAL CHECK(interval_seconds > 0),
+            source_timezone TEXT,
+            source_unit TEXT NOT NULL
+        );
+        CREATE TRIGGER IF NOT EXISTS reading_provenance_delete AFTER DELETE ON readings
+        BEGIN
+            DELETE FROM reading_provenance WHERE reading_id=OLD.id;
+        END;
         CREATE INDEX IF NOT EXISTS idx_timestamp
             ON readings(timestamp);
         CREATE INDEX IF NOT EXISTS idx_channel_name
@@ -1347,6 +1370,8 @@ def poll_and_store(vue, device_gids):
                 if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
                     conn.close()
                     raise ValueError("Emporia returned invalid channel energy")
+                if value is not None and not math.isfinite(value * RATE_CENTS):
+                    raise ValueError("Emporia channel cost overflow")
 
         now = datetime.now().isoformat()
 
@@ -1378,6 +1403,8 @@ def poll_and_store(vue, device_gids):
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (now, gid, channelnum, channel_name, channel.usage, cost),
                 )
+                c.execute("INSERT INTO reading_provenance(reading_id,source,interval_seconds,source_unit) "
+                          "VALUES (?, 'live_poll', 60, 'kWh')", (c.lastrowid,))
                 _upsert_latest_snapshot_with_conn(
                     conn,
                     device_gid=str(gid),
@@ -1861,26 +1888,22 @@ def get_latest(device_gid: str | None = None):
         return []
 
     c.execute(
-        """SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
-           FROM latest_channel_snapshot
-           WHERE device_gid = ?
-           ORDER BY usage_kwh DESC""",
-        (resolved_gid,),
-    )
+        """SELECT s.channel_name,s.channel_num,s.usage_kwh,s.cost_cents,s.timestamp,
+                  p.source AS observation_source,p.interval_seconds
+           FROM latest_channel_snapshot s
+           LEFT JOIN readings r ON r.device_gid=s.device_gid AND r.timestamp=s.timestamp
+                               AND r.channel_name=s.channel_name
+           LEFT JOIN reading_provenance p ON p.reading_id=r.id
+           WHERE s.device_gid=? ORDER BY s.usage_kwh DESC""", (resolved_gid,))
     results = c.fetchall()
     if not results:
-        c.execute("""SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp
-            FROM (
-                SELECT channel_name, channel_num, usage_kwh, cost_cents, timestamp,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY channel_name
-                           ORDER BY timestamp DESC, id DESC
-                       ) AS rn
-                FROM readings
-                WHERE device_gid = ?
-            )
-            WHERE rn = 1
-            ORDER BY usage_kwh DESC""", (resolved_gid,))
+        c.execute("""SELECT r.channel_name,r.channel_num,r.usage_kwh,r.cost_cents,r.timestamp,
+                            p.source AS observation_source,p.interval_seconds
+            FROM (SELECT *, ROW_NUMBER() OVER (
+                     PARTITION BY channel_name ORDER BY timestamp DESC,id DESC) rn
+                  FROM readings WHERE device_gid=?) r
+            LEFT JOIN reading_provenance p ON p.reading_id=r.id
+            WHERE r.rn=1 ORDER BY r.usage_kwh DESC""", (resolved_gid,))
         results = c.fetchall()
     conn.close()
     return [dict(row) for row in results]
@@ -2050,12 +2073,12 @@ def get_peak_24h(device_gid: str | None = None) -> dict:
         return {"peak_watts": 0, "peak_time": None}
     # Sum all channels per timestamp to get total load, pick the max
     c.execute("""
-        SELECT timestamp, SUM(usage_kwh) as total_kwh
-        FROM readings
-        WHERE timestamp >= ?
-          AND device_gid = ?
-          AND channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
-        GROUP BY timestamp
+        SELECT r.timestamp, SUM(r.usage_kwh) as total_kwh
+        FROM readings r JOIN reading_provenance p ON p.reading_id=r.id
+        WHERE r.timestamp >= ? AND r.device_gid = ?
+          AND p.source='live_poll' AND p.interval_seconds=60
+          AND r.channel_name NOT IN ('Main','Mains_A','Mains_B','Mains_C','Balance')
+        GROUP BY r.timestamp
         ORDER BY total_kwh DESC
         LIMIT 1
     """, (since, resolved_gid))
@@ -2144,6 +2167,16 @@ def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
     return {"data": [dict(row) for row in results], "total": total}
 
 
+def reading_average_watts(reading: dict) -> float | None:
+    """Convert only readings with a recorded interval; never guess legacy units."""
+    value, seconds = reading.get('usage_kwh'), reading.get('interval_seconds')
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0):
+        return None
+    watts = value * (3600000 / seconds)
+    return watts if math.isfinite(watts) else None
+
+
 def get_circuit_history(
     channel_name: str, device_gid: str | None = None, now: datetime | None = None,
 ) -> dict | None:
@@ -2160,9 +2193,10 @@ def get_circuit_history(
         if not gid:
             return None
         latest = conn.execute(
-            """SELECT timestamp, usage_kwh FROM readings
-               WHERE device_gid=? AND channel_name=? AND timestamp<=?
-               ORDER BY timestamp DESC LIMIT 1""",
+            """SELECT r.timestamp,r.usage_kwh,p.source AS observation_source,p.interval_seconds
+               FROM readings r LEFT JOIN reading_provenance p ON p.reading_id=r.id
+               WHERE r.device_gid=? AND r.channel_name=? AND r.timestamp<=?
+               ORDER BY r.timestamp DESC LIMIT 1""",
             (gid, channel_name, now.isoformat()),
         ).fetchone()
         if latest is None:
@@ -2215,7 +2249,10 @@ def get_circuit_history(
         return {
             'channel_name': channel_name, 'device_gid': gid,
             'last_reading': latest['timestamp'],
-            'live_watts': latest['usage_kwh'] * 60000 if 0 <= age < 180 and latest['usage_kwh'] is not None else None,
+            'live_watts': reading_average_watts(dict(latest)) if 0 <= age < 180 and latest['observation_source'] == 'live_poll' else None,
+            'average_watts': reading_average_watts(dict(latest)),
+            'observation_source': latest['observation_source'],
+            'interval_seconds': latest['interval_seconds'],
             'windows': windows,
         }
     finally:
@@ -2333,33 +2370,8 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
     )
     circuits = [dict(r) for r in c.fetchall()]
 
-    c.execute(
-        """SELECT channel_name, channel_num, usage_kwh, timestamp
-           FROM latest_channel_snapshot
-           WHERE device_gid = ?
-           ORDER BY usage_kwh DESC""",
-        (resolved_gid,),
-    )
-    latest_readings = [dict(r) for r in c.fetchall()]
-    if not latest_readings:
-        c.execute(
-            """SELECT channel_name, channel_num, usage_kwh, timestamp
-               FROM (
-                   SELECT channel_name, channel_num, usage_kwh, timestamp,
-                          ROW_NUMBER() OVER (
-                              PARTITION BY channel_name
-                              ORDER BY timestamp DESC, id DESC
-                          ) AS rn
-                FROM readings
-                WHERE device_gid = ?
-               )
-               WHERE rn = 1
-               ORDER BY usage_kwh DESC""",
-            (resolved_gid,),
-        )
-        latest_readings = [dict(r) for r in c.fetchall()]
-
     conn.close()
+    latest_readings = get_latest(resolved_gid)
 
     return {
         "window_minutes": window_minutes,
@@ -2549,7 +2561,7 @@ def import_emporia_csv(
     Declared zones are validated, and ambiguous/nonexistent wall times are reported
     rather than guessed. Storage remains legacy local until coordinated UTC cutover.
     Declared source instants are normalized into the collector's local-clock basis.
-    Interval/source metadata returned here is not yet persisted per reading (#135).
+    Source and interval metadata are saved only for newly accepted rows.
     """
     import csv
 
@@ -2644,17 +2656,25 @@ def import_emporia_csv(
                 except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
-                rows_to_insert.append((stored_moment.isoformat(), gid, None, name, kwh, cents))
+                rows_to_insert.append((stored_moment.isoformat(), gid, None, name, kwh, cents,
+                                       duration, 'kW' if power else 'kWh'))
 
     conn = _connect()
     try:
         with conn:
             conn.execute('BEGIN IMMEDIATE')
-            inserted = conn.executemany(
-                """INSERT OR IGNORE INTO readings
-                   (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents)
-                   VALUES (?,?,?,?,?,?)""", rows_to_insert,
-            ).rowcount if rows_to_insert else 0
+            inserted = 0
+            for row in rows_to_insert:
+                cursor = conn.execute(
+                    """INSERT OR IGNORE INTO readings
+                       (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents)
+                       VALUES (?,?,?,?,?,?)""", row[:6])
+                if cursor.rowcount:
+                    conn.execute("""INSERT INTO reading_provenance
+                        (reading_id,source,interval_seconds,source_timezone,source_unit)
+                        VALUES (?, 'csv_import', ?, ?, ?)""",
+                        (cursor.lastrowid, row[6], zone, row[7]))
+                    inserted += 1
             skipped += len(rows_to_insert) - inserted
             if rows_to_insert:
                 _refresh_import_snapshot_with_conn(conn, gid)

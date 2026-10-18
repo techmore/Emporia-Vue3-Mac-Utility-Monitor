@@ -43,9 +43,14 @@ proposing replacements. Normal re-import intentionally skips conflicting rows.
 Never infer a historical unit from timestamp precision, device ID or apparent
 plausibility of the resulting number.
 
-Per-reading interval/provenance persistence, compaction, sync and power consumers
-remain required in #135. Returning validated import metadata is not persisting
-it with every observation or making existing power estimates correct.
+Since 2.3.59, new accepted imports persist source, interval, source zone and unit
+in `reading_provenance`, atomically with readings and snapshots. New live polls
+record their known 60-second interval. Circuit history exposes interval-average
+watts separately from live power: imports never establish live power. Unknown
+legacy provenance yields unknown power; existing energy and cost are unchanged.
+Compaction removes metadata with deleted raw rows; replacement aggregates retain
+unknown provenance. Replication does not yet transfer this metadata, so the full
+interval-aware aggregation and synchronization work in #135 remains open.
 
 ## Verification
 

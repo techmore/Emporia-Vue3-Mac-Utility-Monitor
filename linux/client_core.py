@@ -51,6 +51,26 @@ def cache_key(origin, endpoint):
     return hashlib.sha256((validate_origin(origin) + endpoint).encode()).hexdigest() + ".json"
 
 
+def temperature_history_cache_key(origin, source_id, endpoint):
+    if not isinstance(source_id, str) or not source_id:
+        raise ValueError('Temperature history requires a collector identity')
+    return cache_key(origin, json.dumps(['temperature-window-v2', source_id, endpoint]))
+
+
+def load_temperature_window_cache(directory, origin, source_id, endpoint):
+    if not source_id:
+        return None
+    try:
+        record = read_json(Path(directory) / temperature_history_cache_key(origin, source_id, endpoint))
+        if (not isinstance(record, dict) or record.get('origin') != origin
+                or record.get('source_id') != source_id):
+            return None
+        validate_temperature_history(record['data'])
+        return record
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def load_temperature_trend_cache(directory, origin, source_id):
     """Recover only source-scoped trends, migrating the old shared cache safely."""
     if not source_id:

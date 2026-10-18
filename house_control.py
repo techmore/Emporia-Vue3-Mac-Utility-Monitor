@@ -391,6 +391,7 @@ def temperature_history(window: str = '24h', end: str | None = None) -> dict:
                        'values': [value * 9 / 5 + 32 if value is not None else None for value in values]})
     return {'window': window, 'start': trends['start'], 'end': trends['end'], 'seconds': trends['seconds'],
             'times': times, 'series': series, 'revision': config['revision'],
+            'collector_source_id': energy.get_reading_changes(0, 1)['source_id'],
             'basis': 'Online collector-observation means; cached snapshots may repeat measurements. Missing buckets are unknown.'}
 
 

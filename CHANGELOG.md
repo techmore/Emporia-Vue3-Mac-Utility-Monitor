@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.59 - 2026-10-18
+
+- Record source and interval metadata for new polls/imports; prevent imports and unknown legacy rows from becoming live power estimates.
+- Reject invalid configured rates and cost overflow before poll writes.
+- Scope detailed temperature history caches and pending responses to collector identity; clear the window when that identity changes.
+
 ## 2.3.58 - 2026-10-18
 
 - Normalize declared CSV source zones to the collector clock and reject ambiguous local keys.

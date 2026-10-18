@@ -5,7 +5,8 @@ from urllib.parse import urlencode
 
 from gi.repository import Gtk
 
-from client_core import (cache_key, private_json, read_json, temperature_band,
+from client_core import (temperature_history_cache_key, load_temperature_window_cache,
+                         private_json, temperature_band,
                          validate_temperature_history)
 
 
@@ -22,6 +23,8 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.last_fetch = 0
         self.cached = False
         self.closed = False
+        self.collector_source = app.identity()[0]
+        self.generation = 0
         self.connect('close-request', self.close)
         self.add_css_class('energy-monitor')
         self.set_titlebar(Gtk.HeaderBar())
@@ -86,7 +89,23 @@ class TemperatureWindow(Gtk.ApplicationWindow):
             if self.requested in self.ids:
                 self.sensor.set_selected(self.ids.index(self.requested))
 
+    def reset_collector(self, source_id):
+        self.collector_source = source_id
+        self.generation += 1
+        self.payload = None
+        self.pending = False
+        self.ids = []
+        self.requested = None
+        self.end = None
+        self.last_fetch = 0
+        self.sensor.set_model(Gtk.StringList.new(['Loading sensors…']))
+        self.readout.set_label('')
+        self.chart.queue_draw()
+        self.status.set_label('Collector changed · loading its recorded history…')
+
     def update_current(self, sensors):
+        if self.collector_source != self.app.identity()[0]:
+            self.reset_collector(self.app.identity()[0])
         while self.current.get_first_child():
             self.current.remove(self.current.get_first_child())
         for sensor in sensors:
@@ -109,26 +128,34 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         if self.end:
             args['end'] = self.end
         endpoint = '/api/house-control/temperatures?' + urlencode(args)
-        cache = self.app.cache_file().parent / cache_key(self.app.origin, endpoint)
+        source_id = self.app.identity()[0]
+        if not source_id:
+            self.status.set_label('Connect to identify the collector before loading history.')
+            return
+        if self.collector_source != source_id:
+            self.reset_collector(source_id)
+        self.generation += 1
+        generation = self.generation
+        cache = self.app.cache_file().parent / temperature_history_cache_key(self.app.origin, source_id, endpoint)
         if not self.payload:
-            try:
-                record = read_json(cache)
-                if record and record.get('origin') == self.app.origin:
-                    self.install(validate_temperature_history(record['data']), cached=True)
-            except (OSError, ValueError, KeyError, TypeError):
-                pass
+            record = load_temperature_window_cache(cache.parent, self.app.origin, source_id, endpoint)
+            if record:
+                self.install(record['data'], cached=True)
         self.pending = True
         self.last_fetch = time.monotonic()
         self.status.set_label('Loading recorded temperature history…')
         origin = self.app.origin
 
         def received(payload):
-            self.pending = False
-            if self.closed or origin != self.app.origin:
+            if (self.closed or origin != self.app.origin or source_id != self.app.identity()[0]
+                    or generation != self.generation):
                 return
+            self.pending = False
             try:
                 payload = validate_temperature_history(payload)
-                private_json(cache, {'origin': origin, 'fetched_at': time.time(), 'data': payload})
+                if payload.get('collector_source_id') != source_id:
+                    raise ValueError('Temperature history belongs to a different collector')
+                private_json(cache, {'origin': origin, 'source_id': source_id, 'fetched_at': time.time(), 'data': payload})
             except (ValueError, OSError, KeyError, TypeError):
                 self.cached = True
                 self.status.set_label('Collector unavailable · retained history is cached. Connect and refresh with Now.')
