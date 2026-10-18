@@ -50,12 +50,10 @@ def _load_aqara_config() -> dict:
 def _save_aqara_config(updates: dict) -> None:
     import energy
 
-    settings = _read_settings()
-    config = settings.setdefault("aqara", {})
-    if not isinstance(config, dict):
-        raise AqaraError("The aqara settings section must be a JSON object")
-    config.update(updates)
-    energy._write_json_file(SETTINGS_FILE, settings)
+    try:
+        energy.update_settings(updates, section="aqara", path=SETTINGS_FILE)
+    except (ValueError, OSError) as exc:
+        raise AqaraError(f"Could not update Aqara settings: {exc}") from exc
 
 
 def save_app_config(data: dict) -> None:

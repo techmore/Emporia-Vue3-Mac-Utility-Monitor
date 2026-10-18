@@ -9,8 +9,11 @@ The first header must be `Time Bucket` or `Time Bucket (IANA/Timezone)`, such as
 `Time Bucket (America/New_York)`. Declared zones are validated. Daily power needs
 that zone and midnight-aligned buckets: transition days can last 23 or 25 hours,
 not invariably 24. Ambiguous fold times and nonexistent gap times are reported
-as errors, not resolved by a guessed offset. Production energy timestamps still
-follow the legacy convention; this does not complete the UTC migration in #127.
+as errors, not resolved by a guessed offset. New imports with a declared zone are converted to the collector local clock before
+storage and duplicate detection. Rows landing in a repeated collector-local hour
+are rejected because legacy timestamp keys cannot distinguish its two occurrences.
+Unzoned exports retain their local-clock interpretation. Existing stored history
+is not reinterpreted. This does not complete the UTC migration in #127.
 
 Unsupported units, duplicate/ambiguous channel headers and unknown power intervals
 reject the file before database writes. Nonfinite/overflow values and invalid

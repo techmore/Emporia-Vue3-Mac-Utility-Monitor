@@ -40,7 +40,7 @@ class ReleaseHardeningTests(unittest.TestCase):
 
     def test_foreign_origin_and_rebinding_host_cannot_change_settings(self):
         client = web.app.test_client()
-        with patch.object(energy, '_write_json_file') as write:
+        with patch.object(energy, 'update_settings') as write:
             for headers in ({'Origin': 'https://untrusted.example'},
                             {'Sec-Fetch-Site': 'cross-site'},
                             {'Host': 'untrusted.example'}):
@@ -62,7 +62,7 @@ class ReleaseHardeningTests(unittest.TestCase):
                 self.assertEqual(client.get('/api/version', headers={
                     **headers, 'X-Forwarded-Proto': 'http',
                 }).status_code, 403)
-                with patch.object(energy, '_write_json_file') as write:
+                with patch.object(energy, 'update_settings') as write:
                     response = client.post('/api/settings/config', json={'rate_cents': 12},
                                            headers={**headers,
                                                     'Origin': 'https://attacker.example'})
@@ -93,7 +93,7 @@ class ReleaseHardeningTests(unittest.TestCase):
             self.assertEqual(client.get('/api/version', base_url=origin, headers=headers).status_code, 200)
             self.assertEqual(client.get('/api/version', base_url=origin.replace('https:', 'http:'),
                                         headers=headers).status_code, 403)
-            with patch.object(energy, '_write_json_file') as write:
+            with patch.object(energy, 'update_settings') as write:
                 response = client.post('/api/settings/config', base_url=origin, json={'rate_cents': 12},
                                        headers={**headers, 'Origin': 'https://attacker.example'})
                 self.assertEqual(response.status_code, 403)
@@ -133,7 +133,7 @@ class ReleaseHardeningTests(unittest.TestCase):
 
     def test_settings_writes_invalidate_dashboard(self):
         client = web.app.test_client()
-        with patch.object(energy, '_write_json_file'), patch.object(web, '_refresh_runtime_config'):
+        with patch.object(energy, 'update_settings'), patch.object(web, '_refresh_runtime_config'):
             web._dashboard_cache['common'] = {'stale': True}
             response = client.post('/api/settings/config', json={'rate_cents': 12},
                                    headers={'Origin': 'http://localhost'})

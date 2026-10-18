@@ -30,6 +30,13 @@ class AqaraTests(unittest.TestCase):
             Path(path).write_text(json.dumps(data), encoding="utf-8")
             os.chmod(path, 0o600)
 
+        def update_settings(updates, *, section=None, path="settings.json"):
+            from runtime_store import update_private_json
+            def change(settings):
+                target = settings if section is None else settings.setdefault(section, {})
+                target.update(updates)
+            return update_private_json(path, change)
+        module.update_settings = update_settings
         module._write_json_file = write_json_file
         return patch.dict("sys.modules", {"energy": module})
 

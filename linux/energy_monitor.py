@@ -16,8 +16,9 @@ gi.require_version("WebKit", "6.0")
 gi.require_version("Soup", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, WebKit, Soup
 
-from client_core import (DEFAULT_ORIGIN, cache_key, display_state, private_json,
-                         read_json, validate_origin, validate_summary, validate_temperature_history)
+from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key, display_state, private_json,
+                         read_json, validate_origin, validate_summary, validate_temperature_history,
+                         load_temperature_trend_cache)
 
 from native_auth import load_credentials, session_cookie
 
@@ -210,12 +211,8 @@ class EnergyMonitor(Gtk.Application):
             self.record = read_json(self.cache_file())
         except (OSError, ValueError):
             self.record = None
-        try:
-            self.trend_record = read_json(STATE / 'responses' / cache_key(self.origin, '/api/house-control/temperatures?window=24h'))
-            if self.trend_record:
-                validate_temperature_history(self.trend_record['data'])
-        except (OSError, ValueError, KeyError, TypeError):
-            self.trend_record = None
+        self.trend_record = load_temperature_trend_cache(
+            STATE / 'responses', self.origin, self.identity()[0])
         self.publish()
 
     def publish(self):
@@ -395,7 +392,7 @@ class EnergyMonitor(Gtk.Application):
                 return
             self.trend_record = {'origin': self.origin, 'source_id': self.identity()[0],
                                  'fetched_at': time.time(), 'data': payload}
-            private_json(STATE / 'responses' / cache_key(self.origin, '/api/house-control/temperatures?window=24h'), self.trend_record)
+            private_json(STATE / 'responses' / cache_key(self.origin, TEMPERATURE_TREND_CACHE_KEY), self.trend_record)
             self.publish()
         except (ValueError, OSError, KeyError, TypeError):
             return

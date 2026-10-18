@@ -4266,16 +4266,10 @@ def api_poller_reconnect():
     pwd   = data.get("password") or ""
     # Persist new credentials if supplied
     if email:
-        cfg = {}
-        try:
-            with open("settings.json") as _f:
-                cfg = _json.load(_f)
-        except Exception:
-            pass
-        cfg["emporia_email"] = email
+        updates = {"emporia_email": email}
         if pwd:
-            cfg["emporia_password"] = pwd
-        energy._write_json_file("settings.json", cfg)
+            updates["emporia_password"] = pwd
+        energy.update_settings(updates)
     # Write the flag file — poller checks for it each loop iteration
     try:
         with open(energy.RECONNECT_FLAG_FILE, "w") as _f:
@@ -5370,14 +5364,7 @@ def api_panel_layout():
     if panel_slots is not None:
         try:
             panel_slots = max(1, int(panel_slots))
-            cfg = {}
-            try:
-                with open("settings.json") as f:
-                    cfg = json.load(f)
-            except Exception:
-                pass
-            cfg["panel_slots"] = panel_slots
-            energy._write_json_file("settings.json", cfg)
+            energy.update_settings({"panel_slots": panel_slots})
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "panel_slots must be an integer"}), 400
     return jsonify({"ok": True})
@@ -5685,57 +5672,43 @@ def api_disconnect_aqara():
 
 @app.route("/api/settings/credentials", methods=["POST"])
 def api_save_credentials():
-    import json as _json
     import os as _os
     data = request.get_json(force=True)
     email = (data.get("email") or "").strip()
     pwd   = data.get("password") or ""
     if not email:
         return jsonify({"ok": False, "error": "Email required"}), 400
-    cfg = {}
-    try:
-        with open("settings.json") as f:
-            cfg = _json.load(f)
-    except Exception:
-        pass
-    cfg["emporia_email"] = email
+    updates = {"emporia_email": email}
     if pwd:
-        cfg["emporia_password"] = pwd
-        # Delete cached tokens so poller re-authenticates on restart
-        if _os.path.exists("keys.json"):
-            _os.remove("keys.json")
-    energy._write_json_file("settings.json", cfg)
+        updates["emporia_password"] = pwd
+    energy.update_settings(updates)
+    if pwd and _os.path.exists("keys.json"):
+        _os.remove("keys.json")
     return jsonify({"ok": True})
 
 
 @app.route("/api/settings/config", methods=["POST"])
 def api_save_config():
-    import json as _json
     data = request.get_json(force=True) or {}
     if not isinstance(data, dict):
         return jsonify({"ok": False, "error": "Expected object"}), 400
-    cfg = {}
-    try:
-        with open("settings.json") as f:
-            cfg = _json.load(f)
-    except Exception:
-        pass
+    updates = {}
     try:
         if data.get("rate_cents") is not None:
-            cfg["rate_cents"] = _parse_nonnegative_float(
+            updates["rate_cents"] = _parse_nonnegative_float(
                 data["rate_cents"], "rate_cents", allow_zero=False
             )
         if data.get("monthly_budget") is not None:
-            cfg["monthly_budget"] = _parse_nonnegative_float(
+            updates["monthly_budget"] = _parse_nonnegative_float(
                 data["monthly_budget"], "monthly_budget", allow_zero=True
             )
         if data.get("monthly_fixed_charge") is not None:
-            cfg["monthly_fixed_charge"] = _parse_nonnegative_float(
+            updates["monthly_fixed_charge"] = _parse_nonnegative_float(
                 data["monthly_fixed_charge"], "monthly_fixed_charge", allow_zero=True
             )
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    energy._write_json_file("settings.json", cfg)
+    energy.update_settings(updates)
     _refresh_runtime_config()
     return jsonify({"ok": True})
 
@@ -5751,19 +5724,11 @@ def api_save_device_labels():
 
 @app.route("/api/settings/panel-display", methods=["POST"])
 def api_save_panel_display():
-    import json as _json
     data = request.get_json(force=True)
-    cfg = {}
-    try:
-        with open("settings.json") as f:
-            cfg = _json.load(f)
-    except Exception:
-        pass
-    cfg["panel_display"] = {
-        "invert_left":  bool(data.get("invert_left",  False)),
+    energy.update_settings({"panel_display": {
+        "invert_left": bool(data.get("invert_left", False)),
         "invert_right": bool(data.get("invert_right", False)),
-    }
-    energy._write_json_file("settings.json", cfg)
+    }})
     return jsonify({"ok": True})
 
 

@@ -18,7 +18,7 @@ import pyemvue
 import requests
 from pyemvue.enums import Scale, Unit
 
-from runtime_store import write_private_json
+from runtime_store import write_private_json, update_private_json
 from timestamp_model import classify_timestamp, reporting_day_bounds
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
@@ -1098,9 +1098,18 @@ def get_device_labels() -> dict[str, str]:
 
 def save_device_labels(labels: dict[str, str]):
     """Merge device_labels into settings.json."""
-    cfg = _load_settings()
-    cfg["device_labels"] = {k: v for k, v in labels.items() if isinstance(v, str)}
-    _write_json_file("settings.json", cfg)
+    update_settings({"device_labels": {k: v for k, v in labels.items() if isinstance(v, str)}})
+
+
+def update_settings(updates: dict, *, section: str | None = None,
+                    path: str | Path = "settings.json") -> dict:
+    """Merge only the requested fields while holding the shared settings lock."""
+    def change(settings):
+        target = settings if section is None else settings.setdefault(section, {})
+        if not isinstance(target, dict):
+            raise ValueError('Settings section must contain an object')
+        target.update(updates)
+    return update_private_json(path, change)
 
 
 def migrate_channel_names():
@@ -2539,6 +2548,7 @@ def import_emporia_csv(
     Power columns require a known interval; energy columns retain their raw kWh.
     Declared zones are validated, and ambiguous/nonexistent wall times are reported
     rather than guessed. Storage remains legacy local until coordinated UTC cutover.
+    Declared source instants are normalized into the collector's local-clock basis.
     Interval/source metadata returned here is not yet persisted per reading (#135).
     """
     import csv
@@ -2599,7 +2609,21 @@ def import_emporia_csv(
                         errors += 1
                         continue
                 duration = _csv_interval_seconds(interval, moment, zone)
-            except ValueError:
+                stored_moment = moment
+                if zone:
+                    instant = moment.replace(tzinfo=ZoneInfo(zone)).astimezone(timezone.utc)
+                    stored_moment = instant.astimezone().replace(tzinfo=None)
+                    # A naive legacy key cannot distinguish the repeated local hour.
+                    # Reject either fold rather than merging two physical intervals.
+                    candidates = {
+                        stored_moment.replace(fold=fold).astimezone(timezone.utc)
+                        for fold in (0, 1)
+                    }
+                    if len(candidates) != 1:
+                        ambiguous += 1
+                        errors += 1
+                        continue
+            except (ValueError, OverflowError):
                 errors += 1
                 continue
             if duration is not None:
@@ -2620,7 +2644,7 @@ def import_emporia_csv(
                 except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
-                rows_to_insert.append((moment.isoformat(), gid, None, name, kwh, cents))
+                rows_to_insert.append((stored_moment.isoformat(), gid, None, name, kwh, cents))
 
     conn = _connect()
     try:

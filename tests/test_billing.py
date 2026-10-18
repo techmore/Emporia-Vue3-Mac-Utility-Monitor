@@ -1,4 +1,7 @@
 import json
+import os
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import mock_open, patch
 
@@ -24,22 +27,25 @@ class BillingSettingsTests(unittest.TestCase):
                     web._read_monthly_fixed_charge()
 
     def test_save_preserves_usage_rate_and_unrelated_settings(self):
-        with patch("builtins.open", mock_open(read_data=json.dumps(
-            {"rate_cents": 22.58, "aqara": {"account": "retained"}}
-        ))), patch.object(web.energy, "_write_json_file") as write, \
-                patch.object(web, "_refresh_runtime_config"):
-            response = web.app.test_client().post(
-                "/api/settings/config", json={"monthly_fixed_charge": 11.99},
-            )
-        self.assertEqual(response.status_code, 200)
-        stored = write.call_args.args[1]
-        self.assertEqual(stored["rate_cents"], 22.58)
-        self.assertEqual(stored["monthly_fixed_charge"], 11.99)
-        self.assertEqual(stored["aqara"]["account"], "retained")
+        with tempfile.TemporaryDirectory() as directory:
+            previous = os.getcwd()
+            os.chdir(directory)
+            self.addCleanup(os.chdir, previous)
+            path = Path('settings.json')
+            path.write_text(json.dumps({'rate_cents': 22.58, 'aqara': {'account': 'retained'}}))
+            with patch.object(web, '_refresh_runtime_config'):
+                response = web.app.test_client().post(
+                    '/api/settings/config', json={'monthly_fixed_charge': 11.99})
+            self.assertEqual(response.status_code, 200)
+            stored = json.loads(path.read_text())
+            self.assertEqual(stored['rate_cents'], 22.58)
+            self.assertEqual(stored['monthly_fixed_charge'], 11.99)
+            self.assertEqual(stored['aqara']['account'], 'retained')
+            os.chdir(previous)
 
     def test_invalid_charge_is_not_saved(self):
         with patch("builtins.open", mock_open(read_data="{}")), \
-                patch.object(web.energy, "_write_json_file") as write:
+                patch.object(web.energy, "update_settings") as write:
             response = web.app.test_client().post(
                 "/api/settings/config", json={"monthly_fixed_charge": -1},
             )

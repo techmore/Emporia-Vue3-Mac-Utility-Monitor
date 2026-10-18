@@ -10,7 +10,7 @@ class RuntimeGitignoreTests(unittest.TestCase):
     def test_private_runtime_is_excluded_but_deployment_sources_are_not(self):
         root = Path(__file__).resolve().parents[1]
         private = [
-            "keys.json", "settings.json", "poller_status.json", "collector.env",
+            "keys.json", "settings.json", ".settings.json.lock", "poller_status.json", "collector.env",
             "ecosense-private.json", "ecosense-status.json", "ecosense-device-snapshot.json",
             "mitsubishi-private.json", "energy.db", "cache.db", "cache.db-wal",
             "cache.db-shm", "cache.db-journal", "backups/history.db",

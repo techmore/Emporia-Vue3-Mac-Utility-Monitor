@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.58 - 2026-10-18
+
+- Normalize declared CSV source zones to the collector clock and reject ambiguous local keys.
+- Serialize settings updates across web requests and Aqara token refreshes.
+- Isolate dropdown temperature trends from history-window caches and recover scoped offline history.
+
 ## 2.3.57 - 2026-10-18
 
 - Embed the saved house preview directly in the native Linux Temperature dropdown.

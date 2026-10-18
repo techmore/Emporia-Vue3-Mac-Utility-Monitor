@@ -76,3 +76,6 @@ data-export-*/
 node_modules/
 house-control.json
 house-control.lock
+
+# Stable cross-process settings update lock
+.settings.json.lock

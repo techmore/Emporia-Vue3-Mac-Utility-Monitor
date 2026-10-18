@@ -69,3 +69,41 @@ class LinuxClientTests(unittest.TestCase):
                       {'version': '1', 'online': 'yes'}):
             with self.assertRaises(ValueError):
                 core.validate_summary(value)
+
+
+class TemperatureTrendCacheTests(unittest.TestCase):
+    def record(self):
+        return {'origin': 'https://example.org', 'source_id': 'collector-A', 'fetched_at': 100,
+                'data': {'window': '24h', 'seconds': 1800,
+                         'start': '2026-10-17T00:00:00+00:00', 'end': '2026-10-18T00:00:00+00:00',
+                         'times': ['2026-10-18T00:00:00+00:00'],
+                         'series': [{'source': 'aqara_local', 'sensor_id': 'a',
+                                     'name': 'Barn Master', 'values': [60.7]}]}}
+
+    def test_offline_migration_survives_interactive_window_overwrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            record = self.record()
+            legacy = Path(directory) / core.cache_key(record['origin'], '/api/house-control/temperatures?window=24h')
+            dedicated = Path(directory) / core.cache_key(record['origin'], core.TEMPERATURE_TREND_CACHE_KEY)
+            core.private_json(legacy, record)
+            self.assertEqual(core.load_temperature_trend_cache(directory, record['origin'], 'collector-A'), record)
+            self.assertEqual(core.read_json(dedicated), record)
+            window_record = dict(record)
+            window_record.pop('source_id')
+            core.private_json(legacy, window_record)
+            self.assertEqual(core.load_temperature_trend_cache(directory, record['origin'], 'collector-A'), record)
+            self.assertEqual(dedicated.stat().st_mode & 0o777, 0o600)
+
+    def test_unscoped_wrong_source_and_wrong_origin_are_never_restored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = self.record()
+            path = Path(directory) / core.cache_key(original['origin'], '/api/house-control/temperatures?window=24h')
+            for update in ({'source_id': None}, {'source_id': 'collector-B'},
+                           {'origin': 'https://other.example'}, {'fetched_at': 'invalid'},
+                           {'data': {}}, {'data': {**original['data'], 'window': '4h'}}):
+                core.private_json(path, {**original, **update})
+                self.assertIsNone(core.load_temperature_trend_cache(directory, original['origin'], 'collector-A'))
+            path.write_text('broken JSON')
+            self.assertIsNone(core.load_temperature_trend_cache(directory, original['origin'], 'collector-A'))
+            core.private_json(path, original)
+            self.assertIsNone(core.load_temperature_trend_cache(directory, original['origin'], None))

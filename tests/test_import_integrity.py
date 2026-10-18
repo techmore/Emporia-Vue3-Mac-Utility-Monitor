@@ -1,4 +1,6 @@
 import io
+import os
+import time
 import runpy
 import sqlite3
 import tempfile
@@ -35,6 +37,49 @@ class ImportIntegrityTests(unittest.TestCase):
                     for table in ('readings', 'latest_channel_snapshot', 'reading_changes', 'device_capabilities', 'migrations')}
         finally:
             conn.close()
+
+    def collector_zone(self, zone):
+        previous = os.environ.get('TZ')
+        def restore():
+            if previous is None:
+                os.environ.pop('TZ', None)
+            else:
+                os.environ['TZ'] = previous
+            time.tzset()
+        self.addCleanup(restore)
+        os.environ['TZ'] = zone
+        time.tzset()
+
+    def test_equivalent_source_zones_deduplicate_in_collector_local_clock(self):
+        self.collector_zone('America/New_York')
+        energy.import_emporia_csv(str(self.upload(1, stamp='10/18/2026 13:00:00')))
+        before = self.state()
+        result = energy.import_emporia_csv(str(self.upload(1, zone='UTC', stamp='10/18/2026 17:00:00')))
+        self.assertEqual((result['imported'], result['skipped']), (0, 1))
+        self.assertEqual(self.state()['readings'], before['readings'])
+        self.assertEqual(self.state()['latest_channel_snapshot'], before['latest_channel_snapshot'])
+        self.assertEqual(self.state()['readings'][0][1], '2026-10-18T13:00:00')
+
+    def test_conversion_crosses_midnight_and_respects_collector_timezone(self):
+        self.collector_zone('America/New_York')
+        energy.import_emporia_csv(str(self.upload(1, zone='UTC', stamp='10/18/2026 02:00:00')))
+        self.assertEqual(self.state()['readings'][0][1], '2026-10-17T22:00:00')
+
+    def test_unique_utc_instants_in_repeated_collector_hour_are_rejected(self):
+        self.collector_zone('America/New_York')
+        for hour in ('05', '06'):
+            result = energy.import_emporia_csv(str(self.upload(1, zone='UTC', stamp=f'11/01/2026 {hour}:30:00')))
+            self.assertEqual((result['imported'], result['ambiguous_timestamps']), (0, 1))
+        self.assertFalse(self.state()['readings'])
+
+    def test_utc_collector_converts_zoned_sources_and_preserves_unzoned_convention(self):
+        self.collector_zone('UTC')
+        energy.import_emporia_csv(str(self.upload(1, stamp='10/18/2026 13:00:00')))
+        duplicate = energy.import_emporia_csv(str(self.upload(1, zone='UTC', stamp='10/18/2026 17:00:00')))
+        self.assertEqual(duplicate['imported'], 0)
+        energy.import_emporia_csv(str(self.upload(2, zone=None, stamp='10/18/2026 13:00:00')))
+        self.assertEqual({row[1] for row in self.state()['readings']},
+                         {'2026-10-18T13:00:00', '2026-10-18T17:00:00'})
 
     def test_retired_heuristic_never_guesses_or_mutates_hourly_energy(self):
         path = self.upload(3)

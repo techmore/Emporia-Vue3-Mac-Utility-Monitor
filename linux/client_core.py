@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
+TEMPERATURE_TREND_CACHE_KEY = "native-temperature-trends-24h-v1"
+
 DEFAULT_ORIGIN = "https://energy.stoverparc.org"
 
 
@@ -47,6 +49,34 @@ def read_json(path):
 
 def cache_key(origin, endpoint):
     return hashlib.sha256((validate_origin(origin) + endpoint).encode()).hexdigest() + ".json"
+
+
+def load_temperature_trend_cache(directory, origin, source_id):
+    """Recover only source-scoped trends, migrating the old shared cache safely."""
+    if not source_id:
+        return None
+    target = Path(directory) / cache_key(origin, TEMPERATURE_TREND_CACHE_KEY)
+    legacy = Path(directory) / cache_key(origin, '/api/house-control/temperatures?window=24h')
+    for path in (target, legacy):
+        try:
+            record = read_json(path)
+            if (not isinstance(record, dict) or record.get('origin') != origin
+                    or record.get('source_id') != source_id):
+                continue
+            payload = validate_temperature_history(record['data'])
+            fetched = record.get('fetched_at')
+            if (payload['window'] != '24h' or type(fetched) not in (int, float)
+                    or not math.isfinite(fetched) or fetched <= 0):
+                continue
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if path == legacy:
+            try:
+                private_json(target, record)
+            except OSError:
+                pass  # The validated history can still be displayed from memory.
+        return record
+    return None
 
 
 def display_state(record, origin, connected=False, now=None):
