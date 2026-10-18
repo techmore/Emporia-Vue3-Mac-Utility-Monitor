@@ -32,15 +32,15 @@ export function stairTreads(stair, levels) {
   });
 }
 // Split room surfaces around the stairwell so the upper floor has a real opening.
-export function floorTiles(rect, stairs) {
+export function floorTiles(rect, stairs, cutouts=[]) {
   const [x,z,w,d]=rect;
-  const holes=stairs.flatMap(stair=>stair.path.slice(1).map((end,i)=>{
+  const holes=[...cutouts.map(([a,b,c,e])=>[Math.max(x,a),Math.max(z,b),Math.min(x+w,a+c),Math.min(z+d,b+e)]),...stairs.flatMap(stair=>stair.path.slice(1).map((end,i)=>{
     const start=stair.path[i],half=stair.width/2;
     return [Math.max(x,Math.min(start[0],end[0])-half),
       Math.max(z,Math.min(start[1],end[1])-half),
       Math.min(x+w,Math.max(start[0],end[0])+half),
       Math.min(z+d,Math.max(start[1],end[1])+half)];
-  })).filter(([a,b,c,e])=>a<c && b<e);
+  }))].filter(([a,b,c,e])=>a<c && b<e);
   const xs=[...new Set([x,x+w,...holes.flatMap(h=>[h[0],h[2]])])].sort((a,b)=>a-b);
   const zs=[...new Set([z,z+d,...holes.flatMap(h=>[h[1],h[3]])])].sort((a,b)=>a-b);
   const tiles=[];

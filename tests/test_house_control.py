@@ -85,6 +85,47 @@ class HouseControlTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(result))
         self.assertEqual(len(result['rooms']), 4)
 
+    def test_attic_hatch_and_pole_mount_survive_private_save(self):
+        self.seed_sensors()
+        payload = self.payload()
+        payload['plan']['levels'] = [{'id': 'first', 'name': 'First floor', 'elevation': 0},
+                                     {'id': 'attic', 'name': 'Attic', 'elevation': 5.8}]
+        payload['plan']['rooms'][0]['level'] = 'attic'
+        payload['plan']['accesses'] = [{'id': 'hatch', 'name': 'Hallway access', 'level': 'first',
+                                       'toLevel': 'attic', 'rect': [1, 1, .75, .75]}]
+        placement = {**self.placement(), 'height': .1, 'mount': 'pole-base'}
+        payload['sensors'] = [placement]
+        saved = house_control.save_config(payload)
+        self.assertEqual(saved['sensors'], [placement])
+        self.assertEqual(saved['plan']['accesses'], payload['plan']['accesses'])
+
+    def test_temperature_history_preserves_gaps_zero_and_sensor_sources(self):
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        rows = [{'source': source, 'sensor_id': 'one', 'name': source, 'stale': False,
+                 'metrics': {'temperature_f': 32}, 'placement': None}
+                for source in ('aqara_local', 'climate:manual')]
+        conn = energy._connect()
+        with conn:
+            for age, temperature, online in ((10, 0, 1), (20, 30, 0)):
+                conn.execute('INSERT INTO aqara_local_observations '
+                    '(device_id,timestamp,name,temperature,online,source) VALUES(?,?,?,?,?,?)',
+                    ('one', (now-timedelta(minutes=age)).isoformat(), 'Aqara', temperature, online, 'matter_snapshot'))
+        conn.close()
+        with patch.object(house_control, 'sensor_catalog', return_value=rows):
+            response = self.client.get('/api/house-control/temperatures',
+                query_string={'window': '4h', 'end': now.isoformat()})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        data = response.json
+        self.assertLessEqual(len(data['times']), 121)
+        local, manual = data['series']
+        self.assertEqual([value for value in local['values'] if value is not None], [32])
+        self.assertTrue(any(value is None for value in local['values']))
+        self.assertTrue(all(value is None for value in manual['values']))
+        for query in ({'window': 'all'}, {'end': 'not-a-time'}, {'end': '2026-01-01T00:00:00'},
+                      {'end': (now+timedelta(days=1)).isoformat()}):
+            self.assertEqual(self.client.get('/api/house-control/temperatures', query_string=query).status_code, 400)
+
     def test_stacked_levels_round_trip_without_moving_sensor_or_circuit_identities(self):
         self.seed_sensors()
         payload = self.payload([self.binding()])

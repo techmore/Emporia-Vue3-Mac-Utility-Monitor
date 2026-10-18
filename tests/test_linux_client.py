@@ -10,6 +10,27 @@ spec.loader.exec_module(core)
 
 
 class LinuxClientTests(unittest.TestCase):
+    def test_temperature_bands_and_cached_readings_never_look_live(self):
+        self.assertEqual([core.temperature_band(v) for v in (0, 69.9, 70, 75, 75.1, 77.9, 78, 90)],
+                         ['cold', 'cold', 'comfortable', 'comfortable', 'warm', 'warm', 'hot', 'hot'])
+        self.assertIsNone(core.temperature_band(True))
+        record = {'origin': 'https://example.org', 'fetched_at': 100,
+                  'data': {'online': True, 'temperature_sensors': [{'stale': False, 'metrics': {'temperature_f': 72}}]}}
+        cached = core.display_state(record, record['origin'], False, 101)
+        self.assertTrue(cached['temperature_sensors'][0]['stale'])
+        self.assertEqual(cached['temperature_sensors'][0]['metrics']['temperature_f'], 72)
+        self.assertFalse(record['data']['temperature_sensors'][0]['stale'])
+
+    def test_temperature_history_axis_and_values_are_bounded(self):
+        payload = {'window': '4h', 'seconds': 300, 'start': '2026-10-18T00:00:00+00:00',
+                   'end': '2026-10-18T00:05:00+00:00',
+                   'times': ['2026-10-18T00:00:00+00:00', '2026-10-18T00:05:00+00:00'],
+                   'series': [{'source': 'aqara_local', 'sensor_id': 'a', 'name': 'Attic', 'values': [0, None]}]}
+        self.assertEqual(core.validate_temperature_history(payload), payload)
+        for values in ([False, None], [float('nan'), None], [10]):
+            bad = {**payload, 'series': [{**payload['series'][0], 'values': values}]}
+            with self.assertRaises(ValueError):
+                core.validate_temperature_history(bad)
     def test_origin_rejects_credentials_and_remote_plaintext(self):
         for value in ('http://192.168.1.2:5051', 'https://user:pass@example.org',
                       'https://example.org/settings', 'https://example.org?token=x',

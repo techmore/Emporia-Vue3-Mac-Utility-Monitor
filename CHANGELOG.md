@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.56 - 2026-10-18
+
+- Add room temperature hues and recorded-history timeline with missing-data gaps.
+- Add native temperature dropdown cards and a scrollable historical temperature window.
+- Support attic service access hatches and sensors mounted at the base of a pole.
+- Keep cached/stale temperatures distinct from current observations and preserve mappings.
+
 ## 2.3.55 - 2026-10-18
 
 - Stack floor levels at their saved elevations and switch between First floor,

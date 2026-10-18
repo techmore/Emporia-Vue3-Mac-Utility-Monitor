@@ -3,6 +3,18 @@ import './test_mains_chart.mjs';
 import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, clampSensor, relocateSensors, furnitureDimensions } from '../frontend/house-control/src/plan-edit.js';
 import { sensorKey, sensorReading } from '../frontend/house-control/src/sensors.js';
 import { levelsFor, planForLevel, visibleRoomIds, stairTreads, floorTiles } from '../frontend/house-control/src/levels.js';
+import {temperatureBand,roomTemperatures,historicalSensors} from '../frontend/house-control/src/temperatures.js';
+assert.deepEqual([69.9,70,75,75.1,77.9,78,null].map(temperatureBand),['cold','comfortable','comfortable','warm','warm','hot',null]);
+const temperatures=roomTemperatures([{id:'a'},{id:'unknown'}],[
+  {placement:{room_id:'a'},stale:false,metrics:{temperature_f:70}},
+  {placement:{room_id:'a'},stale:false,metrics:{temperature_f:74}},
+  {placement:{room_id:'a'},stale:true,metrics:{temperature_f:100}}]);
+assert.equal(temperatures[0].temperature_f,72);assert.equal(temperatures[1].temperature_f,null);
+assert.equal(historicalSensors({times:['a','b'],series:[{values:[0,null]}]},0)[0].metrics.temperature_f,0);
+assert.equal(historicalSensors({times:['a','b'],series:[{values:[0,null]}]},1)[0].stale,true);
+const hatchTiles=floorTiles([0,0,10,10],[],[[4,4,1,1]]);
+assert.equal(hatchTiles.reduce((sum,[,,w,d])=>sum+w*d,0),99);
+console.log('Temperature thresholds, stale/missing rooms, historical gaps and attic hatch opening passed');
 const stacked={levels:[{id:'first',name:'First floor',elevation:0},{id:'upstairs',name:'Upstairs',elevation:2.9}],
   rooms:[{id:'lower',rect:[0,0,10,9]},{id:'upper',level:'upstairs',rect:[0,0,10,9]}],
   furniture:[{type:'sofa',pos:[1,1],level:'upstairs'}],

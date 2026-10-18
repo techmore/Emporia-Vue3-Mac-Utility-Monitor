@@ -5,12 +5,18 @@
   <section class="card home3d-setup" id="home3d-mains-history" hidden aria-label="24-hour mains history"></section>
   <div class="home3d-toolbar" id="home3d-floor-plan">
     <label>Floor <select id="home3d-level" aria-label="Floor"><option value="first">First floor</option></select></label>
-    <label>Room overlay <select id="home3d-metric"><option value="watts">Estimated power now</option><option value="kwh_24h">Recorded energy · 24h</option><option value="cost_24h">Recorded usage cost · 24h</option></select></label>
+    <label>Room overlay <select id="home3d-metric"><option value="watts">Estimated power now</option><option value="temperature_f">Temperature · °F</option><option value="kwh_24h">Recorded energy · 24h</option><option value="cost_24h">Recorded usage cost · 24h</option></select></label>
     <button id="home3d-reset" type="button">Reset view</button><button id="home3d-refresh" type="button">Refresh</button><button id="home3d-reload" type="button">Reload saved plan</button>
   </div>
+  <section class="card home3d-setup" id="home3d-temperature-controls" hidden aria-label="Temperature history">
+    <div class="home3d-toolbar"><label>History window <select id="home3d-temperature-window"><option value="4h">4 hours</option><option value="24h" selected>24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option></select></label><button id="home3d-temperature-older" type="button">← Older</button><button id="home3d-temperature-newer" type="button">Newer →</button><button id="home3d-temperature-live" type="button">Live temperatures</button></div>
+    <label>Look back <input type="range" id="home3d-temperature-time" min="0" max="0" value="0" step="1" disabled></label>
+    <p id="home3d-temperature-time-label" role="status">Live temperatures</p>
+    <div class="home3d-temperature-legend"><span data-band="cold">Below 70°F · blue</span><span data-band="comfortable">70–75°F · yellow</span><span data-band="warm">Above 75–below 78°F · amber</span><span data-band="hot">78°F and up · red</span><span>Unknown or stale · neutral</span></div>
+  </section>
   <div class="home3d-layout">
     <section class="card home3d-stage" aria-label="Interactive floor plan"><canvas id="home3d-canvas" aria-label="3D floor plan. Drag to rotate; scroll or pinch to zoom."></canvas><div id="home3d-labels" aria-hidden="true"></div><p id="home3d-render-error" hidden></p></section>
-    <section class="card home3d-rooms" aria-label="Room energy summaries"><h2>Mapped circuit totals</h2><p>Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.</p><p id="home3d-recording-basis" class="muted"></p>
+    <section class="card home3d-rooms" aria-label="Room summaries"><h2 id="home3d-room-title">Mapped circuit totals</h2><p id="home3d-room-description">Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.</p><p id="home3d-recording-basis" class="muted"></p>
 <div id="home3d-rooms"></div></section>
   </div>
   <p class="home3d-caption">Room positions come from your plan. No circuits are assigned automatically. Missing readings remain unknown. Usage cost excludes the monthly fixed charge.</p>

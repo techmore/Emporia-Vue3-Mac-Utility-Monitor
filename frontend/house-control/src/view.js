@@ -6,11 +6,12 @@ import { buildHouse } from '../vendor/three/house.js';
 import { buildFurniture } from '../vendor/three/furniture.js';
 import { sensorKey, sensorReading } from './sensors.js';
 import { levelsFor, itemLevel, planForLevel, stairTreads, floorTiles } from './levels.js';
+import { temperatureBand } from './temperatures.js';
 
 export function createView(canvas, labelContainer, plan, onPick) {
   const levels = levelsFor(plan);
   const config = normalize(plan);
-  const css = getComputedStyle(document.documentElement);
+  const css = getComputedStyle(canvas);
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -28,9 +29,10 @@ export function createView(canvas, labelContainer, plan, onPick) {
       plinth.geometry.dispose();plinth.material.dispose();
     }
     const openings=(plan.stairs || []).filter(stair=>stair.toLevel===level.id);
-    if(openings.length)for(const floor of house.floors){
+    const cutouts=(plan.accesses || []).filter(access=>access.toLevel===level.id).map(access=>access.rect);
+    if(openings.length || cutouts.length)for(const floor of house.floors){
       const room=raw.rooms.find(room=>room.id===floor.userData.id);
-      const pieces=floorTiles(room.rect,openings).map(([x,z,w,d])=>{
+      const pieces=floorTiles(room.rect,openings,cutouts).map(([x,z,w,d])=>{
         const geometry=new THREE.PlaneGeometry(w,d);geometry.rotateX(-Math.PI/2);
         geometry.translate(x+w/2,0,z+d/2);
         const pos=geometry.attributes.position,uv=geometry.attributes.uv;
@@ -55,6 +57,16 @@ export function createView(canvas, labelContainer, plan, onPick) {
     scene.add(group);return {stair,group};
   });
   const house={floors:models.flatMap(model=>model.floors)};
+  const accesses=(plan.accesses || []).map(access=>{
+    const group=new THREE.Group(),[x,z,w,d]=access.rect;
+    const elevation=levels.find(level=>level.id===access.toLevel).elevation;
+    const material=new THREE.MeshStandardMaterial({color:css.getPropertyValue('--olive-600').trim()});
+    for(const [px,pz,pw,pd] of [[x+w/2,z,w,.06],[x+w/2,z+d,w,.06],[x,z+d/2,.06,d],[x+w,z+d/2,.06,d]]){
+      const frame=new THREE.Mesh(new THREE.BoxGeometry(pw,.06,pd),material);
+      frame.position.set(px,elevation+.03,pz);group.add(frame);
+    }
+    scene.add(group);return {access,group,elevation};
+  });
   scene.add(new THREE.HemisphereLight(0xffffff, 0x555544, 2.3));
   const sun = new THREE.DirectionalLight(0xffffff, 2);
   sun.position.set(8, 18, 10);
@@ -90,17 +102,23 @@ export function createView(canvas, labelContainer, plan, onPick) {
   });
   const floors = new Map(house.floors.map(floor => {
     floor.material = floor.material.clone();
+    floor.userData.baseColor=floor.material.color.clone();
     return [floor.userData.id, floor];
   }));
   const sensorLabels=new Map();
+  const poles=new Map();
+  const accessLabels=accesses.map(({access,elevation})=>{
+    const node=document.createElement('span');node.className='home3d-label';node.textContent=access.name;labelContainer.append(node);
+    return {node,levels:[access.level,access.toLevel],point:new THREE.Vector3(access.rect[0]+access.rect[2]/2,elevation+.1,access.rect[1]+access.rect[3]/2)};
+  });
   let disposed = false, selectedLevel='all';
   function render() {
     if (disposed || document.hidden) return;
     renderer.render(scene, camera);
     const rect = canvas.getBoundingClientRect();
-    for (const label of [...labels,...levelLabels,...sensorLabels.values()]) {
+    for (const label of [...labels,...levelLabels,...accessLabels,...sensorLabels.values()]) {
       const point = label.point.clone().project(camera);
-      label.node.hidden = (label.onlyAll ? selectedLevel!=='all' :
+      label.node.hidden = (label.levels ? selectedLevel!=='all' && !label.levels.includes(selectedLevel) : label.onlyAll ? selectedLevel!=='all' :
         labels.includes(label) && selectedLevel==='all' || selectedLevel!=='all' && label.level!==selectedLevel)
         || point.z < -1 || point.z > 1;
       label.node.style.left = `${(point.x + 1) * rect.width / 2}px`;
@@ -151,6 +169,7 @@ export function createView(canvas, labelContainer, plan, onPick) {
       selectedLevel=id;
       for(const model of models)model.group.visible=id==='all' || model.level.id===id;
       for(const flight of flights)flight.group.visible=id==='all' || flight.stair.level===id || flight.stair.toLevel===id;
+      for(const {access,group} of accesses)group.visible=id==='all' || access.level===id || access.toLevel===id;
       bounds.makeEmpty();
       for(const model of models.filter(model=>model.group.visible))bounds.union(new THREE.Box3().setFromObject(model.group));
       if(!bounds.isEmpty()){bounds.getBoundingSphere(sphere);center.copy(sphere.center);}
@@ -159,6 +178,7 @@ export function createView(canvas, labelContainer, plan, onPick) {
     update(rooms, metric, format, sensors=[]) {
       const placed=sensors.filter(row=>row.placement);
       const keys=new Set(placed.map(sensorKey));
+      for(const [key,pole] of poles)if(!keys.has(key)){pole.removeFromParent();pole.geometry.dispose();pole.material.dispose();poles.delete(key);}
       for(const [key,label] of sensorLabels){if(!keys.has(key)){label.node.remove();sensorLabels.delete(key);}}
       for(const row of placed){
         const key=sensorKey(row);
@@ -170,10 +190,15 @@ export function createView(canvas, labelContainer, plan, onPick) {
         const room=plan.rooms.find(room=>room.id===row.placement.room_id);
         label.level=room ? itemLevel(room,plan) : null;
         const elevation=levels.find(level=>level.id===label.level)?.elevation || 0;
-        label.point.set(row.placement.position[0],elevation+.65,row.placement.position[1]);
+        label.point.set(row.placement.position[0],elevation+(row.placement.height ?? .65),row.placement.position[1]);
+        if(row.placement.mount==='pole-base'){
+          if(!poles.has(key))poles.set(key,new THREE.Mesh(new THREE.CylinderGeometry(.035,.035,plan.wallHeight,8),new THREE.MeshStandardMaterial({color:css.getPropertyValue('--text-light').trim()})));
+          const pole=poles.get(key);models.find(model=>model.level.id===label.level)?.group.add(pole);
+          pole.position.set(row.placement.position[0],plan.wallHeight/2,row.placement.position[1]);
+        }else if(poles.has(key)){const pole=poles.get(key);pole.removeFromParent();pole.geometry.dispose();pole.material.dispose();poles.delete(key);}
         label.node.dataset.sensorSource=row.source;
         label.node.classList.toggle('stale',row.stale);
-        label.node.textContent=`${row.name} · ${sensorReading(row)}${row.stale?' · stale':''}`;
+        label.node.textContent=`${row.name} · ${sensorReading(row)}${row.placement.mount==='pole-base'?' · pole base':''}${row.stale?' · stale':''}`;
       }
       const maximum = Math.max(1, ...rooms.map(room => Math.max(0, room[metric] ?? 0)));
       for (const label of labels) {
@@ -181,6 +206,14 @@ export function createView(canvas, labelContainer, plan, onPick) {
         if (!room) continue;
         label.node.textContent = `${room.name} · ${format(room[metric], metric)}`;
         const material = floors.get(label.id).material;
+        material.color.copy(floors.get(label.id).userData.baseColor);
+        if(metric==='temperature_f'){
+          const band=temperatureBand(room.temperature_f);
+          const color=band?css.getPropertyValue(`--temperature-${band}`).trim():css.getPropertyValue('--text-light').trim();
+          material.emissive.set(color);material.emissiveIntensity=band ? .55 : 0;
+          if(band)material.color.set(color);
+          continue;
+        }
         material.emissive.set(css.getPropertyValue('--olive-600').trim());
         material.emissiveIntensity = room[metric] == null ? 0 : 0.12 + 0.5 * Math.max(0, room[metric]) / maximum;
       }
