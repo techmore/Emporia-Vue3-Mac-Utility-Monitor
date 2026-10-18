@@ -78,3 +78,11 @@ gateway with a separate origin-bound device credential and automatic cookie
 renewal. It starts at graphical login through an enabled systemd user service
 with crash restart and network retry. Cold-session reauthentication is verified;
 full machine reboot remains untested. SSH/Tailscale are not runtime dependencies.
+
+## Recording audit follow-up — 2026-10-18
+
+Matter boot readiness and event attribution are fixed; the regular Home 3D route
+now includes measured mains intervals and explicit coverage. Remaining: continuous
+source-interval collection for individual circuits, physical sensor report-time
+provenance, full reboot verification and reviewed deployment of the 3D release.
+Do not fabricate the October 15–18 sensor outage or rescale legacy poll sums.

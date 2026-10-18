@@ -1,5 +1,105 @@
 # Changelog
 
+## 2.3.54 - 2026-10-15
+
+- Add a preview-only 24-hour measured mains power chart: separate olive Total,
+  blue Leg A and rust Leg B lines, with distinct line patterns and null gaps.
+- Read exactly 1440 UTC minute intervals for the active panel, preserving recorded
+  zero/negative values and never interpolating or summing Main with its own legs.
+- Add accessible local-time minute inspection, responsive in-card scrolling,
+  empty/error states and retained historical display during disconnection.
+- Test chart segmentation, missing/zero values, bounds, panel isolation and DST;
+  no new dependencies or changes to the deployed production instance.
+
+## 2.3.53 - 2026-10-15
+
+- Share bounded actual mains chart collection between the branch poller and local
+  preview; backfill up to 24 hours and overlap incremental/recovery requests.
+- Store explicit UTC minute intervals idempotently with original usage rates,
+  independently of legacy CSV/history compaction and without double-counting Main.
+- Show real rolling phase energy/cost totals with observed-minute coverage and
+  explicit partial-history labels. Never invent data for missing/null intervals.
+- Keep preview writes local and production read-only; handle phase failures without
+  rolling back branch readings. Accept current and legacy PyEmVue token-file keys.
+
+## 2.3.52 - 2026-10-15
+
+- Make the isolated preview navigation badge follow the live SER8 feed instead of
+  the copied local history's age. Browser fetch failures also clear feed connectivity.
+  Normal production navigation and collection are unchanged.
+- Include the preview mains reader in source release archives; release validation
+  rejects bundles missing the new module.
+
+## 2.3.51 - 2026-10-15
+
+- Diagnose stale mains legs: usage-list APIs omit individual phase channels, leaving
+  CSV-imported readings untouched while aggregate Main continues updating.
+- Add an opt-in, read-only phase-chart supplement to the isolated preview using
+  the existing remote virtualenv; credentials stay on SER8 with no token-file writes.
+- Display actual timestamped Main/Leg A/B one-minute averages, respect no-data C,
+  throttle requests, and reject stale/malformed/cross-panel responses. No fabricated
+  splits or rolling leg totals; production and local floor plans stay unchanged.
+
+## 2.3.50 - 2026-10-15
+
+- Refresh live circuits, service mains and rolling 24-hour energy/cost aggregates
+  from the same read-only SER8 database transaction as environmental sensors.
+- Project source-panel readings onto local rooms without importing remote floor
+  plans, settings or placements. Display measured mains legs separately from Total.
+- Require fresh source heartbeat, measurement age and transport for live watt
+  estimates; stale/missing readings stay unknown and recorded zero stays zero.
+- Support alternate SSH addresses with the existing verified host-key alias;
+  no production deployment, new production service or authentication change.
+
+## 2.3.49 - 2026-10-15
+
+- Add an opt-in local Home 3D preview runner with read-only SER8 sensor refresh
+  every 30 seconds, isolated from production deployment and device controls.
+- Preserve local floor plans and placements; atomically replace only observation
+  caches, retain measurement times, and mark transport failures/stopped feeds stale.
+- Require an explicit preview marker and DB path; use noninteractive verified SSH
+  and read-only SQLite on SER8. Reconnect automatically after transient failures.
+
+## 2.3.48 - 2026-10-15
+
+- Match furniture dimension controls to the pinned renderer's supported fields
+  and defaults; remove misleading controls that could not affect the 3D model.
+
+## 2.3.47 - 2026-10-15
+
+- Allow Home 3D selectors to shrink within their labels, fixing horizontal
+  overflow when the visual editor is expanded on narrow mobile screens.
+
+## 2.3.46 - 2026-10-15
+
+- Place recorded Aqara, climate and EcoQube sensors in the visual floor plan;
+  drag markers, change room/coordinates, undo/redo, and save privately. Room moves
+  carry sensors with them; resizing keeps placements inside the room.
+- Show sensor markers in 3D and accessible observation cards with Fahrenheit,
+  humidity, radon and battery values. Preserve zeros and mark stale/missing data.
+- Validate namespaced sensor identities and in-room coordinates. Older mapping
+  clients preserve placements; disappeared sensors remain removable. No device
+  discovery, new collectors or device-control commands are introduced.
+
+## 2.3.45 - 2026-10-15
+
+- Add a browser floor-plan editor with room drawing, snapped dragging, resizing,
+  furniture/opening placement, keyboard fields, and undo/redo. Saved geometry
+  updates the 3D view; drafts warn before navigation and remain local until saved.
+- Preserve circuit mappings for retained room IDs; confirm room deletion and
+  remove only mappings to deleted rooms on save. Revision checks still protect
+  concurrent edits.
+
+## 2.3.44 - 2026-10-15
+
+- Add a Home 3D preview using pinned MIT-licensed house-control floor-plan and
+  furniture renderers, bundled locally with Three.js for Mac/Linux browsers.
+- Import/export geometry and persist explicit panel/circuit-to-room mappings.
+  Show existing power estimates and recorded 24-hour usage/cost without splitting
+  shared circuits, double-counting two-pole slots, or showing missing data as zero.
+- Keep mappings private, bound imports, and reject stale concurrent saves.
+  No additional collectors, vendor logins, device commands, or AI gateways start.
+
 ## 2.3.43 - 2026-10-12
 
 - Add opt-in trusted-proxy support for one explicitly configured HTTPS public

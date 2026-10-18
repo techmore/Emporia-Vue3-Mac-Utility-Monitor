@@ -49,6 +49,8 @@ def home_assistant_observations(states: list[dict], entity_ids: list[str]) -> li
             if not math.isfinite(value) or not -80 <= value <= 80:
                 continue
             timestamp = state['last_updated']
+            if not isinstance(timestamp, str):
+                continue
             stamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
             now = datetime.now(timezone.utc)
             if stamp.tzinfo is None or not 0 <= (now-stamp).total_seconds() <= climate.energy.DB_RETENTION_DAYS*86400:

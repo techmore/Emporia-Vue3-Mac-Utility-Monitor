@@ -10,7 +10,7 @@ import stat
 import tempfile
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -350,6 +350,16 @@ def ensure_table():
             ON readings(timestamp);
         CREATE INDEX IF NOT EXISTS idx_channel_name
             ON readings(channel_name);
+        CREATE TABLE IF NOT EXISTS mains_intervals (
+            device_gid TEXT NOT NULL,
+            channel_name TEXT NOT NULL CHECK(channel_name IN ('Main','Mains_A','Mains_B','Mains_C')),
+            timestamp TEXT NOT NULL,
+            interval_seconds INTEGER NOT NULL DEFAULT 60 CHECK(interval_seconds=60),
+            usage_kwh REAL NOT NULL,
+            rate_cents REAL NOT NULL,
+            collected_at TEXT NOT NULL,
+            PRIMARY KEY(device_gid,channel_name,timestamp)
+        );
         -- Superseded: idx_device_timestamp is a prefix of the unique index below and
         -- idx_device_channel (device, channel_num) is never filtered on.
         DROP INDEX IF EXISTS idx_device_timestamp;
@@ -1127,6 +1137,114 @@ def _load_settings() -> dict:
         return {}
 
 
+def store_mains_intervals(device_gid: str, rows: list[dict], rate_cents: float) -> int:
+    """Upsert real UTC minute intervals; never mix them into ambiguous legacy buckets."""
+    from emporia_mains import CHANNELS, utc
+    if not str(device_gid).isdigit() or type(rate_cents) not in (int, float) or not (
+            math.isfinite(rate_cents) and 0 <= rate_cents <= 10000):
+        raise ValueError('Invalid mains panel/rate')
+    if not isinstance(rows, list) or len(rows) > 5760:
+        raise ValueError('Invalid mains history size')
+    clean, seen = [], set()
+    collected = datetime.now(timezone.utc)
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {'channel_name', 'timestamp', 'usage_kwh'}:
+            raise ValueError('Invalid mains interval schema')
+        stamp = utc(row['timestamp'])
+        value, name = row['usage_kwh'], row['channel_name']
+        key = (name, stamp.isoformat())
+        if (name not in CHANNELS or key in seen or stamp.second or stamp.microsecond
+                or stamp + timedelta(seconds=60) > collected
+                or type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e6):
+            raise ValueError('Invalid/duplicate/incomplete mains interval')
+        seen.add(key)
+        clean.append((str(device_gid), name, stamp.isoformat(), value, rate_cents, collected.isoformat()))
+    conn = _connect()
+    try:
+        with conn:
+            conn.executemany('''INSERT INTO mains_intervals
+                (device_gid,channel_name,timestamp,usage_kwh,rate_cents,collected_at)
+                VALUES(?,?,?,?,?,?) ON CONFLICT(device_gid,channel_name,timestamp) DO UPDATE SET
+                usage_kwh=excluded.usage_kwh,collected_at=excluded.collected_at''', clean)
+            latest = {}
+            for gid, name, stamp, value, rate, _ in clean:
+                if name != 'Main' and (name not in latest or stamp > latest[name][2]):
+                    latest[name] = (gid, name, stamp, value, rate)
+            for gid, name, stamp, value, rate in latest.values():
+                _upsert_latest_snapshot_with_conn(conn, device_gid=gid, channel_name=name,
+                    channel_num=None, usage_kwh=value, cost_cents=value * rate, timestamp=stamp)
+            conn.execute('DELETE FROM mains_intervals WHERE timestamp<?',
+                         ((collected - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
+    finally:
+        conn.close()
+    return len(clean)
+
+
+def mains_history_start(device_gid: str, end: datetime) -> datetime:
+    """First read backfills 24h; later reads overlap five minutes and recover outages."""
+    conn = _connect()
+    try:
+        row = conn.execute('''SELECT MIN(last_stamp) AS stamp FROM
+            (SELECT MAX(timestamp) AS last_stamp FROM mains_intervals
+             WHERE device_gid=? GROUP BY channel_name)''', (str(device_gid),)).fetchone()
+    finally:
+        conn.close()
+    earliest = end - timedelta(minutes=1439)
+    if not row or not row['stamp']:
+        return earliest
+    from emporia_mains import utc
+    return min(end, max(earliest, utc(row['stamp']) - timedelta(minutes=4)))
+
+
+def get_mains_history(device_gid: str, now: datetime | None = None) -> dict:
+    """Recorded rolling-24h energy/cost with explicit observed-minute coverage."""
+    end = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(second=0, microsecond=0)
+    start = end - timedelta(hours=24)
+    conn = _connect()
+    try:
+        rows = conn.execute('''SELECT channel_name,SUM(usage_kwh) AS kwh_24h,
+            SUM(usage_kwh*rate_cents)/100 AS cost_24h,COUNT(*) AS observed_minutes,
+            MIN(timestamp) AS first_interval,MAX(timestamp) AS last_interval
+            FROM mains_intervals WHERE device_gid=? AND timestamp>=? AND timestamp<?
+            GROUP BY channel_name''', (str(device_gid), start.isoformat(), end.isoformat())).fetchall()
+    finally:
+        conn.close()
+    return {row['channel_name']: dict(dict(row), expected_minutes=1440,
+            complete=row['observed_minutes'] == 1440,
+            window_start=start.isoformat(), window_end=end.isoformat()) for row in rows}
+
+
+def get_mains_history_chart(device_gid: str, now: datetime | None = None) -> dict:
+    """1440 UTC minute buckets of measured average watts, with explicit null gaps."""
+    end = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(second=0, microsecond=0)
+    start = end - timedelta(hours=24)
+    names = (('Main', 'Total'), ('Mains_A', 'Leg A'), ('Mains_B', 'Leg B'))
+    values = {name: [None] * 1440 for name, _ in names}
+    conn = _connect()
+    try:
+        rows = conn.execute('''SELECT channel_name,timestamp,usage_kwh FROM mains_intervals
+            WHERE device_gid=? AND channel_name IN ('Main','Mains_A','Mains_B')
+            AND timestamp>=? AND timestamp<? ORDER BY timestamp''',
+            (str(device_gid), start.isoformat(), end.isoformat())).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        stamp = datetime.fromisoformat(row['timestamp'])
+        index = int((stamp - start).total_seconds() / 60)
+        values[row['channel_name']][index] = row['usage_kwh'] * 60000
+    return {'start': start.isoformat(), 'end': end.isoformat(), 'interval_seconds': 60,
+            'series': [{'channel_name': name, 'name': label, 'values': values[name]}
+                       for name, label in names]}
+
+
+def collect_mains_history(vue, device_gid: str) -> dict:
+    from emporia_mains import collect
+    end = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+    snapshot = collect(vue, str(device_gid), mains_history_start(str(device_gid), end), end)
+    store_mains_intervals(str(device_gid), snapshot['intervals'], RATE_CENTS)
+    return snapshot
+
+
 def login_vue():
     vue = pyemvue.PyEmVue()
     token_file = "keys.json"
@@ -1141,9 +1259,9 @@ def login_vue():
             data = json.load(f)
             logger.info("Using existing tokens from keys.json")
             vue.login(
-                id_token=data.get("idToken"),
-                access_token=data.get("accessToken"),
-                refresh_token=data.get("refreshToken"),
+                id_token=data.get("id_token") or data.get("idToken"),
+                access_token=data.get("access_token") or data.get("accessToken"),
+                refresh_token=data.get("refresh_token") or data.get("refreshToken"),
                 token_storage_file=token_file,
             )
     else:
@@ -1193,94 +1311,116 @@ def poll_and_store(vue, device_gids):
     global RATE_CENTS
     RATE_CENTS = _read_rate_cents()
     conn = _connect()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    usage_dict = None
-    for attempt in range(1, 4):
-        try:
-            usage_dict = vue.get_device_list_usage(
-                deviceGids=device_gids,
-                instant=None,
-                scale=Scale.MINUTE.value,
-                unit=Unit.KWH.value,
-            )
-            break
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
-            if attempt == 3:
-                conn.close()
-                raise
-            logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
-            time.sleep(2 * attempt)
+        usage_dict = None
+        for attempt in range(1, 4):
+            try:
+                usage_dict = vue.get_device_list_usage(
+                    deviceGids=device_gids,
+                    instant=None,
+                    scale=Scale.MINUTE.value,
+                    unit=Unit.KWH.value,
+                )
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                if attempt == 3:
+                    conn.close()
+                    raise
+                logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
+                time.sleep(2 * attempt)
 
-    now = datetime.now().isoformat()
+        # Validate the complete response before mutating any channel history.
+        for device in usage_dict.values():
+            for channel in device.channels.values():
+                value = channel.usage
+                if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+                    conn.close()
+                    raise ValueError("Emporia returned invalid channel energy")
 
-    for gid, device in usage_dict.items():
-        capability = {
-            "has_main": False,
-            "has_mains_a": False,
-            "has_mains_b": False,
-            "has_mains_c": False,
-        }
-        for channelnum, channel in device.channels.items():
-            if channel.usage is None:
-                continue
-            channel_name = _normalize_channel_name(channel.name)
-            if channel_name == "Main":
-                capability["has_main"] = True
-            elif channel_name == "Mains_A":
-                capability["has_mains_a"] = True
-            elif channel_name == "Mains_B":
-                capability["has_mains_b"] = True
-            elif channel_name == "Mains_C":
-                capability["has_mains_c"] = True
+        now = datetime.now().isoformat()
 
-            cost = channel.usage * RATE_CENTS
+        for gid, device in usage_dict.items():
+            capability = {
+                "has_main": False,
+                "has_mains_a": False,
+                "has_mains_b": False,
+                "has_mains_c": False,
+            }
+            for channelnum, channel in device.channels.items():
+                if channel.usage is None:
+                    continue
+                channel_name = _normalize_channel_name(channel.name)
+                if channel_name == "Main":
+                    capability["has_main"] = True
+                elif channel_name == "Mains_A":
+                    capability["has_mains_a"] = True
+                elif channel_name == "Mains_B":
+                    capability["has_mains_b"] = True
+                elif channel_name == "Mains_C":
+                    capability["has_mains_c"] = True
 
-            c.execute(
-                """INSERT INTO readings
-                   (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (now, gid, channelnum, channel_name, channel.usage, cost),
-            )
-            _upsert_latest_snapshot_with_conn(
+                cost = channel.usage * RATE_CENTS
+
+                c.execute(
+                    """INSERT INTO readings
+                       (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (now, gid, channelnum, channel_name, channel.usage, cost),
+                )
+                _upsert_latest_snapshot_with_conn(
+                    conn,
+                    device_gid=str(gid),
+                    channel_name=channel_name,
+                    channel_num=channelnum,
+                    usage_kwh=channel.usage,
+                    cost_cents=cost,
+                    timestamp=now,
+                )
+            _save_device_capabilities_with_conn(
                 conn,
                 device_gid=str(gid),
-                channel_name=channel_name,
-                channel_num=channelnum,
-                usage_kwh=channel.usage,
-                cost_cents=cost,
-                timestamp=now,
+                service_mode=_classify_service_mode(**capability),
+                has_main=capability["has_main"],
+                has_mains_a=capability["has_mains_a"],
+                has_mains_b=capability["has_mains_b"],
+                has_mains_c=capability["has_mains_c"],
+                mains_c_no_ct=False,
+                source="live_poll",
             )
-        _save_device_capabilities_with_conn(
-            conn,
-            device_gid=str(gid),
-            service_mode=_classify_service_mode(**capability),
-            has_main=capability["has_main"],
-            has_mains_a=capability["has_mains_a"],
-            has_mains_b=capability["has_mains_b"],
-            has_mains_c=capability["has_mains_c"],
-            mains_c_no_ct=False,
-            source="live_poll",
-        )
 
-    # Prune old rows to keep the database from growing unboundedly.
-    cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
-    c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
-    global _last_compaction
-    compacted = 0
-    if time.monotonic() - _last_compaction > 3600:
-        _last_compaction = time.monotonic()
-        compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+        # Prune old rows to keep the database from growing unboundedly.
+        cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
+        c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
+        global _last_compaction
+        compacted = 0
+        if time.monotonic() - _last_compaction > 3600:
+            _last_compaction = time.monotonic()
+            compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+            conn.commit()
+            for report in write_monthly_reports():
+                logger.info("Wrote monthly report %s", report)
+        if compacted:
+            logger.info("Compacted %s minute rows into hourly rows", compacted)
+
         conn.commit()
-        for report in write_monthly_reports():
-            logger.info("Wrote monthly report %s", report)
-    if compacted:
-        logger.info("Compacted %s minute rows into hourly rows", compacted)
+        conn.close()
+        if os.environ.get('EMPORIA_MAINS_HISTORY', '1') != '0':
+            for gid in usage_dict:
+                if str(gid) == _GHOST_DEVICE or not any(
+                        _normalize_channel_name(channel.name) == 'Main'
+                        for channel in usage_dict[gid].channels.values()):
+                    continue
+                try:
+                    collect_mains_history(vue, str(gid))
+                except Exception as exc:
+                    # Phase collection must not interrupt existing branch collection or leak auth errors.
+                    logger.warning('Mains history collection failed for %s: %s', gid, type(exc).__name__)
+        logger.info("[%s] Recorded readings", now)
 
-    conn.commit()
-    conn.close()
-    logger.info("[%s] Recorded readings", now)
-
+    finally:
+        conn.close()
 
 _last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
 

@@ -1,0 +1,31 @@
+<div class="page home3d">
+  <header class="home3d-head"><div><h1>Home 3D</h1><p id="home3d-name">Loading floor plan...</p></div><span class="home3d-badge">Preview · no device control</span></header>
+  <p id="home3d-status" role="status">Connecting to the collector...</p>
+  <section class="card home3d-setup" id="home3d-mains-section" hidden aria-label="Live service mains"><h2>Service mains</h2><p>Interval-derived power estimates from the collector. Total and individual measured legs are separate readings, never added together. Missing readings stay unknown.</p><div id="home3d-mains"></div></section>
+  <section class="card home3d-setup" id="home3d-mains-history" hidden aria-label="24-hour mains history"></section>
+  <div class="home3d-toolbar">
+    <label>Room overlay <select id="home3d-metric"><option value="watts">Estimated power now</option><option value="kwh_24h">Recorded energy · 24h</option><option value="cost_24h">Recorded usage cost · 24h</option></select></label>
+    <button id="home3d-reset" type="button">Reset view</button><button id="home3d-refresh" type="button">Refresh</button><button id="home3d-reload" type="button">Reload saved plan</button>
+  </div>
+  <div class="home3d-layout">
+    <section class="card home3d-stage" aria-label="Interactive floor plan"><canvas id="home3d-canvas" aria-label="3D floor plan. Drag to rotate; scroll or pinch to zoom."></canvas><div id="home3d-labels" aria-hidden="true"></div><p id="home3d-render-error" hidden></p></section>
+    <section class="card home3d-rooms" aria-label="Room energy summaries"><h2>Mapped circuit totals</h2><p>Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.</p><p id="home3d-recording-basis" class="muted"></p>
+<div id="home3d-rooms"></div></section>
+  </div>
+  <p class="home3d-caption">Room positions come from your plan. No circuits are assigned automatically. Missing readings remain unknown. Usage cost excludes the monthly fixed charge.</p>
+  <section class="card home3d-setup" aria-label="Recorded environmental sensors"><h2>Environmental sensors</h2><p>Recorded observations, not a device-control interface. Temperature defaults to Fahrenheit. Climate/Aqara data older than 3 minutes and radon data older than 3 hours are marked stale.</p><div id="home3d-sensors"></div></section>
+  <details class="card home3d-setup" open><summary>Map circuits to rooms</summary><p id="home3d-panel"></p><div id="home3d-mappings"></div><button id="home3d-save" type="button" disabled>Save room mappings</button><p id="home3d-save-status" role="status"></p></details>
+  <details class="card home3d-setup" id="home3d-editor" hidden><summary>Edit floor plan visually</summary>
+    <p>Dimensions are meters. Drag rooms and furniture, or use the fields. Changes are drafts until saved; the 3D view shows the saved plan.</p>
+    <fieldset data-editor="controls">
+    <label>Plan name <input data-editor="name" maxlength="120"></label>
+    <div class="home3d-toolbar"><button type="button" data-editor="draw" aria-pressed="false">Draw room</button><button type="button" data-editor="add-room">Add room</button><button type="button" data-editor="add-furniture">Add furniture</button><button type="button" data-editor="add-opening">Add opening</button><button type="button" data-editor="undo" disabled>Undo</button><button type="button" data-editor="redo" disabled>Redo</button></div>
+    <div class="home3d-toolbar"><label>Recorded sensor <select data-editor="sensor-picker" aria-label="Recorded sensor"></select></label><button type="button" data-editor="place-sensor" aria-pressed="false" disabled>Place sensor on plan</button><button type="button" data-editor="center-sensor" disabled>Place in selected room center</button></div>
+    <div class="home3d-editor-layout"><svg data-editor="canvas" class="home3d-editor-canvas" tabindex="0" role="img" aria-label="Top-down floor-plan editor. Select an item below for keyboard editing; arrow keys move the selected item on the plan."></svg><div><label>Selected item <select data-editor="selection"></select></label><div data-editor="inspector" class="home3d-inspector"></div><button type="button" data-editor="remove">Delete selected item</button></div></div>
+    <button type="button" data-editor="save" disabled>Save floor plan</button><p data-editor="status" role="status"></p>
+    </fieldset>
+  </details>
+  <details class="card home3d-setup"><summary>Import or export floor plan</summary><p>Import a house-control JSON floor plan to replace this example. Rooms, openings and furniture are supported. Device links, scenes and credentials are omitted. Importing clears existing room mappings and sensor placements after confirmation. Geometry exports exclude mappings and sensor identities; private backups retain them.</p><label>Import floor plan <input id="home3d-import" type="file" accept=".json,application/json"></label><button id="home3d-export" type="button">Download floor plan</button></details>
+  <p class="home3d-caption">Floor-plan renderer from <a href="https://github.com/0xProbabillity/house-control" target="_blank" rel="noopener noreferrer">house-control</a> (MIT), with Three.js. <a href="/static/house-control/LICENSES.txt">Licenses</a></p>
+</div>
+<script type="module" src="/static/house-control/home-3d.js"></script>

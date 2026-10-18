@@ -41,10 +41,25 @@ def decode_sensors(node: dict) -> list[dict]:
     return sensors
 
 
-def record_node(node: dict, source: str) -> int:
+def record_node(node: dict, source: str, changed_path: str | None = None) -> int:
     if source not in {'matter_snapshot', 'matter_event'}:
         raise ValueError('Unknown Matter observation source')
     sensors = decode_sensors(node)
+    if changed_path is not None:
+        # A report for one bridged endpoint is not a report from every sensor.
+        attributes = node.get('attributes', {})
+        identities = set()
+        for path, identifier in attributes.items():
+            if isinstance(path, str) and path.endswith('/57/18'):
+                parent = path.split('/')[0]
+                children = attributes.get(f'{parent}/29/3', [])
+                paths = {f'{parent}/47/12', f'{parent}/57/17'}
+                if isinstance(children, list):
+                    paths.update(f'{child}/{cluster}/0' for child in children
+                                 if type(child) is int for cluster in (1026, 1029))
+                if changed_path in paths:
+                    identities.add(identifier)
+        sensors = [sensor for sensor in sensors if sensor['did'] in identities]
     timestamp = datetime.now(timezone.utc).isoformat()
     conn = energy._connect()
     try:
