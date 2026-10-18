@@ -4,14 +4,17 @@ import { retainRoomBindings } from './plan-edit.js';
 import { sensorReading } from './sensors.js';
 import { renderMainsChart } from './mains-chart.js';
 import { levelsFor, visibleRoomIds, levelName } from './levels.js';
+import { roomTemperatures, historicalSensors, temperatureBand } from './temperatures.js';
 
 const $ = id => document.getElementById(`home3d-${id}`);
-const format = (value, metric) => value == null ? 'Unknown' : metric === 'watts'
+const format = (value, metric) => value == null ? 'Unknown' : metric === 'temperature_f' ? `${value.toFixed(1)} °F` : metric === 'watts'
   ? `${Math.round(value).toLocaleString()} W` : metric === 'kwh_24h'
     ? `${value.toFixed(2)} kWh` : `$${value.toFixed(2)}`;
 let config, state, view, timer, dirty = false, busy = false, needsReload = false, signature;
 let generation = 0, saving = false;
 let selectedLevel = new URLSearchParams(location.search).get('level') || '';
+let temperatureHistory=null,temperatureIndex=null,temperatureEnd=null,temperatureRequest=0;
+if(new URLSearchParams(location.search).get('metric')==='temperature_f')$('metric').value='temperature_f';
 const editorRoot = document.getElementById('home3d-editor');
 const editor = createEditor(editorRoot, {
   onSave: async (plan, bindings, sensors) => {
@@ -44,6 +47,13 @@ function node(tag, text, className) {
 function renderState() {
   const visible=visibleRoomIds(config.plan,selectedLevel);
   const metric = $('metric').value;
+  const historical=metric==='temperature_f' && temperatureHistory && temperatureIndex!==null;
+  const displayedSensors=historical?historicalSensors(temperatureHistory,temperatureIndex):state.sensors;
+  const displayedRooms=roomTemperatures(state.rooms,displayedSensors);
+  $('temperature-controls').hidden=metric!=='temperature_f';
+  $('temperature-time-label').textContent=historical
+    ? `Recorded ${new Date(temperatureHistory.times[temperatureIndex]).toLocaleString()} · ${temperatureHistory.seconds/60}-minute observation means; gaps are unknown`
+    : 'Live recorded temperatures · Scroll the timeline to look back';
   $('status').textContent = `${state.online ? 'Collector live' : 'Collector offline or readings stale'} · `
     + `Whole home: ${format(state.current_watts, 'watts')} · Last reading: ${state.last_reading || 'none'}`;
   if(state.sensor_sync) {
@@ -58,7 +68,13 @@ function renderState() {
   }
   const mains=$('mains');mains.replaceChildren();
   renderMainsChart($('mains-history'),state.mains_history);
-  $('mains-section').hidden=!state.mains?.length;
+  $('mains-section').hidden=metric==='temperature_f' || !state.mains?.length;
+  $('mains-history').hidden=metric==='temperature_f';
+  $('room-title').textContent=metric==='temperature_f'?'Room temperatures':'Mapped circuit totals';
+  $('room-description').textContent=metric==='temperature_f'
+    ? 'Only placed room sensors supply temperature colors. Rooms without a reading stay unknown.'
+    : 'Whole circuits assigned to a room; not measured room consumption. Shared circuits cannot be split between rooms.';
+  $('recording-basis').hidden=metric==='temperature_f';
   for(const row of state.mains || []) {
     const card=node('article','','home3d-sensor');
     card.append(node('strong',row.name),node('span',format(row.watts,'watts')),
@@ -72,30 +88,56 @@ function renderState() {
   $('recording-basis').textContent = state.circuit_history_basis || 'Circuit totals are recorded observations; gaps are not estimated.';
   const container = $('rooms');
   container.replaceChildren();
-  for (const room of state.rooms.filter(room=>visible.has(room.id))) {
+  for (const room of displayedRooms.filter(room=>visible.has(room.id))) {
     const button = node('button', '', 'home3d-room');
     button.type = 'button';
     button.dataset.roomId = room.id;
+    if(metric==='temperature_f')button.dataset.band=temperatureBand(room.temperature_f) || 'unknown';
     button.append(node('strong', room.name), node('span', format(room[metric], metric)),
+      ...(metric==='temperature_f'?[node('small',room.temperature_sensor_count?`${room.temperature_sensor_count} room sensor(s) · ${historical?'recorded observation':'recent observation'}`:'No fresh room reading · no temperature inferred')]:[
       node('small', `${room.mapped_circuits} mapped · ${room.reporting_circuits} reporting`),
-      node('small', `${format(room.kwh_24h, 'kwh_24h')} · ${format(room.cost_24h, 'cost_24h')} recorded / 24h`));
+      node('small', `${format(room.kwh_24h, 'kwh_24h')} · ${format(room.cost_24h, 'cost_24h')} recorded / 24h`)]));
     button.addEventListener('click', () => selectRoom(room.id));
     container.append(button);
   }
   const sensors=$('sensors');sensors.replaceChildren();
   if(!state.sensors.length)sensors.append(node('p','No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically.'));
-  for(const row of state.sensors.filter(row=>!row.placement || visible.has(row.placement.room_id))){
+  for(const row of displayedSensors.filter(row=>!row.placement || visible.has(row.placement.room_id))){
     const card=node('article','','home3d-sensor');
     card.dataset.sensorSource=row.source;
     const room=config.plan.rooms.find(room=>room.id===row.placement?.room_id);
     card.append(node('strong',row.name),node('span',sensorReading(row)),
-      node('small',`${row.source} · ${room?.name || 'Unplaced'} · ${row.stale?'Last recorded (stale)':'Recent observation'}`),
+      node('small',`${row.source} · ${room?.name || 'Unplaced'} · ${historical?'History bucket':row.stale?'Last recorded (stale)':'Recent observation'}${row.placement?.mount==='pole-base'?' · pole base':''}`),
       node('small',row.timestamp ? new Date(row.timestamp).toLocaleString() : 'No observation available'),
       ...(row.measurement_time_known===false ? [node('small','Controller observation; sensor measurement time unknown')] : []));
     sensors.append(card);
   }
   editor.refreshSensors(state.sensors);
-  view?.update(state.rooms, metric, format, state.sensors);
+  view?.update(displayedRooms, metric, format, displayedSensors);
+}
+
+async function loadTemperatures() {
+  const request=++temperatureRequest;
+  const params=new URLSearchParams({window:$('temperature-window').value});
+  if(temperatureEnd)params.set('end',temperatureEnd);
+  try {
+    const history=await api(`temperatures?${params}`);
+    if(request!==temperatureRequest)return;
+    if(history.revision!==config.revision)throw new Error('Floor plan changed; reload the saved plan.');
+    temperatureHistory=history;
+    const slider=$('temperature-time');slider.disabled=false;slider.max=history.times.length-1;
+    slider.value=history.times.length-1;
+    if(temperatureEnd)temperatureIndex=history.times.length-1;
+    $('temperature-newer').disabled=!temperatureEnd;
+    renderState();
+  } catch(error){if(request===temperatureRequest)$('temperature-time-label').textContent=`History unavailable: ${error.message}`;}
+}
+function shiftTemperatures(direction) {
+  if(!temperatureHistory)return;
+  const span=Date.parse(temperatureHistory.end)-Date.parse(temperatureHistory.start);
+  const next=Date.parse(temperatureHistory.end)+direction*span;
+  temperatureEnd=next>=Date.now()-60000?null:new Date(next).toISOString();
+  temperatureIndex=temperatureEnd?0:null;loadTemperatures();
 }
 
 function renderLevels() {
@@ -193,6 +235,7 @@ async function load() {
   if (expectedGeneration !== generation) return;
   if (nextState.revision !== nextConfig.revision) throw new Error('Plan changed while loading. Reload the saved plan.');
   config = nextConfig; state = nextState;
+  temperatureHistory=null;temperatureIndex=null;++temperatureRequest;
   dirty = false; needsReload = false;
   $('name').textContent = `${config.plan.name}${config.example ? ' · Example layout, not your measured home' : ''}`;
   $('save-status').textContent = '';
@@ -211,6 +254,8 @@ async function load() {
   }
   view?.setLevel(selectedLevel);
   renderState();
+  if($('metric').value==='temperature_f')loadTemperatures();
+  if(location.hash==='#home3d-floor-plan')$('floor-plan').scrollIntoView({block:'start'});
 }
 
 async function save(plan, bindings, sensors=config.sensors) {
@@ -247,7 +292,22 @@ function collectBindings() {
 }
 $('save').addEventListener('click', () => save(config.plan, collectBindings()));
 $('level').addEventListener('change',changeLevel);
-$('metric').addEventListener('change', () => { if (state) renderState(); });
+$('metric').addEventListener('change', () => {
+  if(!state)return;
+  const url=new URL(location.href);url.searchParams.set('metric',$('metric').value);history.replaceState(null,'',url);
+  renderState();if($('metric').value==='temperature_f' && !temperatureHistory)loadTemperatures();
+});
+$('temperature-window').addEventListener('change',()=>{temperatureIndex=null;loadTemperatures();});
+$('temperature-time').addEventListener('input',()=>{temperatureIndex=Number($('temperature-time').value);renderState();});
+$('temperature-time').addEventListener('wheel',event=>{
+  if(!temperatureHistory || $('temperature-time').disabled)return;
+  event.preventDefault();const slider=$('temperature-time');
+  slider.value=Math.max(0,Math.min(Number(slider.max),Number(slider.value)+(event.deltaY>0?-1:1)));
+  temperatureIndex=Number(slider.value);renderState();
+},{passive:false});
+$('temperature-older').addEventListener('click',()=>shiftTemperatures(-1));
+$('temperature-newer').addEventListener('click',()=>shiftTemperatures(1));
+$('temperature-live').addEventListener('click',()=>{temperatureEnd=null;temperatureIndex=null;renderState();loadTemperatures();});
 $('reset').addEventListener('click', () => view?.reset());
 $('refresh').addEventListener('click', refresh);
 $('reload').addEventListener('click', () => {

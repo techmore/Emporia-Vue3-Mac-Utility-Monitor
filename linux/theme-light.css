@@ -29,3 +29,7 @@
 
 .energy-monitor .energy-timestamp { font-size: 9px; }
 .energy-monitor .energy-hero .energy-caption { font-size: 9px; }
+.energy-monitor .temperature-cold { border-left: 4px solid #345f93; }
+.energy-monitor .temperature-comfortable { border-left: 4px solid #c3a326; }
+.energy-monitor .temperature-warm { border-left: 4px solid #b07d2a; }
+.energy-monitor .temperature-hot { border-left: 4px solid #c0392b; }

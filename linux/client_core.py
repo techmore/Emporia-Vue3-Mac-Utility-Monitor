@@ -5,6 +5,7 @@ import math
 import os
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -58,6 +59,9 @@ def display_state(record, origin, connected=False, now=None):
     live = connected and 0 <= age <= 180 and state.get("online") is True
     state.update(origin=origin, fetched_at=record.get("fetched_at"), online=live,
                  connection="Connected" if connected else "Offline — cached history")
+    if not connected or not 0 <= age <= 180:
+        for sensor in state.get('temperature_sensors', []):
+            sensor['stale'] = True
     if not live:
         state["current_watts"] = state["cost_per_hour"] = None
         for field in ("top_circuits", "breaker_slots"):
@@ -77,4 +81,37 @@ def validate_summary(value):
         number = value.get(field)
         if number is not None and (type(number) not in (float, int) or not math.isfinite(number)):
             raise ValueError("Invalid summary measurement.")
+    return value
+
+
+def temperature_band(value):
+    if type(value) not in (int, float) or not math.isfinite(value):
+        return None
+    return 'cold' if value < 70 else 'comfortable' if value <= 75 else 'warm' if value < 78 else 'hot'
+
+
+def validate_temperature_history(value):
+    if not isinstance(value, dict) or value.get('window') not in ('4h', '24h', '7d', '30d'):
+        raise ValueError('Invalid temperature history')
+    times, series = value.get('times'), value.get('series')
+    if not isinstance(times, list) or not 1 <= len(times) <= 200 or not isinstance(series, list) or len(series) > 256:
+        raise ValueError('Oversized or missing temperature history')
+    if not all(isinstance(stamp, str) for stamp in times):
+        raise ValueError('History times must be ISO strings')
+    stamps = [datetime.fromisoformat(stamp) for stamp in times]
+    if any(stamp.tzinfo is None for stamp in stamps) or any(a >= b for a, b in zip(stamps, stamps[1:])):
+        raise ValueError('History times must be ordered and timezone aware')
+    for key in ('start', 'end'):
+        if datetime.fromisoformat(value[key]).tzinfo is None:
+            raise ValueError('History window requires UTC timestamps')
+    if type(value.get('seconds')) is not int or not 60 <= value['seconds'] <= 86400:
+        raise ValueError('Invalid history interval')
+    for sensor in series:
+        if not isinstance(sensor, dict) or not all(isinstance(sensor.get(key), str) for key in ('source', 'sensor_id', 'name')):
+            raise ValueError('Invalid history sensor')
+        values = sensor.get('values')
+        if not isinstance(values, list) or len(values) != len(times):
+            raise ValueError('Temperature history does not match its time axis')
+        if any(v is not None and (type(v) not in (float, int) or not math.isfinite(v)) for v in values):
+            raise ValueError('Invalid recorded temperature')
     return value

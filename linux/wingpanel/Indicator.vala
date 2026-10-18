@@ -9,6 +9,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private uint timer;
     private string previous = "";
     private Gtk.CssProvider css;
+    private Gtk.DropDown view_picker;
 
     public EnergyIndicator () {
         Object (code_name: "energy-monitor", visible: true);
@@ -39,6 +40,9 @@ public class EnergyIndicator : Wingpanel.Indicator {
         header.append (panel_title);
         header.append (status);
         menu.append (header);
+        view_picker = new Gtk.DropDown.from_strings ({"Power", "Temperatures"});
+        view_picker.notify["selected"].connect (() => { previous = ""; update (); });
+        menu.append (view_picker);
         readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
         var scroll = new Gtk.ScrolledWindow () {
             child = readings, hscrollbar_policy = Gtk.PolicyType.NEVER,
@@ -49,6 +53,9 @@ public class EnergyIndicator : Wingpanel.Indicator {
         add_action ("Dashboard", {});
         add_action ("Barn · First floor", {"--floor", "first"});
         add_action ("Barn · Upstairs", {"--floor", "upstairs"});
+        add_action ("Barn · Attic", {"--floor", "attic"});
+        add_action ("Temperature history…", {"--temperatures"});
+        add_action ("Temperature floor plan", {"--temperature-plan"});
         add_action ("Collector Settings…", {"--settings"});
         add_action ("Collector Connection…", {"--connection"});
         add_action ("Refresh", {"--refresh"});
@@ -128,6 +135,33 @@ public class EnergyIndicator : Wingpanel.Indicator {
                 string_member (root, "connection", "Collector unavailable") + " · " + string_member (root, "last_reading", "No cached readings");
             if (!live && status.label.has_prefix ("Connected")) status.label = "Collector readings are stale";
             while (readings.get_first_child () != null) readings.remove (readings.get_first_child ());
+            if (view_picker.selected == 1) {
+                if (!root.has_member ("temperature_sensors")) {
+                    readings.append (new Gtk.Label ("Waiting for recorded temperatures…"));
+                    return;
+                }
+                var temperatures = root.get_array_member ("temperature_sensors");
+                for (uint i = 0; i < temperatures.get_length (); i++) {
+                    var sensor = temperatures.get_object_element (i);
+                    var metrics = sensor.get_object_member ("metrics");
+                    string name = string_member (sensor, "name");
+                    bool stale = age < 0 || age > 180 || sensor.get_boolean_member ("stale");
+                    string place = string_member (sensor, "room_name", "Unplaced");
+                    var card = metric_card (name, metric (metrics, "temperature_f", "%.1f °F"), place + (stale ? " · last recorded" : " · recent observation"));
+                    string source = string_member (sensor, "source"), identity = string_member (sensor, "sensor_id");
+                    var button = new Gtk.Button () { child = card, has_frame = false };
+                    if (!stale && metrics.has_member ("temperature_f") && !metrics.get_member ("temperature_f").is_null ()) {
+                        double value = metrics.get_double_member ("temperature_f");
+                        button.add_css_class (value < 70 ? "temperature-cold" : value <= 75 ? "temperature-comfortable" : value < 78 ? "temperature-warm" : "temperature-hot");
+                    }
+                    button.tooltip_text = "Recorded temperature history · " + string_member (sensor, "timestamp");
+                    button.clicked.connect (() => { launch ({"--temperature", source, identity}); });
+                    readings.append (button);
+                }
+                var note = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F\nClick a sensor to look back through recorded temperatures.") { wrap = true, xalign = 0 };
+                note.add_css_class ("energy-muted");readings.append (note);
+                return;
+            }
             var hero = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10) { hexpand = true };
             hero.add_css_class ("energy-hero");
             var number = new Gtk.Label (live ? metric (root, "current_watts", "%.0f W") : "—") { xalign = 0 };

@@ -41,7 +41,7 @@ def main() -> None:
         if request.path == '/':
             return redirect('/home-3d')
         allowed = request.path in ('/home-3d', '/api/version', '/api/house-control/config',
-                                   '/api/house-control/state') or request.path.startswith('/static/')
+                                   '/api/house-control/state', '/api/house-control/temperatures') or request.path.startswith('/static/')
         if not allowed:
             return jsonify(error='This isolated preview only provides Home 3D. Production is unchanged.'), 404
         if request.method not in ('GET', 'HEAD', 'OPTIONS') and not (

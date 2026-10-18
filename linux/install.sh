@@ -8,6 +8,7 @@ gi.require_version('WebKit','6.0')
 PY
 install -Dm644 "$repo/linux/native_auth.py" "$HOME/.local/lib/energy-monitor/native_auth.py"
 install -Dm644 "$repo/linux/client_core.py" "$HOME/.local/lib/energy-monitor/client_core.py"
+install -Dm644 "$repo/linux/temperatures.py" "$HOME/.local/lib/energy-monitor/temperatures.py"
 install -Dm755 "$repo/linux/energy_monitor.py" "$HOME/.local/lib/energy-monitor/energy_monitor.py"
 install -m644 "$repo/linux/"theme-*.css "$HOME/.local/lib/energy-monitor/"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.config/autostart"

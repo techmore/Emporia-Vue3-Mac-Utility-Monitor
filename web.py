@@ -4387,6 +4387,17 @@ def house_control_state():
     return response
 
 
+@app.get('/api/house-control/temperatures')
+def house_control_temperatures():
+    try:
+        payload = house_control.temperature_history(request.args.get('window', '24h'), request.args.get('end'))
+    except (ValueError, TypeError, OverflowError) as exc:
+        return jsonify(error=str(exc)), 400
+    response = jsonify(payload)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 def _build_menu_summary_payload() -> dict:
     """Small native-menu payload; no templates or dashboard analytics required."""
     gid = energy.get_active_device_gid()
@@ -4501,6 +4512,7 @@ def _build_menu_summary_payload() -> dict:
         "last_reading": main["timestamp"] if main else None,
         "top_circuits": circuits[:5],
         "radon_reading": radon.get_latest_indicator(),
+        "temperature_sensors": house_control.temperature_sensors(),
     }
 
 

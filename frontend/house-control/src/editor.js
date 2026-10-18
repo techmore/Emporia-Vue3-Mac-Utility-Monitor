@@ -71,6 +71,8 @@ export function createEditor(root, { onSave, onDirty }) {
     if (selected.kind === 'sensors') {
       inspector.append(element('strong', sensor(item).name || item.sensor_id));
       inspector.append(element('small', item.source));
+      field('Height above floor (m)',item.height ?? .65,value=>{item.height=Math.max(0,Math.min(6,value));});
+      field('Mount',item.mount || 'wall',value=>{item.mount=value;},['wall','ceiling','pole-base']);
       const label=element('label','Sensor room'), rooms=document.createElement('select');
       rooms.setAttribute('aria-label','Sensor room');
       for(const room of plan.rooms){const option=element('option',room.name);option.value=room.id;rooms.append(option);}

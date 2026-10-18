@@ -101,3 +101,13 @@ python3 linux/smoke_test.py  # requires a graphical desktop; isolated synthetic 
 meson setup /tmp/energy-panel-build linux/wingpanel
 ninja -C /tmp/energy-panel-build
 ```
+
+The native dropdown includes **Power / Temperatures**, **Temperature history…**,
+**Temperature floor plan**, and Barn floor shortcuts including **Attic**. Temperature
+cards show current recorded readings and their room, with stale readings labeled.
+Click a sensor to open its native historical plot. Scroll over the plot or move
+the time slider to inspect a recorded bucket; use Older/Newer for earlier windows
+and Now to return. History windows are 4 hours, 24 hours, 7 days and 30 days.
+Missing/offline buckets remain gaps, and retained offline history is labeled cached.
+The client installs `temperatures.py` alongside `energy_monitor.py`; it uses the
+same authenticated HTTPS session and private response cache as the existing app.

@@ -314,3 +314,29 @@ service remains enabled. No whole-machine reboot was performed.
 
 `/home-3d` is available through the app navigation. The default plan remains an
 explicit example; no actual house geometry or circuit-to-room mapping was invented.
+
+## Temperature overlay and attic access
+
+Choose **Temperature · °F** in Room overlay, or **Temperature floor plan** from
+Linux's native dropdown. Only rooms with a fresh placed sensor receive a temperature
+hue: blue below 70°F, yellow 70–75°F inclusive, amber above 75°F to below 78°F,
+and red at 78°F or above. Unmeasured/stale rooms remain neutral; readings are not
+copied into neighboring bedrooms. Multiple fresh room sensors use their mean.
+
+The Look back slider (also mouse-wheel scrollable) selects actual recorded
+observation buckets. Older/Newer page through 4-hour, 24-hour, 7-day or 30-day
+windows. Live temperatures returns to current observations. Empty/offline buckets
+remain unknown and cannot carry a preceding reading forward. These are collector
+observation means, not guaranteed new physical measurements. The bounded read-only
+`/api/house-control/temperatures` endpoint uses UTC bucket boundaries.
+
+Wingpanel has a **Power / Temperatures** dropdown. Temperature cards open a native
+history window, with sensor/window selection, scrollable time cursor, Older/Newer
+and Now. Cached history remains explicitly labeled when disconnected; cached
+current values are marked last recorded. No SSH or device-control API is used.
+
+Plans may include `accesses` connecting two levels with a service-hatch rectangle.
+The upper floor contains an actual cutout and a labeled frame. Sensor placements
+can include a bounded height above the floor and a `pole-base` mount. The Barn
+attic sensor is mapped independently from Barn-1st and Barn- Living_Room. Its room,
+pole height, hatch dimensions and floor elevation remain provisional measurements.

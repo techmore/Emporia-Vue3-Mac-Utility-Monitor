@@ -5,10 +5,11 @@ import json
 import math
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aqara_local
+import aqara_trends
 import climate
 import energy
 import radon
@@ -201,6 +202,28 @@ def validate_plan(raw: dict) -> dict:
         plan['stairs'].append({'id': identifier, 'level': lower, 'toLevel': upper, 'path': path,
                                'width': _number(stair.get('width', 1), 'Stair width', .5, 3),
                                'steps': steps})
+    accesses = raw.get('accesses', [])
+    if not isinstance(accesses, list) or len(accesses) > 24:
+        raise ValueError('Access hatches must contain at most 24 items')
+    if 'accesses' in raw:
+        plan['accesses'] = []
+    access_ids = set()
+    for access in accesses:
+        if not isinstance(access, dict):
+            raise ValueError('Each access hatch must be an object')
+        identifier = _text(access.get('id'), 'Access id', 80)
+        lower, upper = access.get('level'), access.get('toLevel')
+        if (identifier in access_ids or not isinstance(lower, str) or not isinstance(upper, str)
+                or lower not in heights or upper not in heights or heights[lower] >= heights[upper]):
+            raise ValueError('Access hatches must connect a lower level to a higher level')
+        rect = access.get('rect')
+        if not isinstance(rect, list) or len(rect) != 4:
+            raise ValueError('Access hatch requires a rectangle')
+        rect = _point(rect[:2], 'Access position') + [
+            _number(value, 'Access dimension', .3, 3) for value in rect[2:]]
+        access_ids.add(identifier)
+        plan['accesses'].append({'id': identifier, 'name': _text(access.get('name', 'Service access'), 'Access name'),
+                                'level': lower, 'toLevel': upper, 'rect': rect})
     return plan
 
 
@@ -270,7 +293,8 @@ def _validate_sensors(raw, plan, previous) -> list[dict]:
     rooms = {room['id']: room for room in plan['rooms']}
     seen, clean = set(), []
     for row in raw:
-        if not isinstance(row, dict) or set(row) != {'source', 'sensor_id', 'room_id', 'position'}:
+        required = {'source', 'sensor_id', 'room_id', 'position'}
+        if not isinstance(row, dict) or not required <= set(row) or set(row) - required - {'height', 'mount'}:
             raise ValueError('Each sensor placement needs source, sensor_id, room_id and position')
         source = _text(row['source'], 'Sensor source')
         identifier = _text(row['sensor_id'], 'Sensor id', 256)
@@ -290,7 +314,56 @@ def _validate_sensors(raw, plan, previous) -> list[dict]:
         seen.add(identity)
         clean.append({'source': source, 'sensor_id': identifier,
                       'room_id': room_id, 'position': position})
+        if 'height' in row:
+            clean[-1]['height'] = _number(row['height'], 'Sensor height', 0, 6)
+        if 'mount' in row:
+            if row['mount'] not in ('wall', 'ceiling', 'pole-base'):
+                raise ValueError('Unsupported sensor mounting position')
+            clean[-1]['mount'] = row['mount']
     return clean
+
+
+def temperature_sensors(config: dict | None = None) -> list[dict]:
+    """Recorded temperatures with saved room names, for native menus and history."""
+    config = config or load_config()
+    placements = {(s['source'], s['sensor_id']): s for s in config.get('sensors', [])}
+    rooms = {room['id']: room for room in config['plan']['rooms']}
+    result = []
+    for sensor in sensor_catalog():
+        if 'temperature_f' not in sensor['metrics']:
+            continue
+        placement = placements.get((sensor['source'], sensor['sensor_id']))
+        room = rooms.get(placement['room_id']) if placement else None
+        result.append({**sensor, 'placement': placement, 'room_name': room['name'] if room else None,
+                       'level': room.get('level', 'first') if room else None})
+    return result
+
+
+def temperature_history(window: str = '24h', end: str | None = None) -> dict:
+    """Bounded recorded UTC buckets; never interpolate gaps or contact devices."""
+    if window not in ('4h', '24h', '7d', '30d'):
+        raise ValueError('Choose 4h, 24h, 7d or 30d')
+    now = datetime.now(timezone.utc)
+    finish = datetime.fromisoformat(end) if end else now
+    if finish.tzinfo is None or finish > now + timedelta(minutes=1):
+        raise ValueError('History end must be a timezone-aware past time')
+    config = load_config()
+    trends = aqara_trends.get_trends(window, 'temperature', now=finish)
+    start = datetime.fromisoformat(trends['start'])
+    first = int(start.timestamp()) // trends['seconds']
+    last = int(finish.timestamp()) // trends['seconds']
+    buckets = list(range(first, last + 1))
+    times = [datetime.fromtimestamp(bucket * trends['seconds'], timezone.utc).isoformat() for bucket in buckets]
+    series = []
+    for sensor in temperature_sensors(config):
+        points = {point['bucket']: point for point in trends['series'].get(sensor['sensor_id'], [])}
+        supported = sensor['source'] == 'aqara_local'
+        values = [points.get(bucket, {}).get('value') if supported else None for bucket in buckets]
+        series.append({**sensor, 'history_supported': supported,
+                       'values': [value * 9 / 5 + 32 if value is not None else None for value in values]})
+    return {'window': window, 'start': trends['start'], 'end': trends['end'], 'seconds': trends['seconds'],
+            'times': times, 'series': series, 'revision': config['revision'],
+            'basis': 'Online collector-observation means; cached snapshots may repeat measurements. Missing buckets are unknown.'}
 
 
 def save_config(data: dict, known_circuits: dict[str, set[str]] | None = None) -> dict:
@@ -415,6 +488,15 @@ HOUSE_CONTROL_CSS = """
 .home3d label {display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:.85rem;}
 .home3d label select {min-width:0;flex:1;}
 .home3d-toolbar {justify-content:flex-start;margin:14px 0;}
+#home3d-floor-plan {scroll-margin-top:80px;}
+.home3d {--temperature-cold:var(--history-color-1);--temperature-comfortable:#d7ba35;--temperature-warm:var(--amber);--temperature-hot:var(--red);}
+.home3d-temperature-legend {display:flex;gap:14px;flex-wrap:wrap;font-size:.8rem;}
+.home3d [data-band=cold] {border-left:6px solid var(--temperature-cold);}
+.home3d [data-band=comfortable] {border-left:6px solid var(--temperature-comfortable);}
+.home3d [data-band=warm] {border-left:6px solid var(--temperature-warm);}
+.home3d [data-band=hot] {border-left:6px solid var(--temperature-hot);}
+.home3d-temperature-legend span {padding-left:6px;}
+#home3d-temperature-time {flex:1;min-width:0;}
 .home3d-layout {display:grid;grid-template-columns:minmax(0,2fr) minmax(230px,1fr);gap:14px;}
 .home3d-stage {height:480px;position:relative;overflow:hidden;padding:0;}
 #home3d-canvas {display:block;width:100%;height:100%;touch-action:none;}

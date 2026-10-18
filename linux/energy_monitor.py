@@ -41,6 +41,9 @@ class EnergyMonitor(Gtk.Application):
         self.transport_failed = False
         self.history_windows = {}
         self.pending_path = '/'
+        self.temperature_window = None
+        self.temperature_callbacks = {}
+        self.temperature_request = 0
         self.origin = DEFAULT_ORIGIN
         try:
             self.origin = validate_origin((read_json(CONFIG) or {}).get("origin", DEFAULT_ORIGIN))
@@ -60,6 +63,9 @@ class EnergyMonitor(Gtk.Application):
         for name, callback in (("dashboard", lambda *_: self.open_path("/")),
                                ("barn-first", lambda *_: self.open_path("/home-3d?level=first#home3d-floor-plan")),
                                ("barn-upstairs", lambda *_: self.open_path("/home-3d?level=upstairs#home3d-floor-plan")),
+                               ("barn-attic", lambda *_: self.open_path("/home-3d?level=attic&metric=temperature_f#home3d-floor-plan")),
+                               ("temperatures", lambda *_: self.open_temperatures()),
+                               ("temperature-plan", lambda *_: self.open_path("/home-3d?level=all&metric=temperature_f#home3d-floor-plan")),
                                ("settings", lambda *_: self.open_path("/settings")),
                                ("connection", lambda *_: self.connection_dialog()),
                                ("refresh", lambda *_: self.refresh()),
@@ -91,9 +97,18 @@ class EnergyMonitor(Gtk.Application):
             self.open_path("/settings")
         elif "--floor" in args:
             index = args.index("--floor")
-            if index + 1 >= len(args) or args[index + 1] not in ('first', 'upstairs', 'all'):
+            if index + 1 >= len(args) or args[index + 1] not in ('first', 'upstairs', 'attic', 'all'):
                 return 2
             self.open_path('/home-3d?level=' + args[index + 1] + '#home3d-floor-plan')
+        elif '--temperatures' in args:
+            self.open_temperatures()
+        elif '--temperature-plan' in args:
+            self.open_path('/home-3d?level=all&metric=temperature_f#home3d-floor-plan')
+        elif '--temperature' in args:
+            index = args.index('--temperature')
+            if index + 2 >= len(args):
+                return 2
+            self.open_temperatures(args[index + 1], args[index + 2])
         elif "--refresh" in args:
             self.refresh()
         elif "--quit" in args:
@@ -124,6 +139,8 @@ class EnergyMonitor(Gtk.Application):
         menu = Gio.Menu()
         for label, action in (("Dashboard", "dashboard"), ("Collector Settings", "settings"),
                               ("Barn · First floor", "barn-first"), ("Barn · Upstairs", "barn-upstairs"),
+                              ("Barn · Attic", "barn-attic"), ("Temperatures", "temperatures"),
+                              ("Temperature floor plan", "temperature-plan"),
                               ("Collector Connection…", "connection"), ("Quit", "quit")):
             menu.append(label, "app." + action)
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
@@ -143,6 +160,8 @@ class EnergyMonitor(Gtk.Application):
         manager.connect("script-message-received::energy", self.receive_summary)
         manager.register_script_message_handler("history", None)
         manager.connect("script-message-received::history", self.receive_history)
+        manager.register_script_message_handler('temperatures', None)
+        manager.connect('script-message-received::temperatures', self.receive_temperatures)
         self.web = WebKit.WebView(network_session=session, user_content_manager=manager,
                                   vexpand=True, hexpand=True)
         self.web.connect("load-changed", self.loaded)
@@ -192,6 +211,8 @@ class EnergyMonitor(Gtk.Application):
     def publish(self):
         state = display_state(self.record, self.origin, self.connected)
         private_json(STATE / "summary.json", state)
+        if self.temperature_window:
+            self.temperature_window.update_current(state.get('temperature_sensors', []))
 
     def loaded(self, view, event):
         if event == WebKit.LoadEvent.FINISHED:
@@ -330,6 +351,57 @@ class EnergyMonitor(Gtk.Application):
         self.pending_path = path
         self.web.load_uri(self.origin + path)
         self.window.present()
+
+    def open_temperatures(self, source=None, sensor_id=None):
+        from temperatures import TemperatureWindow
+        if not self.temperature_window:
+            self.temperature_window = TemperatureWindow(self)
+            self.temperature_window.connect('close-request', self.close_temperatures)
+        self.temperature_window.choose(source, sensor_id)
+        self.temperature_window.update_current(display_state(self.record, self.origin, self.connected).get('temperature_sensors', []))
+        self.temperature_window.present()
+        self.temperature_window.fetch()
+
+    def close_temperatures(self, *_):
+        self.temperature_window = None
+        return False
+
+    def fetch_temperature_history(self, endpoint, callback):
+        current, trusted = urlsplit(self.web.get_uri() or ''), urlsplit(self.origin)
+        if (current.scheme, current.netloc) != (trusted.scheme, trusted.netloc):
+            callback(None)
+            return
+        self.temperature_request += 1
+        ticket = self.temperature_request
+        self.temperature_callbacks[ticket] = (self.origin, callback)
+        # One temperature window; discard superseded requests and their callbacks.
+        for old in list(self.temperature_callbacks):
+            if old != ticket:
+                self.temperature_callbacks.pop(old)
+        script = """(async () => {
+          try {
+            const r=await fetch(%s,{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(10000)});
+            if(!r.ok)throw new Error('Unavailable');
+            const text=await r.text();if(text.length>4194304)throw new Error('Oversized');
+            window.webkit.messageHandlers.temperatures.postMessage(JSON.stringify({ticket:%s,data:JSON.parse(text)}));
+          } catch(_){window.webkit.messageHandlers.temperatures.postMessage(JSON.stringify({ticket:%s,error:true}));}
+        })(); null;""" % (json.dumps(endpoint), ticket, ticket)
+        self.web.evaluate_javascript(script, -1, None, self.origin, None, None, None)
+
+    def receive_temperatures(self, manager, value):
+        current, trusted = urlsplit(self.web.get_uri() or ''), urlsplit(self.origin)
+        if (current.scheme, current.netloc) != (trusted.scheme, trusted.netloc):
+            return
+        try:
+            raw = value.to_string()
+            if len(raw) > 4 * 1024 * 1024:
+                return
+            message = json.loads(raw)
+            saved = self.temperature_callbacks.pop(message['ticket'], None)
+            if saved and saved[0] == self.origin:
+                saved[1](None if message.get('error') else message.get('data'))
+        except (ValueError, KeyError, TypeError):
+            return
 
     def identity(self):
         summary = self.record["data"] if self.record else {}
@@ -508,6 +580,10 @@ class EnergyMonitor(Gtk.Application):
             for widgets in list(self.history_windows.values()):
                 widgets[0].destroy()
             self.history_windows.clear()
+            if self.temperature_window:
+                self.temperature_window.destroy()
+                self.temperature_window = None
+            self.temperature_callbacks.clear()
             self.origin = origin
             self.connected = False
             self.pending = False
