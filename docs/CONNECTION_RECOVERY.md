@@ -97,3 +97,18 @@ only the verified tunnel's remote port to 15033. HTTP returned 2.3.35, status
 returned healthy, and cached history caught up. A container restart restored
 services and the existing Mac connection without launching another app.
 See INCUS_DEPLOYMENT.md for that separate deployment receipt.
+
+## Linux desktop tunnel recovery — 2026-10-18
+
+The elementary client was configured for loopback port 5052, but no SSH forward
+survived the machine reboot. The independent SER8 collector remained reachable
+on host loopback 15033 and returned recorded readings. The unrelated local
+5051 deployment had no credentials and was not the client's data source.
+
+`linux/install_tunnel.py` now installs an enabled systemd user service with
+noninteractive SSH, strict known-host verification, loopback-only binding,
+keepalive failure detection and unlimited delayed reconnect attempts. Installed
+on this desktop with local 5052 and the verified SER8 destination; the existing
+client origin was retained. HTTP summary returned 2.3.43, online=true and recorded
+power. See `linux/README.md` for setup and rollback. Login/reboot behavior follows
+the enabled service configuration; a full reboot has not been performed.

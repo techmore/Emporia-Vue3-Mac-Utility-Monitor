@@ -59,3 +59,9 @@ checks and rollback notes. Do not bundle a structural rewrite with new analytics
    the tested archive. Keep credentials/database out of Git and releases.
 6. For each following release, review dependency updates and audit findings; require
    tests for data conversions, billing changes and process ownership changes.
+
+## Linux connection reliability — 2026-10-18
+
+Persistent user SSH tunnel implemented; recovery tests cover loopback binding,
+SSH verification and reconnect policy. Live local-port outage repaired against
+the existing SER8 collector. Next: confirm recovery through a full login/reboot.
