@@ -112,3 +112,14 @@ on this desktop with local 5052 and the verified SER8 destination; the existing
 client origin was retained. HTTP summary returned 2.3.43, online=true and recorded
 power. See `linux/README.md` for setup and rollback. Login/reboot behavior follows
 the enabled service configuration; a full reboot has not been performed.
+
+## Direct Linux HTTPS connection — 2026-10-18
+
+The owner's desktop now selects `https://energy.stoverparc.org` instead of
+loopback 5052. The optional SSH forward is stopped and disabled. Public HTTPS
+responds with the Google OAuth gateway for anonymous dashboard and summary
+requests. The desktop retains its private cookie store and requires an allowed
+Google sign-in. Successful authenticated access remains pending the owner's
+sign-in; an anonymous redirect is not proof of completed OAuth access.
+The connection dialog now recommends direct HTTPS and no longer suggests a
+tunnel as the remedy for any transport failure.

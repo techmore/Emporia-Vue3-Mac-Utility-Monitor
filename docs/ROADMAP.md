@@ -65,3 +65,7 @@ checks and rollback notes. Do not bundle a structural rewrite with new analytics
 Persistent user SSH tunnel implemented; recovery tests cover loopback binding,
 SSH verification and reconnect policy. Live local-port outage repaired against
 the existing SER8 collector. Next: confirm recovery through a full login/reboot.
+
+Direct HTTPS is now the recommended Linux connection; the owner's desktop has
+been switched and its optional tunnel disabled. Verify the allowed-account
+OAuth round trip in the app when the owner signs in.

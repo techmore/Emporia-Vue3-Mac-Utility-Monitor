@@ -4,7 +4,13 @@ This client connects to an existing collector; it does not start another Emporia
 Run `bash linux/install.sh` with GTK 4, WebKitGTK 6, Python GI/Cairo and the Wingpanel 9
 build dependencies installed. The installer adds a desktop launcher, login autostart,
 and a native Wingpanel indicator. Choose **Collector Connection** to configure an
-HTTPS origin or a loopback SSH tunnel. Never disable TLS verification.
+HTTPS origin. The default is `https://energy.stoverparc.org`: sign in with your
+allowed Google account in the app. No SSH tunnel is needed for this connection.
+Cookies are stored privately and reused across launches. Never disable TLS verification.
+If an older installation still points to `http://127.0.0.1:5052` or another local
+port, change **Collector Connection** to `https://energy.stoverparc.org`.
+After confirming HTTPS access, disable the optional legacy forward with
+`systemctl --user disable --now energy-collector-tunnel.service`.
 
 The dashboard retains the collector's web functionality, authentication cookies and
 downloads. The native menu shows power, recorded totals and circuit history with
