@@ -10,6 +10,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private string previous = "";
     private Gtk.CssProvider css;
     private Gtk.DropDown view_picker;
+    private HousePreview house_preview;
 
     public EnergyIndicator () {
         Object (code_name: "energy-monitor", visible: true);
@@ -43,6 +44,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
         view_picker = new Gtk.DropDown.from_strings ({"Power", "Temperatures"});
         view_picker.notify["selected"].connect (() => { previous = ""; update (); });
         menu.append (view_picker);
+        house_preview = new HousePreview ();
+        house_preview.sensor_selected.connect ((source, identity) => { launch ({"--temperature", source, identity}); });
         readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
         var scroll = new Gtk.ScrolledWindow () {
             child = readings, hscrollbar_policy = Gtk.PolicyType.NEVER,
@@ -136,6 +139,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
             if (!live && status.label.has_prefix ("Connected")) status.label = "Collector readings are stale";
             while (readings.get_first_child () != null) readings.remove (readings.get_first_child ());
             if (view_picker.selected == 1) {
+                house_preview.set_state (root, age >= 0 && age <= 180);
+                readings.append (house_preview);
                 if (!root.has_member ("temperature_sensors")) {
                     readings.append (new Gtk.Label ("Waiting for recorded temperatures…"));
                     return;

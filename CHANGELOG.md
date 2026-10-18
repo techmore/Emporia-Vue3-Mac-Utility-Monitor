@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.57 - 2026-10-18
+
+- Embed the saved house preview directly in the native Linux Temperature dropdown.
+- Switch floors without losing selection on refresh; show room temperature hues, sensor
+  markers, stairs and attic access. Click sensor markers to open recorded history.
+- Keep geometry available offline while withholding stale room temperature hues.
+
 ## 2.3.56 - 2026-10-18
 
 - Add room temperature hues and recorded-history timeline with missing-data gaps.
