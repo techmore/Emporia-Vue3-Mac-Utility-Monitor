@@ -5,6 +5,7 @@ public class HousePreview : Gtk.Box {
     private Gtk.DropDown floors;
     private Gtk.DrawingArea canvas;
     private Gtk.Label title;
+    private Gtk.Box room_list;
     private Json.Object? plan;
     private Json.Array? sensors;
     private bool fresh;
@@ -31,6 +32,7 @@ public class HousePreview : Gtk.Box {
         floors.notify["selected"].connect (() => {
             if (floors.selected < floor_ids.length) level = floor_ids[floors.selected];
             positioned = false;
+            if (room_list != null) update_room_list ();
             canvas.queue_draw ();
         });
         append (floors);
@@ -39,7 +41,7 @@ public class HousePreview : Gtk.Box {
         var flat = new Gtk.ToggleButton.with_label ("Floor plan") { group = spatial, hexpand = true };
         spatial.toggled.connect (() => { perspective = spatial.active; positioned = false; canvas.queue_draw (); });
         views.append (spatial); views.append (flat); append (views);
-        canvas = new Gtk.DrawingArea () { content_width = 350, content_height = 310, hexpand = true };
+        canvas = new Gtk.DrawingArea () { content_width = 350, content_height = 420, hexpand = true };
         canvas.set_draw_func ((area, cr, width, height) => { draw_plan (cr, width, height); });
         canvas.tooltip_text = "Saved house geometry · select a sensor dot for recorded history";
         var click = new Gtk.GestureClick ();
@@ -49,6 +51,16 @@ public class HousePreview : Gtk.Box {
         var hint = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F\nGrey = no recent reading · • sensor → history") { xalign = 0, wrap = true };
         hint.add_css_class ("energy-muted");
         append (hint);
+        room_list = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
+        append (new Gtk.Expander ("Rooms on this floor") { child = room_list });
+    }
+
+    public void set_view_height (int height) { canvas.content_height = height; }
+
+    private string room_name (Json.Object room) {
+        string name = text (room, "name"), building = text (plan, "name");
+        if (name.has_prefix (building + " · ")) name = name.substring ((building + " · ").length);
+        return name;
     }
 
     private string text (Json.Object row, string key, string fallback = "") {
@@ -60,7 +72,7 @@ public class HousePreview : Gtk.Box {
         plan = root.has_member ("house_preview") ? root.get_object_member ("house_preview") : null;
         sensors = root.has_member ("temperature_sensors") ? root.get_array_member ("temperature_sensors") : null;
         fresh = cache_fresh;
-        if (plan == null) { title.label = "House preview"; floors.visible = false; canvas.queue_draw (); return; }
+        if (plan == null) { update_room_list (); title.label = "House preview"; floors.visible = false; canvas.queue_draw (); return; }
         title.label = text (plan, "name", "Home") + (plan.get_boolean_member ("example") ? " · example plan" : " · house preview");
         var levels = plan.get_array_member ("levels");
         string signature = Json.to_string (plan.get_member ("levels"), false);
@@ -80,7 +92,23 @@ public class HousePreview : Gtk.Box {
             if (floor_ids.length > 0) level = floor_ids[selected];
         }
         floors.visible = true;
+        update_room_list ();
         canvas.queue_draw ();
+    }
+
+    private void update_room_list () {
+        while (room_list.get_first_child () != null) room_list.remove (room_list.get_first_child ());
+        if (plan == null) return;
+        var rooms = plan.get_array_member ("rooms");
+        for (uint i = 0; i < rooms.get_length (); i++) {
+            var room = rooms.get_object_element (i); if (!on_floor (room)) continue;
+            double? value = room_temperature (text (room, "id"));
+            var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12);
+            var name = new Gtk.Label (room_name (room)) { xalign = 0, wrap = true, hexpand = true, max_width_chars = 48 };
+            row.append (name);
+            row.append (new Gtk.Label (value == null ? "No recent reading" : "%.1f °F".printf (value)) { xalign = 1 });
+            room_list.append (row);
+        }
     }
 
     private bool on_floor (Json.Object room) { return text (room, "level", floor_ids.length > 0 ? floor_ids[0] : "first") == level; }
@@ -163,15 +191,7 @@ public class HousePreview : Gtk.Box {
             double? value = room_temperature (text (room, "id"));
             cr.rectangle (x, y, w, h); hue (cr, value, 0.48); cr.fill_preserve ();
             cr.set_source_rgba (ink.red, ink.green, ink.blue, 0.65); cr.set_line_width (1.3); cr.stroke ();
-            if (h >= 24) {
-                // Remove the repeated building prefix without changing the saved names.
-                string name = text (room, "name");
-                string building = text (plan, "name");
-                if (name.has_prefix (building + " · ")) name = name.substring ((building + " · ").length);
-                if (h < 45 && value != null) name += " · %.1f °F".printf (value);
-                label (cr, name, x + 3, y + 4, w - 6, h < 40 ? 9 : 10, ink);
-                if (h >= 45 && value != null) label (cr, "%.1f °F".printf (value), x + 3, y + 20, w - 6, 11, ink);
-            }
+
         }
         // The landing/stair route and attic hatch keep the floors easy to relate.
         var stairs = plan.get_array_member ("stairs");
@@ -195,6 +215,7 @@ public class HousePreview : Gtk.Box {
             cr.rectangle (left + r.get_double_element (0) * scale, bottom - (r.get_double_element (1) + r.get_double_element (3)) * scale, r.get_double_element (2) * scale, r.get_double_element (3) * scale);
             cr.stroke (); cr.set_dash ({}, 0);
         }
+        draw_room_labels (cr, width, height, ink);
         if (sensors != null) for (uint i = 0; i < uint.min (sensors.get_length (), 256); i++) {
             var sensor = sensors.get_object_element (i);
             if (text (sensor, "level") != level || !sensor.has_member ("placement") || sensor.get_member ("placement").is_null ()) continue;
@@ -344,24 +365,7 @@ public class HousePreview : Gtk.Box {
             face (cr, r.get_double_element (0), r.get_double_element (1), r.get_double_element (2), r.get_double_element (3), 0);
             cr.set_source_rgba (ink.red, ink.green, ink.blue, 0.9); cr.set_line_width (1.5); cr.set_dash ({3, 2}, 0); cr.stroke (); cr.set_dash ({}, 0);
         }
-        // Labels stay screen-aligned, above architecture. Skip cramped rooms.
-        for (uint i = 0; i < rooms.get_length (); i++) {
-            var room = rooms.get_object_element (i); if (!on_floor (room)) continue;
-            var r = room.get_array_member ("rect"); double sx, sy;
-            double rw = r.get_double_element (2), rd = r.get_double_element (3);
-            project (r.get_double_element (0) + rw / 2, r.get_double_element (1) + rd / 2, 0, out sx, out sy);
-            double label_width = double.min (116, rw * scale * 0.72);
-            sy -= 20; // Keep badges above the sensor at the room center.
-            if (label_width < 40 || rd * scale < 28) continue;
-            string name = text (room, "name"), building = text (plan, "name");
-            if (name.has_prefix (building + " · ")) name = name.substring ((building + " · ").length);
-            cr.rectangle (sx - label_width / 2, sy - 16, label_width, 33);
-            bool dark = ink.red > 0.6;
-            cr.set_source_rgba (dark ? 0.12 : 0.98, dark ? 0.14 : 0.98, dark ? 0.13 : 0.95, 0.92); cr.fill ();
-            label (cr, name, sx - label_width / 2 + 3, sy - 14, label_width - 6, 9, ink);
-            double? value = room_temperature (text (room, "id"));
-            label (cr, value == null ? "—" : "%.1f °F".printf (value), sx - label_width / 2 + 3, sy, label_width - 6, 10, ink);
-        }
+        draw_room_labels (cr, width, height, ink);
         if (sensors != null) for (uint i = 0; i < uint.min (sensors.get_length (), 256); i++) {
             var sensor = sensors.get_object_element (i);
             if (text (sensor, "level") != level || !sensor.has_member ("placement") || sensor.get_member ("placement").is_null ()) continue;
@@ -373,6 +377,71 @@ public class HousePreview : Gtk.Box {
             if (text (placement, "mount") == "pole-base") { cr.move_to (sx, sy - 6); cr.line_to (sx, sy - 18); cr.stroke (); }
         }
         label (cr, "FRONT · 3D CUTAWAY", 0, height - 18, width, 9, ink);
+    }
+
+    private struct Badge {
+        public double x;
+        public double y;
+        public double w;
+        public double h;
+    }
+
+    // Measure the actual wrapped text. Callouts can leave a small room instead of
+    // shrinking its name or hiding it behind an ellipsis.
+    private void draw_room_labels (Cairo.Context cr, int width, int height, Gdk.RGBA ink) {
+        Badge[] occupied = {};
+        var rooms = plan.get_array_member ("rooms");
+        for (uint i = 0; i < rooms.get_length (); i++) {
+            var room = rooms.get_object_element (i); if (!on_floor (room)) continue;
+            var r = room.get_array_member ("rect"); double sx, sy;
+            double cx = r.get_double_element (0) + r.get_double_element (2) / 2;
+            double cz = r.get_double_element (1) + r.get_double_element (3) / 2;
+            if (perspective) project (cx, cz, 0, out sx, out sy);
+            else { sx = left + cx * scale; sy = bottom - cz * scale; }
+            double? value = room_temperature (text (room, "id"));
+            string reading = value == null ? "No recent reading" : "%.1f °F".printf (value);
+            var layout = canvas.create_pango_layout (room_name (room) + "\n" + reading);
+            var font = Pango.FontDescription.from_string ("Sans 12");
+            font.set_absolute_size (12 * Pango.SCALE); layout.set_font_description (font);
+            layout.set_width ((int) (double.min (168, width / 3.0 - 16) * Pango.SCALE));
+            layout.set_wrap (Pango.WrapMode.WORD_CHAR); layout.set_alignment (Pango.Alignment.CENTER);
+            int tw, th; layout.get_pixel_size (out tw, out th);
+            layout.set_width (tw * Pango.SCALE);
+            layout.get_pixel_size (out tw, out th);
+            double bw = tw + 14, bh = th + 10;
+            Badge badge = Badge ();
+            bool placed = false;
+            // Search nearby screen positions, keeping labels clear of one another.
+            for (int ring = 0; ring < 9 && !placed; ring++) {
+                for (int side = 0; side < (ring == 0 ? 1 : 8); side++) {
+                    double angle = side * Math.PI / 4;
+                    badge = Badge () {
+                        x = double.max (8, double.min (width - bw - 8, sx - bw / 2 + Math.cos (angle) * ring * 26)),
+                        y = double.max (8, double.min (height - bh - 28, sy - bh - 12 + Math.sin (angle) * ring * 22)),
+                        w = bw, h = bh
+                    };
+                    bool collision = false;
+                    foreach (var previous in occupied) {
+                        if (badge.x < previous.x + previous.w + 5 && badge.x + badge.w + 5 > previous.x &&
+                            badge.y < previous.y + previous.h + 5 && badge.y + badge.h + 5 > previous.y) { collision = true; break; }
+                    }
+                    if (!collision) { placed = true; break; }
+                }
+            }
+            // On very dense plans, retain names in the room list below the scene.
+            if (!placed) continue;
+            occupied += badge;
+            double anchor_x = double.max (badge.x, double.min (badge.x + badge.w, sx));
+            double anchor_y = double.max (badge.y, double.min (badge.y + badge.h, sy));
+            cr.move_to (sx, sy); cr.line_to (anchor_x, anchor_y);
+            cr.set_source_rgba (ink.red, ink.green, ink.blue, 0.55); cr.set_line_width (1); cr.stroke ();
+            bool dark = ink.red > 0.6;
+            cr.rectangle (badge.x, badge.y, badge.w, badge.h);
+            cr.set_source_rgba (dark ? 0.12 : 0.98, dark ? 0.14 : 0.98, dark ? 0.13 : 0.95, 0.96); cr.fill_preserve ();
+            cr.set_source_rgba (ink.red, ink.green, ink.blue, 0.25); cr.stroke ();
+            cr.set_source_rgba (ink.red, ink.green, ink.blue, 1); cr.move_to (badge.x + 7, badge.y + 5);
+            Pango.cairo_show_layout (cr, layout);
+        }
     }
 
     public void select_sensor (double x, double y) {

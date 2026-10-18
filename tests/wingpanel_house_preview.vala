@@ -9,7 +9,7 @@ int main (string[] args) {
         else parser.load_from_data ("""{
           "house_preview":{"name":"Test home","example":false,
             "levels":[{"id":"first","name":"First floor"},{"id":"upstairs","name":"Upstairs"},{"id":"attic","name":"Attic"}],
-            "rooms":[{"id":"a","name":"Living room","rect":[0,0,10,10],"level":"first"},{"id":"b","name":"Bedroom","rect":[0,0,10,10],"level":"upstairs"},{"id":"c","name":"Attic","rect":[0,0,10,10],"level":"attic"}],
+            "rooms":[{"id":"a","name":"Living room","rect":[0,0,10,10],"level":"first"},{"id":"b","name":"Bedroom overlooking the garden and courtyard","rect":[0,0,10,10],"level":"upstairs"},{"id":"c","name":"Attic","rect":[0,0,10,10],"level":"attic"}],
             "furniture":[{"type":"sofa","pos":[2,2],"width":2.5,"rot":90,"level":"first"}],
             "openings":[{"type":"window","from":[0,1],"to":[0,3],"level":"first"}],
             "stairs":[{"level":"first","toLevel":"upstairs","path":[[8,8],[8,9],[4,9]],"width":1}],
@@ -24,7 +24,9 @@ int main (string[] args) {
         preview.set_state (root, true);
         var picker = (Gtk.DropDown) preview.get_first_child ().get_next_sibling ();
         assert (picker.model.get_n_items () == 3);
-        var surface = new Cairo.ImageSurface (Cairo.Format.ARGB32, 390, 310);
+        int render_width = args.length > 2 ? 640 : 390;
+        int render_height = args.length > 2 ? 420 : 310;
+        var surface = new Cairo.ImageSurface (Cairo.Format.ARGB32, render_width, render_height);
         var cr = new Cairo.Context (surface);
         for (uint i = 0; i < 3; i++) {
             picker.selected = i;
@@ -32,11 +34,19 @@ int main (string[] args) {
             var refreshed = new Json.Parser (); refreshed.load_from_data (Json.to_string (parser.get_root (), false));
             preview.set_state (refreshed.get_root ().get_object (), true);
             assert (picker.selected == i);
+            if (args.length == 1) {
+                var room_expander = (Gtk.Expander) preview.get_last_child ();
+                var room_list = (Gtk.Box) room_expander.child;
+                var row = (Gtk.Box) room_list.get_first_child ();
+                var name = (Gtk.Label) row.get_first_child ();
+                var room = root.get_object_member ("house_preview").get_array_member ("rooms").get_object_element (i);
+                assert (name.label == room.get_string_member ("name"));
+            }
             if (args.length > 2) cr.set_source_rgb (0.14, 0.15, 0.12);
             else cr.set_source_rgb (1, 1, 1);
             cr.paint ();
             preview.perspective = args.length > 2;
-            preview.draw_plan (cr, 390, 310);
+            preview.draw_plan (cr, render_width, render_height);
             surface.flush ();
             if (args.length > 2) surface.write_to_png (args[2] + "-%u.png".printf (i));
             else {

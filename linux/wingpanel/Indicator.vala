@@ -11,6 +11,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private Gtk.CssProvider css;
     private Gtk.DropDown view_picker;
     private HousePreview house_preview;
+    private Gtk.ScrolledWindow scroll;
 
     public EnergyIndicator () {
         Object (code_name: "energy-monitor", visible: true);
@@ -47,21 +48,24 @@ public class EnergyIndicator : Wingpanel.Indicator {
         house_preview = new HousePreview ();
         house_preview.sensor_selected.connect ((source, identity) => { launch ({"--temperature", source, identity}); });
         readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
-        var scroll = new Gtk.ScrolledWindow () {
+        scroll = new Gtk.ScrolledWindow () {
             child = readings, hscrollbar_policy = Gtk.PolicyType.NEVER,
             max_content_height = 440, propagate_natural_height = true
         };
         menu.append (scroll);
         menu.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
         add_action ("Dashboard", {});
-        add_action ("Barn · First floor", {"--floor", "first"});
-        add_action ("Barn · Upstairs", {"--floor", "upstairs"});
-        add_action ("Barn · Attic", {"--floor", "attic"});
         add_action ("Temperature history…", {"--temperatures"});
-        add_action ("Temperature floor plan", {"--temperature-plan"});
-        add_action ("Collector Settings…", {"--settings"});
-        add_action ("Collector Connection…", {"--connection"});
-        add_action ("Refresh", {"--refresh"});
+        var extra = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
+        var more = new Gtk.Expander ("More…") { child = extra };
+        menu.append (more);
+        add_action ("Barn · First floor", {"--floor", "first"}, extra);
+        add_action ("Barn · Upstairs", {"--floor", "upstairs"}, extra);
+        add_action ("Barn · Attic", {"--floor", "attic"}, extra);
+        add_action ("Temperature floor plan", {"--temperature-plan"}, extra);
+        add_action ("Collector Settings…", {"--settings"}, extra);
+        add_action ("Collector Connection…", {"--connection"}, extra);
+        add_action ("Refresh", {"--refresh"}, extra);
         add_action ("Quit", {"--quit"});
         update ();
         timer = Timeout.add_seconds (3, () => { update (); return Source.CONTINUE; });
@@ -81,10 +85,10 @@ public class EnergyIndicator : Wingpanel.Indicator {
         catch (Error e) { status.label = "Could not open Energy Monitor"; warning ("%s", e.message); }
     }
 
-    private void add_action (string label, string[] options) {
+    private void add_action (string label, string[] options, Gtk.Box? target = null) {
         var button = new Wingpanel.PopoverMenuItem () { text = label };
         button.clicked.connect (() => { launch (options); });
-        menu.append (button);
+        (target ?? menu).append (button);
     }
 
     private string string_member (Json.Object obj, string key, string fallback = "") {
@@ -115,6 +119,13 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private void update () {
+        bool showing_temperatures = view_picker.selected == 1;
+        int screen_height = 900, screen_width = 1200;
+        var monitor = Gdk.Display.get_default ().get_monitors ().get_item (0) as Gdk.Monitor;
+        if (monitor != null) { var bounds = monitor.get_geometry (); screen_height = bounds.height; screen_width = bounds.width; }
+        menu.width_request = showing_temperatures ? int.min (660, screen_width - 32) : 390;
+        house_preview.set_view_height (int.min (440, int.max (300, screen_height * 38 / 100)));
+        scroll.max_content_height = showing_temperatures ? int.max (360, screen_height - 240) : 440;
         try {
             string text;
             FileUtils.get_contents (Environment.get_user_state_dir () + "/energy-monitor/summary.json", out text);

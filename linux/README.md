@@ -115,7 +115,11 @@ same authenticated HTTPS session and private response cache as the existing app.
 The Wingpanel **Temperatures** view includes the saved house preview above the sensor
 cards. It opens in a native orthographic **3D cutaway**, with low walls, floor materials,
 saved furniture footprints, windows and doors, stairs, and attic hatches. **Floor plan**
-switches back to the overhead view. The cutaway is a compact schematic; the full Home 3D
+switches back to the overhead view. The Temperature menu expands to 660 pixels wide
+(with a narrower fit on small displays), and its scene grows to 440 pixels high based
+on the display height. Both views use wrapped 12-pixel room labels with callouts that
+avoid overlapping other labels. **Rooms on this floor** reveals full room names and
+readings for dense layouts. Secondary menu actions are grouped under **More…**. The cutaway is a compact schematic; the full Home 3D
 view remains available from the floor shortcuts. Its floor picker and view choice retain
 your selection when new readings arrive. Missing architecture from older collectors is
 supported; updated collectors include those details in the summary cache. Room hues use
