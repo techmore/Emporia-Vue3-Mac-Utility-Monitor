@@ -10,6 +10,11 @@ import { buildBarnGable } from './barn-roof.js';
 import { temperatureBand } from './temperatures.js';
 import { placeTemperatureLabels, appendTemperatureTrend } from './temperature-display.js';
 
+// Strong enough to read as the room's colour, light enough to see furniture and sensors inside.
+const ROOM_HUE_OPACITY = .5;
+// Upper floors fade with the Floors slider, but never so far that their rooms lose their colour.
+const hueOpacity = (upper, floorOpacity) => ROOM_HUE_OPACITY * (upper ? .55 + .45 * floorOpacity : 1);
+
 export function createView(canvas, labelContainer, plan, onPick, options = {}) {
   const levels = levelsFor(plan);
   const config = normalize(plan);
@@ -24,7 +29,7 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
                                      Math.cos(config.camera.azimuth * Math.PI / 180));
   const models=levels.map(level=>{
     const raw=planForLevel(plan,level.id);
-    if(!raw.rooms.length)return {level,group:new THREE.Group(),floors:[]};
+    if(!raw.rooms.length)return {level,group:new THREE.Group(),floors:[],volumes:[]};
     const normalized=normalize(raw),house=buildHouse(normalized,direction);
     if(level.elevation>levels[0].elevation){
       const plinth=house.group.children[0];house.group.remove(plinth);
@@ -53,9 +58,20 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
       }
     }
     group.add(house.group,buildFurniture(normalized.furniture));
+    // A translucent volume per room carries its temperature hue, so the room itself reads
+    // warm or cold rather than only its floor. Hidden until the room has a recent reading.
+    const volumeHeight=Math.min(plan.wallHeight ?? 2.6,plan.interiorWallHeight ?? plan.wallHeight ?? 2.6)*.94;
+    const volumes=raw.rooms.map(room=>{
+      const [x,z,w,d]=room.rect,inset=.05;
+      const mesh=new THREE.Mesh(new THREE.BoxGeometry(Math.max(.05,w-2*inset),volumeHeight,Math.max(.05,d-2*inset)),
+        new THREE.MeshBasicMaterial({transparent:true,opacity:ROOM_HUE_OPACITY,depthWrite:false,toneMapped:false}));
+      mesh.position.set(x+w/2,volumeHeight/2+.02,z+d/2);mesh.renderOrder=2;mesh.visible=false;
+      mesh.userData.id=room.id;mesh.raycast=()=>{};
+      group.add(mesh);return mesh;
+    });
     if(options.gableAttic && /attic/i.test(level.id+' '+level.name)) group.add(buildBarnGable(normalized.bounds,normalized.wallHeight));
     scene.add(group);
-    return {level,group,floors:house.floors};
+    return {level,group,floors:house.floors,volumes};
   });
   const flights=(plan.stairs || []).map(stair=>{
     const group=new THREE.Group();
@@ -68,6 +84,8 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
     scene.add(group);return {stair,group};
   });
   const house={floors:models.flatMap(model=>model.floors)};
+  const volumes=new Map(models.flatMap(model=>model.volumes.map(mesh=>[mesh.userData.id,{mesh,upper:model.level.elevation>levels[0].elevation}])));
+  let upperOpacity=options.floorOpacity ?? 1;
   const accesses=(plan.accesses || []).map(access=>{
     const group=new THREE.Group(),[x,z,w,d]=access.rect;
     const elevation=levels.find(level=>level.id===access.toLevel).elevation;
@@ -216,6 +234,8 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
     reset,
     setFloorOpacity(opacity) {
       opacity = Math.max(.15, Math.min(1, opacity));
+      upperOpacity = opacity;
+      for (const {mesh,upper} of volumes.values()) mesh.material.opacity = hueOpacity(upper, opacity);
       for (const model of models.filter(model => model.level.elevation > levels[0].elevation)) {
         for (const floor of model.floors) {
           floor.material.transparent = opacity < 1;
@@ -290,11 +310,18 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
         label.node.textContent = room.name + (room[metric]==null?'':` · ${format(room[metric], metric)}`);
         const material = floors.get(label.id).material;
         material.color.copy(floors.get(label.id).userData.baseColor);
+        const volume=volumes.get(label.id);
+        if(volume)volume.mesh.visible=false;
         if(metric==='temperature_f'){
           const band=temperatureBand(room.temperature_f);
           const color=band?css.getPropertyValue(`--temperature-${band}`).trim():css.getPropertyValue('--text-light').trim();
           material.emissive.set(color);material.emissiveIntensity=band ? .55 : 0;
           if(band)material.color.set(color);
+          if(volume && band){
+            volume.mesh.material.color.set(color);
+            volume.mesh.material.opacity=hueOpacity(volume.upper,upperOpacity);
+            volume.mesh.visible=true;
+          }
           continue;
         }
         material.emissive.set(css.getPropertyValue('--olive-600').trim());

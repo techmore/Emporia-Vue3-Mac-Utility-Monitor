@@ -128,7 +128,8 @@ the Power/Temperatures choice, the sort and which sections are open in
 age and band helpers.
 
 The **House view** section holds the saved house preview above the sensor
-cards. **3D home** now embeds the same Three.js scene builder as the web Home 3D
+cards. In the 3D view each room with a recent reading is filled with a translucent volume in its
+temperature band colour; rooms without a recent reading stay clear. **3D home** now embeds the same Three.js scene builder as the web Home 3D
 page, bundled locally in WebKit. It shows full walls with automatic cutaways, textured
 floors, saved furniture, windows, doors, stair treads, and stacked levels. The attic has a
 semi-transparent barn gable with ridge and rafter framing, preserving the view inside. Choose

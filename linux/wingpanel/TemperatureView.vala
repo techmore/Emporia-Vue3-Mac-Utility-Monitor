@@ -416,6 +416,17 @@ public class TemperatureView : Gtk.Box {
     private void build_attention () {
         while (attention.get_first_child () != null) attention.remove (attention.get_first_child ());
         int64 now = new DateTime.now_utc ().to_unix ();
+        bool any_live = false;
+        foreach (var reading in readings) any_live = any_live || reading.live;
+        // When the whole collector is stale the overview already says so; one line, not one per sensor.
+        if (!any_live && readings.length > 1) {
+            var line = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) { margin_start = 6, margin_top = 2, margin_bottom = 2 };
+            line.append (new Gtk.Image.from_icon_name ("network-offline-symbolic") { pixel_size = 12 });
+            line.append (new Gtk.Label ("No sensor has a recent reading · collector data may be stale") { xalign = 0, hexpand = true });
+            attention.append (line);
+            attention.visible = true;
+            return;
+        }
         foreach (var reading in readings) {
             if (reading.stale) {
                 string when = reading.last_seen > 0 ? "no reading for " + ago (now - reading.last_seen).replace (" ago", "")
