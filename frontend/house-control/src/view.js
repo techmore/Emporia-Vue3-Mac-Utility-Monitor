@@ -7,6 +7,7 @@ import { buildFurniture } from '../vendor/three/furniture.js';
 import { sensorKey, sensorReading } from './sensors.js';
 import { levelsFor, itemLevel, planForLevel, stairTreads, floorTiles } from './levels.js';
 import { temperatureBand } from './temperatures.js';
+import { placeTemperatureLabels } from './temperature-display.js';
 
 export function createView(canvas, labelContainer, plan, onPick, options = {}) {
   const levels = levelsFor(plan);
@@ -119,17 +120,41 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
     return {node,levels:[access.level,access.toLevel],point:new THREE.Vector3(access.rect[0]+access.rect[2]/2,elevation+.1,access.rect[1]+access.rect[3]/2)};
   });
   let disposed = false, selectedLevel='all';
+  const leaders = options.compactTemperatures ? document.createElementNS('http://www.w3.org/2000/svg','svg') : null;
+  if(leaders){leaders.classList.add('temperature-leaders');labelContainer.prepend(leaders);}
+
   function render() {
     if (disposed || document.hidden) return;
     renderer.render(scene, camera);
     const rect = canvas.getBoundingClientRect();
     for (const label of [...labels,...levelLabels,...accessLabels,...sensorLabels.values()]) {
+      if(options.compactTemperatures && !label.node.classList.contains('home3d-sensor-marker')) { label.node.hidden=true; continue; }
       const point = label.point.clone().project(camera);
       label.node.hidden = (label.levels ? selectedLevel!=='all' && !label.levels.includes(selectedLevel) : label.onlyAll ? selectedLevel!=='all' :
         labels.includes(label) && selectedLevel==='all' || selectedLevel!=='all' && label.level!==selectedLevel)
         || point.z < -1 || point.z > 1;
       label.node.style.left = `${(point.x + 1) * rect.width / 2}px`;
       label.node.style.top = `${(1 - point.y) * rect.height / 2}px`;
+    }
+    if(leaders){
+      leaders.replaceChildren();
+      const candidates=[...sensorLabels.values()].filter(label=>!label.node.hidden).map(label=>{
+        const point=label.point.clone().project(camera);
+        const x=(point.x+1)*rect.width/2,y=(1-point.y)*rect.height/2;
+        return {label,x,y,anchorX:x,anchorY:y,w:label.node.offsetWidth,h:label.node.offsetHeight,
+          priority:label.node.dataset.band==='hot'?3:label.node.dataset.status==='recent'?2:1};
+      });
+      for(const item of candidates)item.label.node.hidden=true;
+      for(const item of placeTemperatureLabels(candidates,rect.width,rect.height)){
+        const node=item.label.node;node.hidden=false;node.style.left=`${item.x}px`;node.style.top=`${item.y}px`;
+        const line=document.createElementNS(leaders.namespaceURI,'line');
+        line.setAttribute('x1',item.anchorX);line.setAttribute('y1',item.anchorY);
+        line.setAttribute('x2',Math.max(item.x,Math.min(item.x+item.w,item.anchorX)));
+        line.setAttribute('y2',Math.max(item.y,Math.min(item.y+item.h,item.anchorY)));
+        leaders.append(line);
+        const dot=document.createElementNS(leaders.namespaceURI,'circle');
+        dot.setAttribute('cx',item.anchorX);dot.setAttribute('cy',item.anchorY);dot.setAttribute('r',3);leaders.append(dot);
+      }
     }
   }
   function reset() {
@@ -204,8 +229,12 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
         if(!sensorLabels.has(key)){
           const node=document.createElement('span');node.className='home3d-label home3d-sensor-marker';
           labelContainer.append(node);sensorLabels.set(key,{node,point:new THREE.Vector3()});
+          if(options.compactTemperatures){node.tabIndex=0;node.setAttribute('role','button');
+            node.addEventListener('click',event=>{event.stopPropagation();options.onSensorPick?.(sensorLabels.get(key).row);});
+            node.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();options.onSensorPick?.(sensorLabels.get(key).row);}});
+          }
         }
-        const label=sensorLabels.get(key);
+        const label=sensorLabels.get(key); label.row=row;
         const room=plan.rooms.find(room=>room.id===row.placement.room_id);
         label.level=room ? itemLevel(room,plan) : null;
         const elevation=levels.find(level=>level.id===label.level)?.elevation || 0;
@@ -218,7 +247,23 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
         label.node.dataset.sensorSource=row.source;
         label.node.classList.toggle('stale',row.stale);
         const reading=metric==='temperature_f' ? format(row.metrics?.temperature_f,'temperature_f') : sensorReading(row);
-        label.node.textContent=`${row.name} · ${reading}${row.placement.mount==='pole-base'?' · pole base':''}${row.stale?' · stale':''}`;
+        if(options.compactTemperatures){
+          const display=row.display;
+          label.node.dataset.status=display.status;label.node.dataset.band=display.band;
+          label.node.dataset.ice=String(display.status==='recent' && display.value<68);
+          label.node.dataset.heat=String(display.status==='recent' && display.value>78);
+          let name=room?.name || row.name;
+          if(name.startsWith(plan.name+' · '))name=name.slice(plan.name.length+3);
+          const title=document.createElement('span');title.className='badge-room';title.textContent=name;
+          const value=document.createElement('strong');value.textContent=display.value==null?'—':`${display.value.toFixed(1)}°`;
+          const status=document.createElement('small');status.textContent=display.status==='recent'?'°F · recent':display.status==='stale'?'°F · last recorded':'No reading';
+          label.node.replaceChildren(title,value,status);
+          if(placed.filter(sensor=>sensor.placement.room_id===row.placement.room_id).length>1){
+            const source=document.createElement('small');source.textContent=row.name;label.node.append(source);
+          }
+          label.node.title=`${row.name} · ${row.timestamp || 'Time unknown'} · open history`;
+          label.node.setAttribute('aria-label',`${name}, ${display.value==null?'no reading':display.value.toFixed(1)+' degrees Fahrenheit'}, ${display.status}, open history`);
+        }else label.node.textContent=`${row.name} · ${reading}${row.placement.mount==='pole-base'?' · pole base':''}${row.stale?' · stale':''}`;
       }
       const maximum = Math.max(1, ...rooms.map(room => Math.max(0, room[metric] ?? 0)));
       for (const label of labels) {

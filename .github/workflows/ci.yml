@@ -16,6 +16,7 @@ jobs:
         run: |
           npm ci --ignore-scripts --prefix frontend/house-control
           node scripts/test_home3d_editor.mjs
+          node scripts/test_temperature_display.mjs
           npm run build --prefix frontend/house-control
           git diff --exit-code -- static/house-control
 

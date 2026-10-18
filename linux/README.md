@@ -120,7 +120,16 @@ floors, saved furniture, windows, doors, stair treads, and stacked levels. Choos
 and use **Reset view** to frame the home again. The dropdown starts 12 degrees farther
 overhead than the saved camera, with upper floors at 45% opacity. Use the **Floors**
 slider to adjust transparency; the ground floor stays solid. Click a room to open its first mapped
-temperature sensor's history. **Room temperatures** lists full room names and readings.
+temperature sensor's history. Temperature badges show the room and a large sensor
+reading, with collision-free placement and lines back to the sensor location. Select
+a badge for that exact sensor's history. Recent readings use the temperature bands;
+last-recorded readings use a grey dashed border and never color room averages. Recent
+readings below 68°F have a light-blue badge with a frosted white base; readings above
+78°F have a light-red badge. The
+recent sensor range excludes stale and missing readings. **All sensors** lists every
+visible-floor sensor, including unplaced sensors in Whole home, with direct history
+buttons and explicit recent/last-recorded/missing status. Native sensor cards are
+collapsed under **Sensor history** to keep the house visible.
 The renderer uses only the existing summary cache; it loads no remote page, account
 session, or external assets. WebKit uses an ephemeral session and the document blocks
 network loads with a Content Security Policy. Older collector payloads use architectural

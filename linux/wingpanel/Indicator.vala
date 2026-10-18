@@ -157,6 +157,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     return;
                 }
                 var temperatures = root.get_array_member ("temperature_sensors");
+                var sensor_cards = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
+                readings.append (new Gtk.Expander ("Sensor history · %u sensors".printf (temperatures.get_length ())) { child = sensor_cards });
                 for (uint i = 0; i < temperatures.get_length (); i++) {
                     var sensor = temperatures.get_object_element (i);
                     var metrics = sensor.get_object_member ("metrics");
@@ -172,7 +174,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     }
                     button.tooltip_text = "Recorded temperature history · " + string_member (sensor, "timestamp");
                     button.clicked.connect (() => { launch ({"--temperature", source, identity}); });
-                    readings.append (button);
+                    sensor_cards.append (button);
                 }
                 var note = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F\nClick a sensor to look back through recorded temperatures.") { wrap = true, xalign = 0 };
                 note.add_css_class ("energy-muted");readings.append (note);

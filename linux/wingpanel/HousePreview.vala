@@ -65,7 +65,7 @@ public class HousePreview : Gtk.Box {
         append (new Gtk.Expander ("Rooms on this floor") { child = room_list });
     }
 
-    public void set_view_height (int height) { canvas.content_height = height; if (home != null) home.height_request = height; }
+    public void set_view_height (int height) { canvas.content_height = height; if (home != null) home.height_request = height + 100; }
 
     private string room_name (Json.Object room) {
         string name = text (room, "name"), building = text (plan, "name");
@@ -105,7 +105,7 @@ public class HousePreview : Gtk.Box {
         try { bundled = GLib.resources_get_info ("/org/techmore/energy/native-house.js", ResourceLookupFlags.NONE, null, null); }
         catch (Error error) { /* Renderer-only tests use the native fallback. */ }
         if (home == null && bundled) {
-            home = new WebHouseView () { height_request = canvas.content_height };
+            home = new WebHouseView () { height_request = canvas.content_height + 100 };
             home.room_selected.connect ((identity) => {
                 if (sensors == null) return;
                 for (uint i = 0; i < sensors.get_length (); i++) {
@@ -116,6 +116,7 @@ public class HousePreview : Gtk.Box {
                     }
                 }
             });
+            home.sensor_selected.connect ((source, identity) => { sensor_selected (source, identity); });
             scene.add_named (home, "home");
         }
         if (home != null) home.set_state (root, cache_fresh);
