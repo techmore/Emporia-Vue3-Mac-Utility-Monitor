@@ -346,16 +346,22 @@ def house_preview(config: dict | None = None) -> dict:
     plan = config['plan']
     fields = {
         'rooms': ('id', 'name', 'rect', 'level', 'floor'),
-        'openings': ('type', 'from', 'to', 'level'),
-        'furniture': ('type', 'pos', 'size', 'width', 'height', 'rot', 'level'),
+        'openings': ('type', 'from', 'to', 'level', 'sill', 'head'),
+        'furniture': ('type', 'pos', 'size', 'width', 'height', 'rot', 'level', 'y', 'color', 'chairs', 'stools', 'upper'),
         'levels': ('id', 'name', 'elevation'),
-        'stairs': ('id', 'level', 'toLevel', 'path', 'width'),
+        'stairs': ('id', 'level', 'toLevel', 'path', 'width', 'steps'),
         'accesses': ('id', 'name', 'level', 'toLevel', 'rect'),
     }
     preview = {'name': plan.get('name', 'Home'), 'example': bool(config.get('example'))}
     for key, keys in fields.items():
         preview[key] = [{field: row[field] for field in keys if field in row}
                         for row in plan.get(key, [])]
+    for key in ('wallHeight', 'interiorWallHeight'):
+        if key in plan:
+            preview[key] = plan[key]
+    if 'camera' in plan:
+        preview['camera'] = {key: plan['camera'][key] for key in ('azimuth', 'elevation')
+                             if key in plan['camera']}
     if not preview['levels']:
         preview['levels'] = [{'id': 'first', 'name': 'First floor', 'elevation': 0}]
     return preview

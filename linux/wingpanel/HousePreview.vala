@@ -6,6 +6,8 @@ public class HousePreview : Gtk.Box {
     private Gtk.DrawingArea canvas;
     private Gtk.Label title;
     private Gtk.Box room_list;
+    private Gtk.Stack scene;
+    private WebHouseView? home;
     private Json.Object? plan;
     private Json.Array? sensors;
     private bool fresh;
@@ -37,9 +39,15 @@ public class HousePreview : Gtk.Box {
         });
         append (floors);
         var views = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 4);
-        var spatial = new Gtk.ToggleButton.with_label ("3D cutaway") { active = true, hexpand = true };
+        var spatial = new Gtk.ToggleButton.with_label ("3D home") { active = true, hexpand = true };
         var flat = new Gtk.ToggleButton.with_label ("Floor plan") { group = spatial, hexpand = true };
-        spatial.toggled.connect (() => { perspective = spatial.active; positioned = false; canvas.queue_draw (); });
+        spatial.toggled.connect (() => {
+            perspective = spatial.active; positioned = false;
+            scene.visible_child_name = perspective && home != null ? "home" : "plan";
+            floors.visible = !perspective || home == null;
+            get_last_child ().visible = !perspective || home == null;
+            canvas.queue_draw ();
+        });
         views.append (spatial); views.append (flat); append (views);
         canvas = new Gtk.DrawingArea () { content_width = 350, content_height = 420, hexpand = true };
         canvas.set_draw_func ((area, cr, width, height) => { draw_plan (cr, width, height); });
@@ -47,7 +55,9 @@ public class HousePreview : Gtk.Box {
         var click = new Gtk.GestureClick ();
         click.released.connect ((n, x, y) => { select_sensor (x, y); });
         canvas.add_controller (click);
-        append (canvas);
+        scene = new Gtk.Stack ();
+        scene.add_named (canvas, "plan");
+        append (scene);
         var hint = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F\nGrey = no recent reading · • sensor → history") { xalign = 0, wrap = true };
         hint.add_css_class ("energy-muted");
         append (hint);
@@ -55,7 +65,7 @@ public class HousePreview : Gtk.Box {
         append (new Gtk.Expander ("Rooms on this floor") { child = room_list });
     }
 
-    public void set_view_height (int height) { canvas.content_height = height; }
+    public void set_view_height (int height) { canvas.content_height = height; if (home != null) home.height_request = height; }
 
     private string room_name (Json.Object room) {
         string name = text (room, "name"), building = text (plan, "name");
@@ -91,7 +101,27 @@ public class HousePreview : Gtk.Box {
             floors.selected = selected;
             if (floor_ids.length > 0) level = floor_ids[selected];
         }
-        floors.visible = true;
+        bool bundled = false;
+        try { bundled = GLib.resources_get_info ("/org/techmore/energy/native-house.js", ResourceLookupFlags.NONE, null, null); }
+        catch (Error error) { /* Renderer-only tests use the native fallback. */ }
+        if (home == null && bundled) {
+            home = new WebHouseView () { height_request = canvas.content_height };
+            home.room_selected.connect ((identity) => {
+                if (sensors == null) return;
+                for (uint i = 0; i < sensors.get_length (); i++) {
+                    var sensor = sensors.get_object_element (i);
+                    if (!sensor.has_member ("placement") || sensor.get_member ("placement").is_null ()) continue;
+                    if (text (sensor.get_object_member ("placement"), "room_id") == identity) {
+                        sensor_selected (text (sensor, "source"), text (sensor, "sensor_id")); return;
+                    }
+                }
+            });
+            scene.add_named (home, "home");
+        }
+        if (home != null) home.set_state (root, cache_fresh);
+        scene.visible_child_name = perspective && home != null ? "home" : "plan";
+        floors.visible = !perspective || home == null;
+        get_last_child ().visible = !perspective || home == null;
         update_room_list ();
         canvas.queue_draw ();
     }

@@ -60,6 +60,9 @@ class HouseControlTests(unittest.TestCase):
         self.assertNotIn('bindings', preview)
         self.assertNotIn('sensors', preview)
         self.assertNotIn('private_equipment', preview)
+        self.assertEqual(preview['wallHeight'], config['plan']['wallHeight'])
+        self.assertEqual(preview['interiorWallHeight'], config['plan']['interiorWallHeight'])
+        self.assertEqual(preview['camera'], config['plan']['camera'])
         self.assertEqual(preview['rooms'][0]['floor'], config['plan']['rooms'][0]['floor'])
         self.assertEqual(preview['furniture'], [{'type': 'sofa', 'pos': [2, 2],
                                               'width': 2.5, 'rot': 90}])

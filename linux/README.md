@@ -113,16 +113,22 @@ The client installs `temperatures.py` alongside `energy_monitor.py`; it uses the
 same authenticated HTTPS session and private response cache as the existing app.
 
 The Wingpanel **Temperatures** view includes the saved house preview above the sensor
-cards. It opens in a native orthographic **3D cutaway**, with low walls, floor materials,
-saved furniture footprints, windows and doors, stairs, and attic hatches. **Floor plan**
-switches back to the overhead view. The Temperature menu expands to 660 pixels wide
-(with a narrower fit on small displays), and its scene grows to 440 pixels high based
-on the display height. Both views use wrapped 12-pixel room labels with callouts that
-avoid overlapping other labels. **Rooms on this floor** reveals full room names and
-readings for dense layouts. Secondary menu actions are grouped under **More…**. The cutaway is a compact schematic; the full Home 3D
-view remains available from the floor shortcuts. Its floor picker and view choice retain
-your selection when new readings arrive. Missing architecture from older collectors is
-supported; updated collectors include those details in the summary cache. Room hues use
+cards. **3D home** now embeds the same Three.js scene builder as the web Home 3D
+page, bundled locally in WebKit. It shows full walls with automatic cutaways, textured
+floors, saved furniture, windows, doors, stair treads, and stacked levels. Choose
+**Whole home** or an individual floor inside the scene, drag to rotate, scroll to zoom,
+and use **Reset view** to frame the home again. Click a room to open its first mapped
+temperature sensor's history. **Room temperatures** lists full room names and readings.
+The renderer uses only the existing summary cache; it loads no remote page, account
+session, or external assets. WebKit uses an ephemeral session and the document blocks
+network loads with a Content Security Policy. Older collector payloads use architectural
+defaults until the collector is upgraded. The updated summary projection includes the
+saved wall heights, camera, furniture, and window dimensions.
+
+**Floor plan** retains the native schematic with wrapped 12-pixel callouts and a full
+room list. The Temperature menu expands to 660 pixels wide and the scene scales to the
+screen height. Secondary actions are under **More…**. The floor and camera choices
+survive new readings when the layout is unchanged. Room hues use
 only recent mapped observations (blue below 70°F, yellow 70–75°F, amber above 75°F and
 below 78°F, red from 78°F); grey rooms have no recent mapped temperature. Sensor dots
 open recorded history. Stairs and service hatches use the same saved floor coordinates
