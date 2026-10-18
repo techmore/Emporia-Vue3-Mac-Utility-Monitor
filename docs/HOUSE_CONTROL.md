@@ -270,3 +270,35 @@ above describe the prior implementation. No full production release was deployed
 by this audit. Room circuit sums remain labeled as legacy poll observations.
 Aqara cards distinguish controller observation time from unknown physical sensor
 measurement time. See RECORDING-AUDIT-2026-10-18.md for findings and verification.
+
+## Production house-control cutover — 2026-10-18
+
+PR #154 audit fixes were merged into PR #150, then the combined integration was
+merged to main at `e2d891033b66a885781e23d399987e908aca5d83`. Release **2.3.54**
+is now deployed in `/opt/energy-monitor/releases/2.3.54` on SER8's existing
+`energy-monitor` container. This supersedes earlier preview-only deployment notes.
+
+All six existing services use the new release: dashboard, Emporia poller, Aqara
+Matter, Kasa (10-second cadence), EcoSense and Mitsubishi. The public Google/device
+credential gateway, existing settings and commissioned Matter controller were
+retained. The source lock hash matches the existing verified runtime. Native Linux
+access continues over public HTTPS, without an SSH tunnel or Tailscale dependency.
+
+A stopped-writer SQLite backup passed integrity checking. All **30 existing
+application tables**, including **358,200 readings** at cutover, retained identical
+row counts and SHA-256 fingerprints through the additive schema migration.
+The private rollback bundle is
+`/var/lib/energy-monitor/rollback-2.3.54-20261018T114434Z`; current/new data must be
+preserved before any later rollback. No live lock file was removed.
+
+The staged release passed **373 tests on SER8** (seven platform skips), dependency
+compatibility and service validation. All merge CI passed. Public authenticated
+checks returned 2.3.54, live main power, seven environmental sensors (one stale),
+23 configured circuit positions and a 1,440-bucket UTC mains chart. The first
+backfill recorded 1,439 measured minutes for Total/A/B, correctly marked partial.
+Anonymous Home 3D state access remained gated (302). All six services are active.
+The native desktop reports Connected/online with version 2.3.54 and its login
+service remains enabled. No whole-machine reboot was performed.
+
+`/home-3d` is available through the app navigation. The default plan remains an
+explicit example; no actual house geometry or circuit-to-room mapping was invented.
