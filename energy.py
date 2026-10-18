@@ -372,6 +372,15 @@ def ensure_table():
             source_timezone TEXT,
             source_unit TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS covered_live_observations (
+            device_gid TEXT NOT NULL,
+            channel_name TEXT NOT NULL,
+            channel_num INTEGER,
+            timestamp TEXT NOT NULL,
+            usage_kwh REAL NOT NULL,
+            cost_cents REAL NOT NULL,
+            PRIMARY KEY(device_gid,channel_name)
+        );
         CREATE TRIGGER IF NOT EXISTS reading_provenance_delete AFTER DELETE ON readings
         BEGIN
             DELETE FROM reading_provenance WHERE reading_id=OLD.id;
@@ -1381,6 +1390,8 @@ def poll_and_store(vue, device_gids):
                     raise ValueError("Emporia channel cost overflow")
 
         now = datetime.now().isoformat()
+        # Serialize coverage checks and writes against concurrent CSV imports.
+        conn.execute('BEGIN IMMEDIATE')
 
         for gid, device in usage_dict.items():
             capability = {
@@ -1404,6 +1415,18 @@ def poll_and_store(vue, device_gids):
 
                 cost = channel.usage * RATE_CENTS
 
+                if _poll_overlaps_import(conn, str(gid), channel_name, now):
+                    # The imported energy remains authoritative. Keep the fresh
+                    # observation for power displays without counting it again.
+                    c.execute("""INSERT INTO covered_live_observations
+                        (device_gid,channel_name,channel_num,timestamp,usage_kwh,cost_cents)
+                        VALUES (?,?,?,?,?,?) ON CONFLICT(device_gid,channel_name) DO UPDATE SET
+                        channel_num=excluded.channel_num,timestamp=excluded.timestamp,
+                        usage_kwh=excluded.usage_kwh,cost_cents=excluded.cost_cents""",
+                        (str(gid), channel_name, channelnum, now, channel.usage, cost))
+                    continue
+                c.execute('DELETE FROM covered_live_observations WHERE device_gid=? AND channel_name=?',
+                          (str(gid), channel_name))
                 c.execute(
                     """INSERT INTO readings
                        (timestamp, device_gid, channel_num, channel_name, usage_kwh, cost_cents)
@@ -1441,14 +1464,20 @@ def poll_and_store(vue, device_gids):
         if time.monotonic() - _last_compaction > 3600:
             _last_compaction = time.monotonic()
             compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
-            conn.commit()
-            for report in write_monthly_reports():
-                logger.info("Wrote monthly report %s", report)
         if compacted:
             logger.info("Compacted %s minute rows into hourly rows", compacted)
 
         conn.commit()
         conn.close()
+        global _last_reports
+        if time.monotonic() - _last_reports > 3600:
+            try:
+                for report in write_monthly_reports():
+                    logger.info("Wrote monthly report %s", report)
+                _last_reports = time.monotonic()
+            except Exception:
+                # Retry on the next poll; auxiliary reports cannot fail collection.
+                logger.exception("Monthly report publication failed; will retry next poll")
         if os.environ.get('EMPORIA_MAINS_HISTORY', '1') != '0':
             for gid in usage_dict:
                 if str(gid) == _GHOST_DEVICE or not any(
@@ -1466,6 +1495,7 @@ def poll_and_store(vue, device_gids):
         conn.close()
 
 _last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
+_last_reports = float("-inf")  # advance only after successful publication
 
 
 def compact_minute_readings(conn, days: int) -> int:
@@ -1920,8 +1950,15 @@ def get_latest(device_gid: str | None = None):
             LEFT JOIN reading_provenance p ON p.reading_id=r.id
             WHERE r.rn=1 ORDER BY r.usage_kwh DESC""", (resolved_gid,))
         results = c.fetchall()
+    latest = {row['channel_name']: dict(row) for row in results}
+    for row in c.execute("""SELECT channel_name,channel_num,usage_kwh,cost_cents,timestamp,
+            'live_poll' AS observation_source,60 AS interval_seconds
+            FROM covered_live_observations WHERE device_gid=?""", (resolved_gid,)):
+        previous = latest.get(row['channel_name'])
+        if previous is None or row['timestamp'] >= previous['timestamp']:
+            latest[row['channel_name']] = dict(row)
     conn.close()
-    return [dict(row) for row in results]
+    return sorted(latest.values(), key=lambda row: row['usage_kwh'] or 0, reverse=True)
 
 
 def get_month_comparison(device_gid: str | None = None):
@@ -2214,6 +2251,12 @@ def get_circuit_history(
                ORDER BY r.timestamp DESC LIMIT 1""",
             (gid, channel_name, now.isoformat()),
         ).fetchone()
+        covered = conn.execute("""SELECT timestamp,usage_kwh,'live_poll' AS observation_source,
+            60 AS interval_seconds FROM covered_live_observations
+            WHERE device_gid=? AND channel_name=? AND timestamp<=?""",
+            (gid, channel_name, now.isoformat())).fetchone()
+        if covered is not None and (latest is None or covered['timestamp'] >= latest['timestamp']):
+            latest = covered
         if latest is None:
             return None
 
@@ -2570,6 +2613,31 @@ def _interval_utc_candidates(stamp: str, seconds: float) -> set[tuple[float, flo
     moment = datetime.fromisoformat(stamp)
     return {(start, start + seconds) for fold in (0, 1)
             for start in (moment.replace(fold=fold).astimezone(timezone.utc).timestamp(),)}
+
+
+def _poll_overlaps_import(conn, gid: str, name: str, stamp: str) -> bool:
+    """Protect accounted CSV intervals while retaining live power separately.
+
+    Match the importer's conservative UTC fold policy and unknown-duration hour
+    policy. Imported intervals are bounded to 25 hours; allow clock offset margin.
+    Caller holds the write transaction so imports cannot race this decision.
+    """
+    moment = datetime.fromisoformat(stamp)
+    lower = (moment - timedelta(hours=27)).isoformat()
+    upper = (moment + timedelta(hours=2)).isoformat()
+    candidates = _interval_utc_candidates(stamp, 60)
+    for row in conn.execute("""SELECT r.timestamp,p.interval_seconds FROM readings r
+            JOIN reading_provenance p ON p.reading_id=r.id
+            WHERE r.device_gid=? AND r.channel_name=? AND p.source='csv_import'
+              AND r.timestamp>=? AND r.timestamp<=?""", (gid, name, lower, upper)):
+        saved_stamp = (row['timestamp'] if row['interval_seconds'] is not None
+                       else row['timestamp'][:13]+':00:00')
+        saved_seconds = row['interval_seconds'] if row['interval_seconds'] is not None else 3600
+        if any(start < saved_end and saved_start < end
+               for start, end in candidates
+               for saved_start, saved_end in _interval_utc_candidates(saved_stamp, saved_seconds)):
+            return True
+    return False
 
 
 def _add_coverage(coverage: list[tuple[float, float]], start: float, end: float) -> None:

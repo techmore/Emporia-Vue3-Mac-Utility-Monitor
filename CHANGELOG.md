@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.62 - 2026-10-18
+
+- Keep live power fresh without double-counting energy already covered by imported intervals; serialize polling and imports.
+- Isolate monthly report failures from collection health and mains history, and retry failed reports on the next poll.
+
 ## 2.3.61 - 2026-10-18
 
 - Reject overlapping recorded intervals across CSV resolutions and report conflicts in either import order, preserving accepted history.
