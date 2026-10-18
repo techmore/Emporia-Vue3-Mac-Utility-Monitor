@@ -117,7 +117,9 @@ cards. **3D home** now embeds the same Three.js scene builder as the web Home 3D
 page, bundled locally in WebKit. It shows full walls with automatic cutaways, textured
 floors, saved furniture, windows, doors, stair treads, and stacked levels. Choose
 **Whole home** or an individual floor inside the scene, drag to rotate, scroll to zoom,
-and use **Reset view** to frame the home again. Click a room to open its first mapped
+and use **Reset view** to frame the home again. The dropdown starts 12 degrees farther
+overhead than the saved camera, with upper floors at 45% opacity. Use the **Floors**
+slider to adjust transparency; the ground floor stays solid. Click a room to open its first mapped
 temperature sensor's history. **Room temperatures** lists full room names and readings.
 The renderer uses only the existing summary cache; it loads no remote page, account
 session, or external assets. WebKit uses an ephemeral session and the document blocks

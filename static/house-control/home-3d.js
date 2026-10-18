@@ -12485,30 +12485,30 @@ function Ou(e, t) {
 }
 //#endregion
 //#region src/view.js
-function ku(e, t, n, r) {
-	let i = yu(n), a = Fl(n), o = getComputedStyle(e), s = new il({
+function ku(e, t, n, r, i = {}) {
+	let a = yu(n), o = Fl(n), s = getComputedStyle(e), c = new il({
 		canvas: e,
 		antialias: !0,
 		powerPreference: "low-power"
 	});
-	s.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)), s.toneMapping = 4;
-	let c = new Bn();
-	c.background = new K(o.getPropertyValue("--surface").trim());
-	let l = new pa(35, 1, .1, 2e3), u = new W(Math.sin(a.camera.azimuth * Math.PI / 180), 0, Math.cos(a.camera.azimuth * Math.PI / 180)), d = i.map((e) => {
+	c.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)), c.toneMapping = 4;
+	let l = new Bn();
+	l.background = new K(s.getPropertyValue("--surface").trim());
+	let u = new pa(35, 1, .1, 2e3), d = new W(Math.sin(o.camera.azimuth * Math.PI / 180), 0, Math.cos(o.camera.azimuth * Math.PI / 180)), f = a.map((e) => {
 		let t = xu(n, e.id);
 		if (!t.rooms.length) return {
 			level: e,
 			group: new Mn(),
 			floors: []
 		};
-		let r = Fl(t), a = ru(r, u);
-		if (e.elevation > i[0].elevation) {
-			let e = a.group.children[0];
-			a.group.remove(e), e.geometry.dispose(), e.material.dispose();
+		let r = Fl(t), o = ru(r, d);
+		if (e.elevation > a[0].elevation) {
+			let e = o.group.children[0];
+			o.group.remove(e), e.geometry.dispose(), e.material.dispose();
 		}
-		let o = (n.stairs || []).filter((t) => t.toLevel === e.id), s = (n.accesses || []).filter((t) => t.toLevel === e.id).map((e) => e.rect);
-		if (o.length || s.length) for (let e of a.floors) {
-			let n = Tu(t.rooms.find((t) => t.id === e.userData.id).rect, o, s).map(([e, t, n, r]) => {
+		let s = (n.stairs || []).filter((t) => t.toLevel === e.id), c = (n.accesses || []).filter((t) => t.toLevel === e.id).map((e) => e.rect);
+		if (s.length || c.length) for (let e of o.floors) {
+			let n = Tu(t.rooms.find((t) => t.id === e.userData.id).rect, s, c).map(([e, t, n, r]) => {
 				let i = new xi(n, r);
 				i.rotateX(-Math.PI / 2), i.translate(e + n / 2, 0, t + r / 2);
 				let a = i.attributes.position, o = i.attributes.uv;
@@ -12517,79 +12517,80 @@ function ku(e, t, n, r) {
 			});
 			e.geometry.dispose(), e.geometry = n.length ? Ol(n) : new Pr(), n.forEach((e) => e.dispose());
 		}
-		let l = new Mn();
-		return l.position.y = e.elevation, l.add(a.group, gu(r.furniture)), c.add(l), {
+		let u = new Mn();
+		if (u.position.y = e.elevation, e.elevation > a[0].elevation && i.floorOpacity != null) for (let e of o.floors) e.material.transparent = i.floorOpacity < 1, e.material.opacity = i.floorOpacity, e.material.depthWrite = i.floorOpacity >= 1;
+		return u.add(o.group, gu(r.furniture)), l.add(u), {
 			level: e,
-			group: l,
-			floors: a.floors
+			group: u,
+			floors: o.floors
 		};
-	}), f = (n.stairs || []).map((e) => {
+	}), p = (n.stairs || []).map((e) => {
 		let t = new Mn();
-		for (let n of wu(e, i)) {
-			let e = new ii(new _i(n.horizontal ? n.run : n.width, .1, n.horizontal ? n.width : n.run), new Mi({ color: o.getPropertyValue("--olive-600").trim() }));
+		for (let n of wu(e, a)) {
+			let e = new ii(new _i(n.horizontal ? n.run : n.width, .1, n.horizontal ? n.width : n.run), new Mi({ color: s.getPropertyValue("--olive-600").trim() }));
 			e.position.set(n.x, n.y - .05, n.z), t.add(e);
 		}
-		return c.add(t), {
+		return l.add(t), {
 			stair: e,
 			group: t
 		};
-	}), p = { floors: d.flatMap((e) => e.floors) }, m = (n.accesses || []).map((e) => {
-		let t = new Mn(), [n, r, a, s] = e.rect, l = i.find((t) => t.id === e.toLevel).elevation, u = new Mi({ color: o.getPropertyValue("--olive-600").trim() });
-		for (let [e, i, o, c] of [
+	}), m = { floors: f.flatMap((e) => e.floors) }, h = (n.accesses || []).map((e) => {
+		let t = new Mn(), [n, r, i, o] = e.rect, c = a.find((t) => t.id === e.toLevel).elevation, u = new Mi({ color: s.getPropertyValue("--olive-600").trim() });
+		for (let [e, a, s, l] of [
 			[
-				n + a / 2,
+				n + i / 2,
 				r,
-				a,
+				i,
 				.06
 			],
 			[
-				n + a / 2,
-				r + s,
-				a,
+				n + i / 2,
+				r + o,
+				i,
 				.06
 			],
 			[
 				n,
-				r + s / 2,
+				r + o / 2,
 				.06,
-				s
+				o
 			],
 			[
-				n + a,
-				r + s / 2,
+				n + i,
+				r + o / 2,
 				.06,
-				s
+				o
 			]
 		]) {
-			let n = new ii(new _i(o, .06, c), u);
-			n.position.set(e, l + .03, i), t.add(n);
+			let n = new ii(new _i(s, .06, l), u);
+			n.position.set(e, c + .03, a), t.add(n);
 		}
-		return c.add(t), {
+		return l.add(t), {
 			access: e,
 			group: t,
-			elevation: l
+			elevation: c
 		};
 	});
-	c.add(new ta(16777215, 5592388, 2.3));
-	let h = new ga(16777215, 2);
-	h.position.set(8, 18, 10), c.add(h);
-	let g = new hl(l, e);
-	g.enablePan = !1, g.minPolarAngle = Math.PI * .12, g.maxPolarAngle = Math.PI * .41, g.minAzimuthAngle = a.camera.azimuth * Math.PI / 180 - Math.PI / 4, g.maxAzimuthAngle = a.camera.azimuth * Math.PI / 180 + Math.PI / 4;
-	let { minX: _, minZ: v, maxX: y, maxZ: b } = a.bounds, x = Math.max(y - _, b - v);
-	g.minDistance = x * .65, g.maxDistance = x * 5;
-	let S = new tr();
-	for (let e of d) S.union(new tr().setFromObject(e.group));
-	let C = S.getBoundingSphere(new Er()), w = C.center, T = a.rooms.map((e) => {
+	l.add(new ta(16777215, 5592388, 2.3));
+	let g = new ga(16777215, 2);
+	g.position.set(8, 18, 10), l.add(g);
+	let _ = new hl(u, e);
+	_.enablePan = !1, _.minPolarAngle = Math.PI * .12, _.maxPolarAngle = Math.PI * .41, _.minAzimuthAngle = o.camera.azimuth * Math.PI / 180 - Math.PI / 4, _.maxAzimuthAngle = o.camera.azimuth * Math.PI / 180 + Math.PI / 4;
+	let { minX: v, minZ: y, maxX: b, maxZ: x } = o.bounds, S = Math.max(b - v, x - y);
+	_.minDistance = S * .65, _.maxDistance = S * 5;
+	let C = new tr();
+	for (let e of f) C.union(new tr().setFromObject(e.group));
+	let w = C.getBoundingSphere(new Er()), T = w.center, E = o.rooms.map((e) => {
 		let r = document.createElement("span");
 		r.className = "home3d-label", t.append(r);
-		let a = bu(n.rooms.find((t) => t.id === e.id), n), o = i.find((e) => e.id === a).elevation;
+		let i = bu(n.rooms.find((t) => t.id === e.id), n), o = a.find((e) => e.id === i).elevation;
 		return {
 			id: e.id,
-			level: a,
+			level: i,
 			node: r,
 			point: new W(e.x + e.w / 2, o + .3, e.z + e.d / 2)
 		};
-	}), E = d.filter((e) => e.floors.length).map(({ level: e }) => {
+	}), D = f.filter((e) => e.floors.length).map(({ level: e }) => {
 		let r = document.createElement("span");
 		r.className = "home3d-label", t.append(r), r.textContent = e.name;
 		let i = xu(n, e.id).rooms;
@@ -12598,112 +12599,117 @@ function ku(e, t, n, r) {
 			onlyAll: !0,
 			point: new W(Math.min(...i.map((e) => e.rect[0])) - .5, e.elevation + .3, Math.min(...i.map((e) => e.rect[1])))
 		};
-	}), D = new Map(p.floors.map((e) => (e.material = e.material.clone(), e.userData.baseColor = e.material.color.clone(), [e.userData.id, e]))), O = /* @__PURE__ */ new Map(), k = /* @__PURE__ */ new Map(), A = m.map(({ access: e, elevation: n }) => {
+	}), O = new Map(m.floors.map((e) => (e.material = e.material.clone(), e.userData.baseColor = e.material.color.clone(), [e.userData.id, e]))), k = /* @__PURE__ */ new Map(), A = /* @__PURE__ */ new Map(), j = h.map(({ access: e, elevation: n }) => {
 		let r = document.createElement("span");
 		return r.className = "home3d-label", r.textContent = e.name, t.append(r), {
 			node: r,
 			levels: [e.level, e.toLevel],
 			point: new W(e.rect[0] + e.rect[2] / 2, n + .1, e.rect[1] + e.rect[3] / 2)
 		};
-	}), j = !1, M = "all";
-	function N() {
-		if (j || document.hidden) return;
-		s.render(c, l);
+	}), M = !1, N = "all";
+	function ee() {
+		if (M || document.hidden) return;
+		c.render(l, u);
 		let t = e.getBoundingClientRect();
 		for (let e of [
-			...T,
 			...E,
-			...A,
-			...O.values()
+			...D,
+			...j,
+			...k.values()
 		]) {
-			let n = e.point.clone().project(l);
-			e.node.hidden = (e.levels ? M !== "all" && !e.levels.includes(M) : e.onlyAll ? M !== "all" : T.includes(e) && M === "all" || M !== "all" && e.level !== M) || n.z < -1 || n.z > 1, e.node.style.left = `${(n.x + 1) * t.width / 2}px`, e.node.style.top = `${(1 - n.y) * t.height / 2}px`;
+			let n = e.point.clone().project(u);
+			e.node.hidden = (e.levels ? N !== "all" && !e.levels.includes(N) : e.onlyAll ? N !== "all" : E.includes(e) && N === "all" || N !== "all" && e.level !== N) || n.z < -1 || n.z > 1, e.node.style.left = `${(n.x + 1) * t.width / 2}px`, e.node.style.top = `${(1 - n.y) * t.height / 2}px`;
 		}
 	}
-	function ee() {
-		g.target.copy(w);
-		let e = a.camera.elevation * Math.PI / 180, t = l.fov * Math.PI / 360, n = Math.atan(Math.tan(t) * l.aspect), r = C.radius / Math.sin(Math.min(t, n)) * 1.06;
-		g.maxDistance = Math.max(x * 5, r * 1.5), l.position.copy(w).add(new W(u.x * Math.cos(e), Math.sin(e), u.z * Math.cos(e)).multiplyScalar(r)), g.update(), N();
-	}
 	function P() {
-		let t = e.getBoundingClientRect();
-		t.width && t.height && (s.setSize(t.width, t.height, !1), l.aspect = t.width / t.height, l.updateProjectionMatrix(), ee());
+		_.target.copy(T);
+		let e = o.camera.elevation * Math.PI / 180, t = u.fov * Math.PI / 360, n = Math.atan(Math.tan(t) * u.aspect), r = w.radius / Math.sin(Math.min(t, n)) * 1.06;
+		_.maxDistance = Math.max(S * 5, r * 1.5), u.position.copy(T).add(new W(d.x * Math.cos(e), Math.sin(e), d.z * Math.cos(e)).multiplyScalar(r)), _.update(), ee();
 	}
-	g.addEventListener("change", N);
-	let te = new ResizeObserver(P);
-	te.observe(e);
-	let ne = new Pa(), re, ie = (e) => {
-		re = [e.clientX, e.clientY];
-	}, ae = (t) => {
-		if (!re || Math.hypot(t.clientX - re[0], t.clientY - re[1]) > 5) return;
+	function te() {
+		let t = e.getBoundingClientRect();
+		t.width && t.height && (c.setSize(t.width, t.height, !1), u.aspect = t.width / t.height, u.updateProjectionMatrix(), P());
+	}
+	_.addEventListener("change", ee);
+	let ne = new ResizeObserver(te);
+	ne.observe(e);
+	let re = new Pa(), ie, ae = (e) => {
+		ie = [e.clientX, e.clientY];
+	}, oe = (t) => {
+		if (!ie || Math.hypot(t.clientX - ie[0], t.clientY - ie[1]) > 5) return;
 		let n = e.getBoundingClientRect();
-		ne.setFromCamera(new U((t.clientX - n.left) / n.width * 2 - 1, 1 - (t.clientY - n.top) / n.height * 2), l);
-		let i = ne.intersectObjects(d.filter((e) => e.group.visible).flatMap((e) => e.floors), !1)[0];
+		re.setFromCamera(new U((t.clientX - n.left) / n.width * 2 - 1, 1 - (t.clientY - n.top) / n.height * 2), u);
+		let i = re.intersectObjects(f.filter((e) => e.group.visible).flatMap((e) => e.floors), !1)[0];
 		i && r(i.object.userData.id);
 	};
-	return e.addEventListener("pointerdown", ie), e.addEventListener("pointerup", ae), document.addEventListener("visibilitychange", N), P(), {
-		reset: ee,
-		setLevel(e) {
-			M = e;
-			for (let t of d) t.group.visible = e === "all" || t.level.id === e;
-			for (let t of f) t.group.visible = e === "all" || t.stair.level === e || t.stair.toLevel === e;
-			for (let { access: t, group: n } of m) n.visible = e === "all" || t.level === e || t.toLevel === e;
-			S.makeEmpty();
-			for (let e of d.filter((e) => e.group.visible)) S.union(new tr().setFromObject(e.group));
-			S.isEmpty() || (S.getBoundingSphere(C), w.copy(C.center)), ee();
+	return e.addEventListener("pointerdown", ae), e.addEventListener("pointerup", oe), document.addEventListener("visibilitychange", ee), te(), {
+		reset: P,
+		setFloorOpacity(e) {
+			e = Math.max(.15, Math.min(1, e));
+			for (let t of f.filter((e) => e.level.elevation > a[0].elevation)) for (let n of t.floors) n.material.transparent = e < 1, n.material.opacity = e, n.material.depthWrite = e >= 1, n.material.needsUpdate = !0;
+			ee();
 		},
-		update(e, r, a, s = []) {
-			let c = s.filter((e) => e.placement), l = new Set(c.map(_u));
-			for (let [e, t] of k) l.has(e) || (t.removeFromParent(), t.geometry.dispose(), t.material.dispose(), k.delete(e));
-			for (let [e, t] of O) l.has(e) || (t.node.remove(), O.delete(e));
+		setLevel(e) {
+			N = e;
+			for (let t of f) t.group.visible = e === "all" || t.level.id === e;
+			for (let t of p) t.group.visible = e === "all" || t.stair.level === e || t.stair.toLevel === e;
+			for (let { access: t, group: n } of h) n.visible = e === "all" || t.level === e || t.toLevel === e;
+			C.makeEmpty();
+			for (let e of f.filter((e) => e.group.visible)) C.union(new tr().setFromObject(e.group));
+			C.isEmpty() || (C.getBoundingSphere(w), T.copy(w.center)), P();
+		},
+		update(e, r, i, o = []) {
+			let c = o.filter((e) => e.placement), l = new Set(c.map(_u));
+			for (let [e, t] of A) l.has(e) || (t.removeFromParent(), t.geometry.dispose(), t.material.dispose(), A.delete(e));
+			for (let [e, t] of k) l.has(e) || (t.node.remove(), k.delete(e));
 			for (let e of c) {
-				let s = _u(e);
-				if (!O.has(s)) {
+				let o = _u(e);
+				if (!k.has(o)) {
 					let e = document.createElement("span");
-					e.className = "home3d-label home3d-sensor-marker", t.append(e), O.set(s, {
+					e.className = "home3d-label home3d-sensor-marker", t.append(e), k.set(o, {
 						node: e,
 						point: new W()
 					});
 				}
-				let c = O.get(s), l = n.rooms.find((t) => t.id === e.placement.room_id);
+				let c = k.get(o), l = n.rooms.find((t) => t.id === e.placement.room_id);
 				c.level = l ? bu(l, n) : null;
-				let u = i.find((e) => e.id === c.level)?.elevation || 0;
+				let u = a.find((e) => e.id === c.level)?.elevation || 0;
 				if (c.point.set(e.placement.position[0], u + (e.placement.height ?? .65), e.placement.position[1]), e.placement.mount === "pole-base") {
-					k.has(s) || k.set(s, new ii(new vi(.035, .035, n.wallHeight, 8), new Mi({ color: o.getPropertyValue("--text-light").trim() })));
-					let t = k.get(s);
-					d.find((e) => e.level.id === c.level)?.group.add(t), t.position.set(e.placement.position[0], n.wallHeight / 2, e.placement.position[1]);
-				} else if (k.has(s)) {
-					let e = k.get(s);
-					e.removeFromParent(), e.geometry.dispose(), e.material.dispose(), k.delete(s);
+					A.has(o) || A.set(o, new ii(new vi(.035, .035, n.wallHeight, 8), new Mi({ color: s.getPropertyValue("--text-light").trim() })));
+					let t = A.get(o);
+					f.find((e) => e.level.id === c.level)?.group.add(t), t.position.set(e.placement.position[0], n.wallHeight / 2, e.placement.position[1]);
+				} else if (A.has(o)) {
+					let e = A.get(o);
+					e.removeFromParent(), e.geometry.dispose(), e.material.dispose(), A.delete(o);
 				}
 				c.node.dataset.sensorSource = e.source, c.node.classList.toggle("stale", e.stale);
-				let f = r === "temperature_f" ? a(e.metrics?.temperature_f, "temperature_f") : vu(e);
-				c.node.textContent = `${e.name} · ${f}${e.placement.mount === "pole-base" ? " · pole base" : ""}${e.stale ? " · stale" : ""}`;
+				let d = r === "temperature_f" ? i(e.metrics?.temperature_f, "temperature_f") : vu(e);
+				c.node.textContent = `${e.name} · ${d}${e.placement.mount === "pole-base" ? " · pole base" : ""}${e.stale ? " · stale" : ""}`;
 			}
 			let u = Math.max(1, ...e.map((e) => Math.max(0, e[r] ?? 0)));
-			for (let t of T) {
+			for (let t of E) {
 				let n = e.find((e) => e.id === t.id);
 				if (!n) continue;
-				t.node.textContent = n.name + (n[r] == null ? "" : ` · ${a(n[r], r)}`);
-				let i = D.get(t.id).material;
-				if (i.color.copy(D.get(t.id).userData.baseColor), r === "temperature_f") {
-					let e = Eu(n.temperature_f), t = e ? o.getPropertyValue(`--temperature-${e}`).trim() : o.getPropertyValue("--text-light").trim();
-					i.emissive.set(t), i.emissiveIntensity = e ? .55 : 0, e && i.color.set(t);
-				} else i.emissive.set(o.getPropertyValue("--olive-600").trim()), i.emissiveIntensity = n[r] == null ? 0 : .12 + .5 * Math.max(0, n[r]) / u;
+				t.node.textContent = n.name + (n[r] == null ? "" : ` · ${i(n[r], r)}`);
+				let a = O.get(t.id).material;
+				if (a.color.copy(O.get(t.id).userData.baseColor), r === "temperature_f") {
+					let e = Eu(n.temperature_f), t = e ? s.getPropertyValue(`--temperature-${e}`).trim() : s.getPropertyValue("--text-light").trim();
+					a.emissive.set(t), a.emissiveIntensity = e ? .55 : 0, e && a.color.set(t);
+				} else a.emissive.set(s.getPropertyValue("--olive-600").trim()), a.emissiveIntensity = n[r] == null ? 0 : .12 + .5 * Math.max(0, n[r]) / u;
 			}
-			N();
+			ee();
 		},
 		dispose() {
-			j = !0, te.disconnect(), g.dispose(), document.removeEventListener("visibilitychange", N), e.removeEventListener("pointerdown", ie), e.removeEventListener("pointerup", ae);
+			M = !0, ne.disconnect(), _.dispose(), document.removeEventListener("visibilitychange", ee), e.removeEventListener("pointerdown", ae), e.removeEventListener("pointerup", oe);
 			let n = /* @__PURE__ */ new Set(), r = /* @__PURE__ */ new Set(), i = /* @__PURE__ */ new Set();
-			c.traverse((e) => {
+			l.traverse((e) => {
 				e.geometry && n.add(e.geometry);
 				for (let t of e.material ? Array.isArray(e.material) ? e.material : [e.material] : []) r.add(t), t.map && i.add(t.map);
 			});
 			for (let e of n) e.dispose();
 			for (let e of r) e.dispose();
 			for (let e of i) e.dispose();
-			s.dispose(), t.replaceChildren();
+			c.dispose(), t.replaceChildren();
 		}
 	};
 }

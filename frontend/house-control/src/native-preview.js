@@ -26,6 +26,7 @@ window.renderHouse = data => {
   try {
     const plan = {...data.house_preview};
     plan.wallHeight ??= 2.6; plan.interiorWallHeight ??= 1.25;
+    plan.camera = {...plan.camera, elevation: Math.min(75, (plan.camera?.elevation ?? 47) + 12)};
     plan.rooms = plan.rooms.map(room => ({...room, floor: room.floor || 'oak'}));
     plan.stairs = (plan.stairs || []).map(stair => ({...stair, steps: stair.steps || 16}));
     const next = JSON.stringify(plan);
@@ -37,7 +38,7 @@ window.renderHouse = data => {
       }
       if (![...picker.options].some(option => option.value === selected)) selected = 'all';
       picker.value = selected;
-      view = createView(canvas, labels, plan, room => window.webkit?.messageHandlers.history.postMessage(room));
+      view = createView(canvas, labels, plan, room => window.webkit?.messageHandlers.history.postMessage(room), {floorOpacity: Number(document.querySelector('#opacity').value) / 100});
       view.setLevel(selected); signature = next;
     }
     update();
@@ -50,3 +51,5 @@ window.renderHouse = data => {
 };
 picker.addEventListener('change', () => { selected=picker.value; view?.setLevel(selected); update(); });
 document.querySelector('button').addEventListener('click', () => view?.reset());
+
+document.querySelector('#opacity').addEventListener('input', event => view?.setFloorOpacity(Number(event.target.value) / 100));

@@ -8,7 +8,7 @@ import { sensorKey, sensorReading } from './sensors.js';
 import { levelsFor, itemLevel, planForLevel, stairTreads, floorTiles } from './levels.js';
 import { temperatureBand } from './temperatures.js';
 
-export function createView(canvas, labelContainer, plan, onPick) {
+export function createView(canvas, labelContainer, plan, onPick, options = {}) {
   const levels = levelsFor(plan);
   const config = normalize(plan);
   const css = getComputedStyle(canvas);
@@ -43,6 +43,13 @@ export function createView(canvas, labelContainer, plan, onPick) {
       pieces.forEach(piece=>piece.dispose());
     }
     const group=new THREE.Group();group.position.y=level.elevation;
+    if (level.elevation > levels[0].elevation && options.floorOpacity != null) {
+      for (const floor of house.floors) {
+        floor.material.transparent = options.floorOpacity < 1;
+        floor.material.opacity = options.floorOpacity;
+        floor.material.depthWrite = options.floorOpacity >= 1;
+      }
+    }
     group.add(house.group,buildFurniture(normalized.furniture));scene.add(group);
     return {level,group,floors:house.floors};
   });
@@ -165,6 +172,18 @@ export function createView(canvas, labelContainer, plan, onPick) {
   resize();
   return {
     reset,
+    setFloorOpacity(opacity) {
+      opacity = Math.max(.15, Math.min(1, opacity));
+      for (const model of models.filter(model => model.level.elevation > levels[0].elevation)) {
+        for (const floor of model.floors) {
+          floor.material.transparent = opacity < 1;
+          floor.material.opacity = opacity;
+          floor.material.depthWrite = opacity >= 1;
+          floor.material.needsUpdate = true;
+        }
+      }
+      render();
+    },
     setLevel(id) {
       selectedLevel=id;
       for(const model of models)model.group.visible=id==='all' || model.level.id===id;
