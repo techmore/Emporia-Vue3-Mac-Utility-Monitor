@@ -138,3 +138,25 @@ Rollback: switch the client origin back, disable only this Serve handler with
 `tailscale serve --https=8445 off`, remove the two ENERGY_TAILNET settings and
 restart only energy-dashboard. Deployment backups of web.py and the private
 environment file use the suffix `.pre-tailnet-20261018` inside the container.
+
+## Public native HTTPS and reboot recovery — 2026-10-18
+
+The final desktop path is now `https://energy.stoverparc.org`, not the earlier
+private Tailscale endpoint. The gateway accepts a per-device random password via
+its existing htpasswd support and returns its normal secure HttpOnly session.
+The server stores only bcrypt; the desktop stores the origin-bound credential
+privately. Google sign-in remains available for browsers. No public route was
+exempted from authentication and no Google password was stored by this work.
+
+The client performs the HTTPS session exchange on a background thread at startup,
+renews after 12 hours and retries outages. No password-bearing redirect is
+followed. Its enabled systemd user service starts at graphical login and restarts
+a crashed client; the gateway, dashboard and poller are enabled on SER8. The
+legacy SSH service stays disabled. See linux/README.md for enrollment and rollback.
+
+Verification: removed only the app's public gateway session, restarted the
+client, and it reauthenticated and returned Connected/live readings without a
+browser login. A forced client termination exercises systemd restart. Public DNS
+resolves to 71.162.207.117 and the route uses the physical network interface,
+not tailscale0. Full host reboot is not performed during the owner's other work.
+The gateway config backup is `/etc/energy-oauth2-proxy.cfg.pre-device-20261018`.

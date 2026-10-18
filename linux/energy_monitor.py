@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import threading
 from urllib.parse import quote, urlsplit
 
 import gi
@@ -12,10 +13,13 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("WebKit", "6.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, WebKit
+gi.require_version("Soup", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk, WebKit, Soup
 
 from client_core import (DEFAULT_ORIGIN, cache_key, display_state, private_json,
                          read_json, validate_origin, validate_summary)
+
+from native_auth import load_credentials, session_cookie
 
 STATE = Path(GLib.get_user_state_dir()) / "energy-monitor"
 CONFIG = Path(GLib.get_user_config_dir()) / "energy-monitor/client.json"
@@ -31,6 +35,9 @@ class EnergyMonitor(Gtk.Application):
         self.connected = False
         self.record = None
         self.pending = False
+        self.auth_pending = False
+        self.last_auth_attempt = 0
+        self.last_auth_success = 0
         self.transport_failed = False
         self.history_windows = {}
         self.origin = DEFAULT_ORIGIN
@@ -59,7 +66,8 @@ class EnergyMonitor(Gtk.Application):
             self.add_action(action)
         self.build_window()
         self.restore_cache()
-        self.web.load_uri(self.origin)
+        if not self.authenticate_device():
+            self.web.load_uri(self.origin)
         GLib.timeout_add_seconds(30, self.refresh)
 
     def load_theme(self):
@@ -119,6 +127,7 @@ class EnergyMonitor(Gtk.Application):
         DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
         session = WebKit.NetworkSession.new(str(DATA / "web-data"), str(DATA / "web-cache"))
         cookies = session.get_cookie_manager()
+        self.cookies = cookies
         cookies.set_persistent_storage(str(DATA / "cookies.sqlite"), WebKit.CookiePersistentStorage.SQLITE)
         manager = WebKit.UserContentManager()
         manager.register_script_message_handler("energy", None)
@@ -192,8 +201,63 @@ class EnergyMonitor(Gtk.Application):
         self.status.set_label("The collector's TLS connection failed. Its certificate was not bypassed.")
         return False
 
+    def authenticate_device(self):
+        try:
+            credentials = load_credentials(CONFIG.with_name("device.json"), self.origin)
+        except (ValueError, OSError):
+            self.status.set_label("Device credential unavailable. Check Collector Connection.")
+            return True
+        if not credentials:
+            return False
+        if self.auth_pending:
+            return True
+        if time.monotonic() - self.last_auth_attempt < 60:
+            return False
+        self.auth_pending = True
+        self.last_auth_attempt = time.monotonic()
+        origin = self.origin
+        self.status.set_label("Connecting securely to the energy collector…")
+        def work():
+            try:
+                value = session_cookie(credentials)
+            except Exception:
+                GLib.idle_add(failed)
+            else:
+                GLib.idle_add(install_cookie, value)
+        def failed():
+            self.auth_pending = False
+            self.connected = False
+            self.status.set_label("Collector unavailable. Device sign-in will retry automatically.")
+            self.publish()
+        def install_cookie(value):
+            if self.origin != origin:
+                self.auth_pending = False
+                return
+            cookie = Soup.Cookie.new("__Host-energy", value, urlsplit(origin).hostname, "/", 86400)
+            cookie.set_secure(True)
+            cookie.set_http_only(True)
+            cookie.set_same_site_policy(Soup.SameSitePolicy.LAX)
+            self.cookies.add_cookie(cookie, None, installed, origin)
+        def installed(manager, result, expected_origin):
+            self.auth_pending = False
+            try:
+                manager.add_cookie_finish(result)
+            except GLib.Error:
+                failed()
+                return
+            if self.origin == expected_origin:
+                self.last_auth_success = time.monotonic()
+                self.transport_failed = False
+                self.pending = False
+                self.web.load_uri(self.origin)
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
     def refresh(self):
         self.publish()
+        if (not self.connected or time.monotonic() - self.last_auth_success > 12 * 3600):
+            if self.authenticate_device():
+                return GLib.SOURCE_CONTINUE
         if self.transport_failed and not self.web.is_loading():
             self.transport_failed = False
             self.web.load_uri(self.origin)

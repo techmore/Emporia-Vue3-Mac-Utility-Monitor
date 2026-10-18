@@ -6,6 +6,7 @@ import gi
 gi.require_version('Gtk','4.0')
 gi.require_version('WebKit','6.0')
 PY
+install -Dm644 "$repo/linux/native_auth.py" "$HOME/.local/lib/energy-monitor/native_auth.py"
 install -Dm644 "$repo/linux/client_core.py" "$HOME/.local/lib/energy-monitor/client_core.py"
 install -Dm755 "$repo/linux/energy_monitor.py" "$HOME/.local/lib/energy-monitor/energy_monitor.py"
 install -m644 "$repo/linux/"theme-*.css "$HOME/.local/lib/energy-monitor/"
@@ -25,14 +26,13 @@ Icon=weather-storm-symbolic
 Categories=Utility;Monitor;
 StartupWMClass=org.techmore.EnergyMonitor
 DESKTOP
-cat > "$HOME/.config/autostart/energy-monitor.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=Energy Monitor
-Exec="$HOME/.local/bin/energy-monitor" --background
-OnlyShowIn=Pantheon;
-NoDisplay=true
-DESKTOP
+mkdir -p "$HOME/.config/systemd/user"
+install -m644 "$repo/linux/energy-monitor-client.service" "$HOME/.config/systemd/user/"
+if [[ -f "$HOME/.config/autostart/energy-monitor.desktop" ]]; then
+  mv "$HOME/.config/autostart/energy-monitor.desktop" "$HOME/.config/autostart/energy-monitor.desktop.pre-service"
+fi
+systemctl --user daemon-reload
+systemctl --user enable energy-monitor-client.service
 if pkg-config --exists wingpanel-9; then
   build=$(mktemp -d /tmp/energy-monitor-wingpanel.XXXXXX)
   trap 'rm -rf "$build"' EXIT

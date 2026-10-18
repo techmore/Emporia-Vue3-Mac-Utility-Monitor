@@ -4,18 +4,46 @@ This client connects to an existing collector; it does not start another Emporia
 Run `bash linux/install.sh` with GTK 4, WebKitGTK 6, Python GI/Cairo and the Wingpanel 9
 build dependencies installed. The installer adds a desktop launcher, login autostart,
 and a native Wingpanel indicator. Choose **Collector Connection** to configure an
-HTTPS origin. The default is the private Tailscale Serve endpoint
-`https://sdolbec-ser8.tailf80972.ts.net:8445`. Keep Tailscale signed in on the
-client; no SSH tunnel or embedded Google login is needed. The server accepts
-only the configured Tailscale user identity. Never disable TLS verification.
-If an older installation still points to a loopback port or the public website,
-change **Collector Connection** to this private HTTPS origin. Disable the legacy
-forward with `systemctl --user disable --now energy-collector-tunnel.service`.
+HTTPS origin. The default is `https://energy.stoverparc.org` over ordinary
+internet HTTPS. The native app uses a separately enrolled device credential;
+it does not need SSH, Tailscale, or Google sign-in in WebKit. Never disable TLS
+verification. The public browser sign-in remains available for regular browsers.
 
-The public `https://energy.stoverparc.org` site remains available in a regular
-browser with Google sign-in. WebKitGTK does not support passkeys, and Google OAuth
-should not be run in embedded browsers. Browser cookies do not sign the native
-client in; use the private Tailscale endpoint for the native app.
+One-time administrator enrollment for a new desktop (SSH/Incus is used only
+for provisioning, never during app startup or normal operation):
+
+```sh
+python3 linux/enroll_device.py --ssh-target ADMIN@COLLECTOR --device-name energy-my-desktop
+```
+
+This saves `~/.config/energy-monitor/device.json` with mode 0600 and registers
+only its bcrypt password hash in `/etc/energy-device.htpasswd`. Each desktop
+must have a distinct name. The gateway supports this alongside Google OAuth;
+its password login form stays hidden. Protect and back up the private device
+file, and never commit it. Remove the device's server hash to prevent new logins;
+already-issued gateway sessions expire within 24 hours.
+
+The app exchanges the credential for a secure HttpOnly gateway cookie at startup,
+renews after 12 hours, and retries failed authentication after network recovery.
+Credentials are sent only in an HTTPS POST body to their exact enrolled origin;
+redirects are never followed with credentials. Switching origins does not send
+the device password to the other server.
+
+The installer enables `energy-monitor-client.service` under the graphical user
+session, replacing the old desktop autostart entry. After reboot and desktop
+login, systemd starts the app and restarts it after a crash. The network may come
+up later: authentication and loading retry automatically. The independent server
+collector continues without the laptop. Check with:
+
+```sh
+systemctl --user status energy-monitor-client.service
+systemctl --user is-enabled energy-monitor-client.service
+```
+
+Choose `https://energy.stoverparc.org` in **Collector Connection** for installations
+that still point to a loopback port or private Tailscale endpoint. The legacy SSH
+forward can remain disabled. For an app rollback, disable the user service before
+restoring the saved `.desktop.pre-service` autostart file.
 
 The dashboard retains the collector's web functionality, authentication cookies and
 downloads. The native menu shows power, recorded totals and circuit history with

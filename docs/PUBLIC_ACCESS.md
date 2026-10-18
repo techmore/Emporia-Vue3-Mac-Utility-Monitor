@@ -1,5 +1,14 @@
 # Public HTTPS deployment gates
 
+## Native desktop update (2026-10-18, supersedes private access below)
+
+The native app now uses this public HTTPS gateway with an individually registered
+device credential. oauth2-proxy verifies its bcrypt hash and issues a normal
+secure session cookie; Google browser login remains available. Anonymous requests
+remain gated. linux/README.md documents enrollment, expiry and user-service
+startup. SSH and Tailscale are not needed for native runtime access. The later
+CONNECTION_RECOVERY.md receipt supersedes the earlier private Tailscale path.
+
 ## Linux native access update (2026-10-18)
 
 The public site now responds over valid HTTPS with Google OAuth redirects; the
