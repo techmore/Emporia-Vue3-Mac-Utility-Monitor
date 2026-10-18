@@ -12657,32 +12657,34 @@ function ku(e, t, n, r) {
 			for (let [e, t] of k) l.has(e) || (t.removeFromParent(), t.geometry.dispose(), t.material.dispose(), k.delete(e));
 			for (let [e, t] of O) l.has(e) || (t.node.remove(), O.delete(e));
 			for (let e of c) {
-				let r = _u(e);
-				if (!O.has(r)) {
+				let s = _u(e);
+				if (!O.has(s)) {
 					let e = document.createElement("span");
-					e.className = "home3d-label home3d-sensor-marker", t.append(e), O.set(r, {
+					e.className = "home3d-label home3d-sensor-marker", t.append(e), O.set(s, {
 						node: e,
 						point: new W()
 					});
 				}
-				let a = O.get(r), s = n.rooms.find((t) => t.id === e.placement.room_id);
-				a.level = s ? bu(s, n) : null;
-				let c = i.find((e) => e.id === a.level)?.elevation || 0;
-				if (a.point.set(e.placement.position[0], c + (e.placement.height ?? .65), e.placement.position[1]), e.placement.mount === "pole-base") {
-					k.has(r) || k.set(r, new ii(new vi(.035, .035, n.wallHeight, 8), new Mi({ color: o.getPropertyValue("--text-light").trim() })));
-					let t = k.get(r);
-					d.find((e) => e.level.id === a.level)?.group.add(t), t.position.set(e.placement.position[0], n.wallHeight / 2, e.placement.position[1]);
-				} else if (k.has(r)) {
-					let e = k.get(r);
-					e.removeFromParent(), e.geometry.dispose(), e.material.dispose(), k.delete(r);
+				let c = O.get(s), l = n.rooms.find((t) => t.id === e.placement.room_id);
+				c.level = l ? bu(l, n) : null;
+				let u = i.find((e) => e.id === c.level)?.elevation || 0;
+				if (c.point.set(e.placement.position[0], u + (e.placement.height ?? .65), e.placement.position[1]), e.placement.mount === "pole-base") {
+					k.has(s) || k.set(s, new ii(new vi(.035, .035, n.wallHeight, 8), new Mi({ color: o.getPropertyValue("--text-light").trim() })));
+					let t = k.get(s);
+					d.find((e) => e.level.id === c.level)?.group.add(t), t.position.set(e.placement.position[0], n.wallHeight / 2, e.placement.position[1]);
+				} else if (k.has(s)) {
+					let e = k.get(s);
+					e.removeFromParent(), e.geometry.dispose(), e.material.dispose(), k.delete(s);
 				}
-				a.node.dataset.sensorSource = e.source, a.node.classList.toggle("stale", e.stale), a.node.textContent = `${e.name} · ${vu(e)}${e.placement.mount === "pole-base" ? " · pole base" : ""}${e.stale ? " · stale" : ""}`;
+				c.node.dataset.sensorSource = e.source, c.node.classList.toggle("stale", e.stale);
+				let f = r === "temperature_f" ? a(e.metrics?.temperature_f, "temperature_f") : vu(e);
+				c.node.textContent = `${e.name} · ${f}${e.placement.mount === "pole-base" ? " · pole base" : ""}${e.stale ? " · stale" : ""}`;
 			}
 			let u = Math.max(1, ...e.map((e) => Math.max(0, e[r] ?? 0)));
 			for (let t of T) {
 				let n = e.find((e) => e.id === t.id);
 				if (!n) continue;
-				t.node.textContent = `${n.name} · ${a(n[r], r)}`;
+				t.node.textContent = n.name + (n[r] == null ? "" : ` · ${a(n[r], r)}`);
 				let i = D.get(t.id).material;
 				if (i.color.copy(D.get(t.id).userData.baseColor), r === "temperature_f") {
 					let e = Eu(n.temperature_f), t = e ? o.getPropertyValue(`--temperature-${e}`).trim() : o.getPropertyValue("--text-light").trim();

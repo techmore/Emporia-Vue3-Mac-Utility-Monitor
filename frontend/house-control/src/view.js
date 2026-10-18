@@ -198,13 +198,14 @@ export function createView(canvas, labelContainer, plan, onPick) {
         }else if(poles.has(key)){const pole=poles.get(key);pole.removeFromParent();pole.geometry.dispose();pole.material.dispose();poles.delete(key);}
         label.node.dataset.sensorSource=row.source;
         label.node.classList.toggle('stale',row.stale);
-        label.node.textContent=`${row.name} · ${sensorReading(row)}${row.placement.mount==='pole-base'?' · pole base':''}${row.stale?' · stale':''}`;
+        const reading=metric==='temperature_f' ? format(row.metrics?.temperature_f,'temperature_f') : sensorReading(row);
+        label.node.textContent=`${row.name} · ${reading}${row.placement.mount==='pole-base'?' · pole base':''}${row.stale?' · stale':''}`;
       }
       const maximum = Math.max(1, ...rooms.map(room => Math.max(0, room[metric] ?? 0)));
       for (const label of labels) {
         const room = rooms.find(row => row.id === label.id);
         if (!room) continue;
-        label.node.textContent = `${room.name} · ${format(room[metric], metric)}`;
+        label.node.textContent = room.name + (room[metric]==null?'':` · ${format(room[metric], metric)}`);
         const material = floors.get(label.id).material;
         material.color.copy(floors.get(label.id).userData.baseColor);
         if(metric==='temperature_f'){
