@@ -1,0 +1,9 @@
+{
+  "name": "energy-monitor-house-control",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "vite build && node licenses.mjs" },
+  "dependencies": { "three": "0.186.1" },
+  "devDependencies": { "vite": "8.3.4" },
+  "engines": { "node": ">=22.12.0" }
+}
