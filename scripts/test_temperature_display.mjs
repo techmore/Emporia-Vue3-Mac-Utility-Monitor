@@ -28,3 +28,20 @@ for(const a of outside){
 }
 assert.equal(placeTemperatureLabels([{x:200,y:200,w:100,h:50}],400,400,{left:0,right:400,top:0,bottom:400}).length,0);
 console.log('Outside-house callouts: six sensors stay off the home, separated, bounded, and overflow stays in the list');
+const {temperatureSparkline}=await import('../frontend/house-control/src/temperature-display.js');
+const times=['2026-10-18T00:00:00Z','2026-10-18T01:00:00Z','2026-10-18T02:00:00Z'];
+const crossing=temperatureSparkline([60,80,82],times);
+assert.deepEqual(new Set(crossing.paths.map(row=>row.band)),new Set(['cold','normal','hot']));
+assert.equal(crossing.min,60);assert.equal(crossing.max,82);
+const gaps=temperatureSparkline([60,null,80],times);
+assert.equal(gaps.paths.length,0);assert.equal(gaps.dots.length,2);
+assert.equal(temperatureSparkline([null,null,null],times).min,null);
+assert.equal(temperatureSparkline([0,0,0],times).min,0);
+console.log('24h sparklines split at 68/78 degrees, retain zeros, and never connect missing buckets');
+const {gableProfile}=await import('../frontend/house-control/src/barn-roof.js');
+for(const bounds of [{minX:0,maxX:10,minZ:0,maxZ:6},{minX:-5,maxX:2,minZ:3,maxZ:14}]){
+ const points=gableProfile(bounds,2.6);
+ assert(points[1][1]>points[0][1]);assert.equal(points[1][1],points[4][1]);
+ for(const [x,y,z] of points)assert(x>=bounds.minX&&x<=bounds.maxX&&z>=bounds.minZ&&z<=bounds.maxZ&&y>=2.6);
+}
+console.log('Barn gables keep eaves and ridge within either footprint orientation');

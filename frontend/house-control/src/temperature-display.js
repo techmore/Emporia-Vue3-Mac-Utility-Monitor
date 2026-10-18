@@ -61,3 +61,44 @@ function placeOutsideHouse(items, width, height, house) {
   }
   return placed;
 }
+
+export function temperatureSparkline(values, times, width=100, height=24) {
+  const rows=values.map((value,i)=>({value,time:Date.parse(times[i])}));
+  const valid=rows.filter(row=>Number.isFinite(row.value)&&Number.isFinite(row.time));
+  if(!valid.length)return {paths:[],dots:[],min:null,max:null};
+  const min=Math.min(...valid.map(row=>row.value)),max=Math.max(...valid.map(row=>row.value));
+  const start=Date.parse(times[0]),end=Date.parse(times.at(-1));
+  const low=min-1,span=max-min+2;
+  const x=time=>2+(width-4)*(time-start)/Math.max(1,end-start),y=value=>height-2-(height-4)*(value-low)/span;
+  const point=(time,value)=>`${x(time).toFixed(2)},${y(value).toFixed(2)}`;
+  const band=value=>value<68?'cold':value>78?'hot':'normal';
+  const groups=new Map(),dots=[];
+  for(let i=0;i<rows.length;i++){
+    const a=rows[i],b=rows[i+1];if(!Number.isFinite(a.value)||!Number.isFinite(a.time))continue;
+    if(!b||!Number.isFinite(b.value)||!Number.isFinite(b.time)){
+      if(!i||!Number.isFinite(rows[i-1].value))dots.push({x:x(a.time),y:y(a.value),band:band(a.value)});
+      continue;
+    }
+    const fractions=[0,1,...[68,78].filter(mark=>mark>Math.min(a.value,b.value)&&mark<Math.max(a.value,b.value)).map(mark=>(mark-a.value)/(b.value-a.value))].sort((a,b)=>a-b);
+    for(let j=1;j<fractions.length;j++){
+      const f=fractions[j-1],g=fractions[j],value=(a.value+(b.value-a.value)*(f+g)/2),key=band(value);
+      const path=`M${point(a.time+(b.time-a.time)*f,a.value+(b.value-a.value)*f)}L${point(a.time+(b.time-a.time)*g,a.value+(b.value-a.value)*g)}`;
+      groups.set(key,(groups.get(key)||'')+path);
+    }
+  }
+  return {paths:[...groups].map(([band,path])=>({band,path})),dots,min,max};
+}
+
+export function appendTemperatureTrend(node, history, row, width=100) {
+  const series=history?.series?.find(series=>series.source===row.source&&series.sensor_id===row.sensor_id);
+  const chart=temperatureSparkline(series?.values || [],history?.times || [],width,24);
+  const wrap=document.createElement('span');wrap.className='temperature-trend';
+  if(chart.min==null){wrap.textContent='No 24h observations';node.append(wrap);return;}
+  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox',`0 0 ${width} 24`);svg.setAttribute('width',width);svg.setAttribute('height',24);svg.setAttribute('aria-hidden','true');
+  for(const {band,path} of chart.paths){const line=document.createElementNS(svg.namespaceURI,'path');line.setAttribute('d',path);line.setAttribute('class',band);svg.append(line);}
+  for(const dot of chart.dots){const circle=document.createElementNS(svg.namespaceURI,'circle');circle.setAttribute('cx',dot.x);circle.setAttribute('cy',dot.y);circle.setAttribute('r',2);circle.setAttribute('class',dot.band);svg.append(circle);}
+  const caption=document.createElement('small');
+  const cached=Date.now()/1000-(history.fetched_at || 0)>600;
+  caption.textContent=`24h${cached?' · cached':''} · ${chart.min.toFixed(1)}–${chart.max.toFixed(1)}°F`;
+  wrap.append(svg,caption);wrap.title='Recorded online collector observations; gaps are unknown';node.append(wrap);
+}

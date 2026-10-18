@@ -118,6 +118,42 @@ public class EnergyIndicator : Wingpanel.Indicator {
         return box;
     }
 
+    private void add_temperature_trend (Gtk.Box card, Json.Object root, string source, string identity) {
+        if (!root.has_member ("temperature_history")) return;
+        var history = root.get_object_member ("temperature_history");
+        var series = history.get_array_member ("series");
+        for (uint i = 0; i < series.get_length (); i++) {
+            var row = series.get_object_element (i);
+            if (string_member (row, "source") != source || string_member (row, "sensor_id") != identity) continue;
+            var values = row.get_array_member ("values");
+            double low = double.MAX, high = -double.MAX;
+            for (uint j = 0; j < uint.min (values.get_length (), 200); j++) {
+                if (values.get_element (j).is_null ()) continue;
+                double value = values.get_double_element (j);
+                low = double.min (low, value); high = double.max (high, value);
+            }
+            var caption = new Gtk.Label (low == double.MAX ? "No 24h online observations" : "24h observations · %.1f–%.1f °F".printf (low, high)) { xalign = 0 };
+            caption.add_css_class ("energy-muted"); card.append (caption);
+            if (low == double.MAX) return;
+            var chart = new Gtk.DrawingArea () { content_height = 32, content_width = 200, hexpand = true };
+            double minimum = low - 1, span = high - low + 2;
+            chart.set_draw_func ((area, cr, width, height) => {
+                uint length = uint.min (values.get_length (), 200);
+                for (uint j = 1; j < length; j++) {
+                    if (values.get_element (j - 1).is_null () || values.get_element (j).is_null ()) continue;
+                    double a = values.get_double_element (j - 1), b = values.get_double_element (j), mean = (a + b) / 2;
+                    if (mean < 68) cr.set_source_rgb (0.25, 0.58, 0.80);
+                    else if (mean > 78) cr.set_source_rgb (0.84, 0.34, 0.27);
+                    else cr.set_source_rgb (0.46, 0.50, 0.35);
+                    cr.set_line_width (1.8);
+                    cr.move_to (2 + (width - 4) * (j - 1) / (length - 1.0), height - 2 - (height - 4) * (a - minimum) / span);
+                    cr.line_to (2 + (width - 4) * j / (length - 1.0), height - 2 - (height - 4) * (b - minimum) / span); cr.stroke ();
+                }
+            });
+            card.append (chart); return;
+        }
+    }
+
     private void update () {
         bool showing_temperatures = view_picker.selected == 1;
         int screen_height = 900, screen_width = 1200;
@@ -167,9 +203,12 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     string place = string_member (sensor, "room_name", "Unplaced");
                     var card = metric_card (name, metric (metrics, "temperature_f", "%.1f °F"), place + (stale ? " · last recorded" : " · recent observation"));
                     string source = string_member (sensor, "source"), identity = string_member (sensor, "sensor_id");
+                    add_temperature_trend (card as Gtk.Box, root, source, identity);
                     var button = new Gtk.Button () { child = card, has_frame = false };
                     if (!stale && metrics.has_member ("temperature_f") && !metrics.get_member ("temperature_f").is_null ()) {
                         double value = metrics.get_double_member ("temperature_f");
+                        if (value < 68) button.add_css_class ("temperature-icy");
+                        if (value > 78) button.add_css_class ("temperature-hot-label");
                         button.add_css_class (value < 70 ? "temperature-cold" : value <= 75 ? "temperature-comfortable" : value < 78 ? "temperature-warm" : "temperature-hot");
                     }
                     button.tooltip_text = "Recorded temperature history · " + string_member (sensor, "timestamp");

@@ -115,19 +115,22 @@ same authenticated HTTPS session and private response cache as the existing app.
 The Wingpanel **Temperatures** view includes the saved house preview above the sensor
 cards. **3D home** now embeds the same Three.js scene builder as the web Home 3D
 page, bundled locally in WebKit. It shows full walls with automatic cutaways, textured
-floors, saved furniture, windows, doors, stair treads, and stacked levels. Choose
+floors, saved furniture, windows, doors, stair treads, and stacked levels. The attic has a
+semi-transparent barn gable with ridge and rafter framing, preserving the view inside. Choose
 **Whole home** or an individual floor inside the scene, drag to rotate, scroll to zoom,
 and use **Reset view** to frame the home again. The dropdown starts 12 degrees farther
 overhead than the saved camera, with upper floors at 45% opacity. Use the **Floors**
 slider to adjust transparency; the ground floor stays solid. Click a room to open its first mapped
 temperature sensor's history. Compact temperature badges sit outside the projected house bounds, with
 connector lines anchored to the meter points. The camera reserves side space for these
-callouts; badges stay separated and remain available in the sensor list when zooming
+callouts; badges include 24-hour recorded-observation sparklines and stay separated and remain available in the sensor list when zooming
 leaves no room outside the home. Select
 a badge for that exact sensor's history. Recent readings use the temperature bands;
 last-recorded readings use a grey dashed border and never color room averages. Recent
 readings below 68°F have a light-blue badge with a frosted white base; readings above
-78°F have a light-red badge. The
+78°F have a light-red badge. Historical sparkline segments use these same thresholds;
+missing/offline buckets remain gaps. The client refreshes its private, origin- and
+collector-scoped 24-hour history cache every five minutes. Old history is labeled cached. The
 recent sensor range excludes stale and missing readings. **All sensors** lists every
 visible-floor sensor, including unplaced sensors in Whole home, with direct history
 buttons and explicit recent/last-recorded/missing status. Native sensor cards are

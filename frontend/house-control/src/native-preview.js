@@ -1,6 +1,6 @@
 // The dropdown and Home 3D deliberately share the same scene builder.
 import { createView } from './view.js';
-import { readingState, temperatureSummary } from './temperature-display.js';
+import { readingState, temperatureSummary, appendTemperatureTrend } from './temperature-display.js';
 let view, signature, state, selected = 'all';
 const canvas = document.querySelector('canvas'), labels = document.querySelector('#labels');
 const picker = document.querySelector('select');
@@ -14,7 +14,7 @@ function update() {
     const readings = sensors.filter(row => row.placement?.room_id === room.id && Number.isFinite(row.metrics?.temperature_f));
     return {...room, temperature_f: readings.length ? readings.reduce((sum,row)=>sum+row.metrics.temperature_f,0)/readings.length : null};
   });
-  view.update(rooms, 'temperature_f', format, sensors);
+  view.update(rooms, 'temperature_f', format, sensors, state.temperature_history);
   const visible=(state.temperature_sensors || []).filter(row=>selected==='all' || row.level===selected);
   const summary=temperatureSummary(visible,state.cache_fresh);
   document.querySelector('#overview').textContent=summary.recent ?
@@ -28,10 +28,11 @@ function update() {
   })) {
     const display=readingState(row,state.cache_fresh);
     const button=document.createElement('button');button.className='sensor-row';button.dataset.band=display.band;
+    button.dataset.ice=String(display.status==='recent'&&display.value<68);button.dataset.heat=String(display.status==='recent'&&display.value>78);
     const names=document.createElement('span');names.className='sensor-names';
     const name=document.createElement('b');name.textContent=row.room_name || row.name;
     const detail=document.createElement('small');detail.textContent=(row.placement?'':'Unplaced · ')+row.name;
-    names.append(name,detail);
+    names.append(name,detail);appendTemperatureTrend(names,state.temperature_history,row,140);
     const reading=document.createElement('span');reading.className='sensor-reading';
     const value=document.createElement('strong');value.textContent=format(display.value);
     const status=document.createElement('small');status.textContent=display.status==='recent'?'Recent observation':display.status==='stale'?'Last recorded · not current':'No recorded temperature';
@@ -57,7 +58,7 @@ window.renderHouse = data => {
       }
       if (![...picker.options].some(option => option.value === selected)) selected = 'all';
       picker.value = selected;
-      view = createView(canvas, labels, plan, room => window.webkit?.messageHandlers.history.postMessage(room), {floorOpacity: Number(document.querySelector('#opacity').value) / 100, compactTemperatures:true, outsideTemperatureLabels:true, onSensorPick:openSensor});
+      view = createView(canvas, labels, plan, room => window.webkit?.messageHandlers.history.postMessage(room), {floorOpacity: Number(document.querySelector('#opacity').value) / 100, gableAttic:true, compactTemperatures:true, outsideTemperatureLabels:true, onSensorPick:openSensor});
       view.setLevel(selected); signature = next;
     }
     update();

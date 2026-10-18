@@ -13,12 +13,13 @@ int main (string[] args) {
     var loop = new MainLoop ();
     var web = (WebKit.WebView) home.get_first_child ();
     Timeout.add_seconds (5, () => {
-        web.evaluate_javascript.begin ("window.webkit.messageHandlers.history.postMessage('living'); document.querySelector('.home3d-sensor-marker')?.click(); JSON.stringify({ready:window.nativeHouseReady,error:window.nativeHouseError,labels:document.querySelectorAll('.home3d-label').length,canvas:document.querySelector('canvas').width})", -1, null, null, null, (o,r) => {
+        web.evaluate_javascript.begin ("window.webkit.messageHandlers.history.postMessage('living'); document.querySelector('.home3d-sensor-marker')?.click(); JSON.stringify({ready:window.nativeHouseReady,error:window.nativeHouseError,labels:document.querySelectorAll('.home3d-label').length,canvas:document.querySelector('canvas').width,trends:document.querySelectorAll('.temperature-trend path').length})", -1, null, null, null, (o,r) => {
             try {
                 string status = web.evaluate_javascript.end (r).to_string ();
                 stdout.printf ("%s\n", status);
                 assert (status.contains ("\"ready\":true"));
                 assert (!status.contains ("\"error\""));
+                if (args[1].has_suffix ("native-house.json")) assert (!status.contains ("\"trends\":0"));
             }
             catch (Error e) { stderr.printf ("%s\n", e.message); }
             web.get_snapshot.begin (WebKit.SnapshotRegion.VISIBLE, WebKit.SnapshotOptions.NONE, null, (o,r) => {

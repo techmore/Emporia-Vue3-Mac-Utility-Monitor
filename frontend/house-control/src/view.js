@@ -6,8 +6,9 @@ import { buildHouse } from '../vendor/three/house.js';
 import { buildFurniture } from '../vendor/three/furniture.js';
 import { sensorKey, sensorReading } from './sensors.js';
 import { levelsFor, itemLevel, planForLevel, stairTreads, floorTiles } from './levels.js';
+import { buildBarnGable } from './barn-roof.js';
 import { temperatureBand } from './temperatures.js';
-import { placeTemperatureLabels } from './temperature-display.js';
+import { placeTemperatureLabels, appendTemperatureTrend } from './temperature-display.js';
 
 export function createView(canvas, labelContainer, plan, onPick, options = {}) {
   const levels = levelsFor(plan);
@@ -51,7 +52,9 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
         floor.material.depthWrite = options.floorOpacity >= 1;
       }
     }
-    group.add(house.group,buildFurniture(normalized.furniture));scene.add(group);
+    group.add(house.group,buildFurniture(normalized.furniture));
+    if(options.gableAttic && /attic/i.test(level.id+' '+level.name)) group.add(buildBarnGable(normalized.bounds,normalized.wallHeight));
+    scene.add(group);
     return {level,group,floors:house.floors};
   });
   const flights=(plan.stairs || []).map(stair=>{
@@ -233,7 +236,7 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
       if(!bounds.isEmpty()){bounds.getBoundingSphere(sphere);center.copy(sphere.center);}
       reset();
     },
-    update(rooms, metric, format, sensors=[]) {
+    update(rooms, metric, format, sensors=[], history=null) {
       const placed=sensors.filter(row=>row.placement);
       const keys=new Set(placed.map(sensorKey));
       for(const [key,pole] of poles)if(!keys.has(key)){pole.removeFromParent();pole.geometry.dispose();pole.material.dispose();poles.delete(key);}
@@ -275,6 +278,7 @@ export function createView(canvas, labelContainer, plan, onPick, options = {}) {
           if(placed.filter(sensor=>sensor.placement.room_id===row.placement.room_id).length>1){
             const source=document.createElement('small');source.textContent=row.name;label.node.append(source);
           }
+          appendTemperatureTrend(label.node,history,row,96);
           label.node.title=`${row.name} · ${row.timestamp || 'Time unknown'} · open history`;
           label.node.setAttribute('aria-label',`${name}, ${display.value==null?'no reading':display.value.toFixed(1)+' degrees Fahrenheit'}, ${display.status}, open history`);
         }else label.node.textContent=`${row.name} · ${reading}${row.placement.mount==='pole-base'?' · pole base':''}${row.stale?' · stale':''}`;

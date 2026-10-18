@@ -33,3 +33,9 @@
 .energy-monitor .temperature-comfortable { border-left: 4px solid #c3a326; }
 .energy-monitor .temperature-warm { border-left: 4px solid #b07d2a; }
 .energy-monitor .temperature-hot { border-left: 4px solid #c0392b; }
+
+.energy-monitor .temperature-icy { background: linear-gradient(to bottom, #d9efff, #fff); color: #183c57; }
+.energy-monitor .temperature-hot-label { background: linear-gradient(to bottom, #ffddd6, #fff0eb); color: #772b23; }
+.energy-monitor .temperature-icy .energy-card, .energy-monitor .temperature-hot-label .energy-card { background: transparent; color: inherit; }
+.energy-monitor .temperature-icy .energy-muted { color: #426580; }
+.energy-monitor .temperature-hot-label .energy-muted { color: #8f4c43; }

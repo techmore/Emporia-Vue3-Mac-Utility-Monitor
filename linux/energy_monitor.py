@@ -17,7 +17,7 @@ gi.require_version("Soup", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, WebKit, Soup
 
 from client_core import (DEFAULT_ORIGIN, cache_key, display_state, private_json,
-                         read_json, validate_origin, validate_summary)
+                         read_json, validate_origin, validate_summary, validate_temperature_history)
 
 from native_auth import load_credentials, session_cookie
 
@@ -44,6 +44,8 @@ class EnergyMonitor(Gtk.Application):
         self.temperature_window = None
         self.temperature_callbacks = {}
         self.temperature_request = 0
+        self.trend_record = None
+        self.last_trend_attempt = 0
         self.origin = DEFAULT_ORIGIN
         try:
             self.origin = validate_origin((read_json(CONFIG) or {}).get("origin", DEFAULT_ORIGIN))
@@ -162,6 +164,8 @@ class EnergyMonitor(Gtk.Application):
         manager.connect("script-message-received::history", self.receive_history)
         manager.register_script_message_handler('temperatures', None)
         manager.connect('script-message-received::temperatures', self.receive_temperatures)
+        manager.register_script_message_handler('trend', None)
+        manager.connect('script-message-received::trend', self.receive_trend)
         self.web = WebKit.WebView(network_session=session, user_content_manager=manager,
                                   vexpand=True, hexpand=True)
         self.web.connect("load-changed", self.loaded)
@@ -206,10 +210,25 @@ class EnergyMonitor(Gtk.Application):
             self.record = read_json(self.cache_file())
         except (OSError, ValueError):
             self.record = None
+        try:
+            self.trend_record = read_json(STATE / 'responses' / cache_key(self.origin, '/api/house-control/temperatures?window=24h'))
+            if self.trend_record:
+                validate_temperature_history(self.trend_record['data'])
+        except (OSError, ValueError, KeyError, TypeError):
+            self.trend_record = None
         self.publish()
 
     def publish(self):
         state = display_state(self.record, self.origin, self.connected)
+        if (self.trend_record and self.trend_record.get('origin') == self.origin
+                and self.trend_record.get('source_id') == self.identity()[0]):
+            payload = self.trend_record['data']
+            state['temperature_history'] = {
+                'times': payload['times'], 'start': payload['start'], 'end': payload['end'],
+                'fetched_at': self.trend_record['fetched_at'],
+                'series': [{'source': row['source'], 'sensor_id': row['sensor_id'],
+                            'values': row['values']} for row in payload['series']],
+            }
         private_json(STATE / "summary.json", state)
         if self.temperature_window:
             self.temperature_window.update_current(state.get('temperature_sensors', []))
@@ -299,15 +318,28 @@ class EnergyMonitor(Gtk.Application):
         if urlsplit(self.origin).netloc != url.netloc or urlsplit(self.origin).scheme != url.scheme:
             return GLib.SOURCE_CONTINUE
         self.pending = True
+        include_trends = time.monotonic() - self.last_trend_attempt >= 300
+        if include_trends:
+            self.last_trend_attempt = time.monotonic()
         script = """(async () => {
           try {
             const response = await fetch('/api/menu-summary', {credentials:'same-origin', cache:'no-store', signal:AbortSignal.timeout(8000)});
             if (!response.ok) throw new Error('Collector response');
             const text = await response.text();
             if (text.length > 4194304) throw new Error('Oversized summary');
-            window.webkit.messageHandlers.energy.postMessage(JSON.stringify({ok:true,data:JSON.parse(text)}));
+            const data=JSON.parse(text);
+            window.webkit.messageHandlers.energy.postMessage(JSON.stringify({ok:true,data}));
+            if (INCLUDE_TEMPERATURE_TRENDS) {
+              try {
+                const r=await fetch('/api/house-control/temperatures?window=24h',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(10000)});
+                if(!r.ok)throw new Error('History unavailable');
+                const history=await r.text();if(history.length>4194304)throw new Error('Oversized');
+                window.webkit.messageHandlers.trend.postMessage(JSON.stringify({origin:location.origin,source_id:data.collector_source_id,data:JSON.parse(history)}));
+              } catch (_) { /* Retain the previous recorded trend on transport failure. */ }
+            }
           } catch (_) { window.webkit.messageHandlers.energy.postMessage(JSON.stringify({ok:false})); }
         })(); null;"""
+        script = script.replace("INCLUDE_TEMPERATURE_TRENDS", "true" if include_trends else "false")
         self.web.evaluate_javascript(script, -1, None, self.origin, None, self.script_done, None)
         return GLib.SOURCE_CONTINUE
 
@@ -346,6 +378,27 @@ class EnergyMonitor(Gtk.Application):
             self.connected = False
             self.status.set_label("Collector unavailable or sign-in required. Recorded cache is retained.")
         self.publish()
+
+    def receive_trend(self, manager, value):
+        current, trusted = urlsplit(self.web.get_uri() or ''), urlsplit(self.origin)
+        if (current.scheme, current.netloc) != (trusted.scheme, trusted.netloc):
+            return
+        try:
+            raw = value.to_string()
+            if len(raw) > 4 * 1024 * 1024:
+                return
+            message = json.loads(raw)
+            if message.get('origin') != self.origin or message.get('source_id') != self.identity()[0]:
+                return
+            payload = validate_temperature_history(message['data'])
+            if payload['window'] != '24h':
+                return
+            self.trend_record = {'origin': self.origin, 'source_id': self.identity()[0],
+                                 'fetched_at': time.time(), 'data': payload}
+            private_json(STATE / 'responses' / cache_key(self.origin, '/api/house-control/temperatures?window=24h'), self.trend_record)
+            self.publish()
+        except (ValueError, OSError, KeyError, TypeError):
+            return
 
     def open_path(self, path):
         self.pending_path = path
