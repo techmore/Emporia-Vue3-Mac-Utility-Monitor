@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import fcntl
+from bisect import bisect_left
 import json
 import logging
 import math
@@ -18,7 +19,7 @@ import pyemvue
 import requests
 from pyemvue.enums import Scale, Unit
 
-from runtime_store import write_private_json, update_private_json
+from runtime_store import write_private_json, update_private_json, publish_private_text
 from timestamp_model import classify_timestamp, reporting_day_bounds
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
@@ -1578,10 +1579,9 @@ def write_monthly_reports(directory: str | None = None) -> list[str]:
         lines += [f"| {c['channel_name']} | {c['kwh'] or 0:.1f} | ${(c['cents'] or 0) / 100:.2f} |"
                   for c in month["circuits"]]
         lines += ["", "Recorded data only; gaps are not estimated."]
-        os.makedirs(directory, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + "\n")
-        written.append(path)
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        if publish_private_text(path, "\n".join(lines) + "\n"):
+            written.append(path)
     return written
 
 
@@ -2565,6 +2565,32 @@ def _refresh_import_snapshot_with_conn(conn, device_gid: str) -> None:
         _upsert_latest_snapshot_with_conn(conn, **dict(row))
 
 
+def _interval_utc_candidates(stamp: str, seconds: float) -> set[tuple[float, float]]:
+    """Conservatively consider both folds of legacy local clocks when comparing intervals."""
+    moment = datetime.fromisoformat(stamp)
+    return {(start, start + seconds) for fold in (0, 1)
+            for start in (moment.replace(fold=fold).astimezone(timezone.utc).timestamp(),)}
+
+
+def _add_coverage(coverage: list[tuple[float, float]], start: float, end: float) -> None:
+    """Keep a sorted union, so overlap checks don't rescan the database for every row."""
+    index = bisect_left(coverage, (start, float('-inf')))
+    if index and coverage[index - 1][1] >= start:
+        index -= 1
+    stop = index
+    while stop < len(coverage) and coverage[stop][0] <= end:
+        start = min(start, coverage[stop][0])
+        end = max(end, coverage[stop][1])
+        stop += 1
+    coverage[index:stop] = [(start, end)]
+
+
+def _intersects_coverage(coverage: list[tuple[float, float]], start: float, end: float) -> bool:
+    index = bisect_left(coverage, (start, float('-inf')))
+    return ((index > 0 and coverage[index - 1][1] > start)
+            or (index < len(coverage) and coverage[index][0] < end))
+
+
 def import_emporia_csv(
     filepath: str,
     device_gid: str | None = None,
@@ -2679,11 +2705,54 @@ def import_emporia_csv(
         with conn:
             conn.execute('BEGIN IMMEDIATE')
             inserted = 0
-            compacted_conflicts = 0
+            compacted_conflicts = interval_conflicts = 0
+            coverage_cache = {}
+            # Every accepted source interval is <=25 hours. Include preceding intervals
+            # and DST clock offsets around the complete incoming file's time range.
+            lower, upper = '', ''
+            if rows_to_insert:
+                try:
+                    lower = (datetime.fromisoformat(min(row[0] for row in rows_to_insert)) - timedelta(hours=27)).isoformat()
+                except OverflowError:
+                    lower = datetime.min.isoformat()
+                try:
+                    upper = (datetime.fromisoformat(max(row[0] for row in rows_to_insert)) + timedelta(hours=27)).isoformat()
+                except OverflowError:
+                    upper = datetime.max.isoformat()
+
+            def known_coverage(gid, name):
+                key = (gid, name)
+                if key not in coverage_cache:
+                    coverage = []
+                    cursor = conn.execute("""SELECT r.timestamp,p.interval_seconds FROM readings r
+                        JOIN reading_provenance p ON p.reading_id=r.id
+                        WHERE r.device_gid=? AND r.channel_name=? AND r.timestamp>=? AND r.timestamp<=?
+                          AND p.interval_seconds IS NOT NULL ORDER BY r.timestamp""",
+                        (gid, name, lower, upper))
+                    for saved in cursor:
+                        for start, end in _interval_utc_candidates(saved['timestamp'], saved['interval_seconds']):
+                            _add_coverage(coverage, start, end)
+                    coverage_cache[key] = coverage
+                return coverage_cache[key]
+
             for row in rows_to_insert:
-                existing = conn.execute("SELECT 1 FROM readings WHERE timestamp=? AND device_gid=? AND channel_name=?",
-                                        (row[0], row[1], row[3])).fetchone()
+                existing = conn.execute("""SELECT p.reading_id,p.interval_seconds FROM readings r
+                    LEFT JOIN reading_provenance p ON p.reading_id=r.id
+                    WHERE r.timestamp=? AND r.device_gid=? AND r.channel_name=?""",
+                    (row[0], row[1], row[3])).fetchone()
                 if existing:
+                    if existing['reading_id'] is not None and existing['interval_seconds'] != row[6]:
+                        interval_conflicts += 1
+                        errors += 1
+                    continue
+                coverage = known_coverage(row[1], row[3])
+                # Without a declared duration, refuse an occupied hour rather than
+                # guessing an interval or silently mixing incompatible resolutions.
+                candidates = _interval_utc_candidates(row[0] if row[6] is not None else row[0][:13]+':00:00',
+                                                      row[6] if row[6] is not None else 3600)
+                if any(_intersects_coverage(coverage, start, end) for start, end in candidates):
+                    interval_conflicts += 1
+                    errors += 1
                     continue
                 first_hour = last_hour = row[0][:13]
                 if row[6] is not None:
@@ -2699,7 +2768,7 @@ def import_emporia_csv(
                     WHERE device_gid=? AND channel_name=? AND hour_key BETWEEN ? AND ?
                     UNION ALL
                     SELECT 1 FROM readings r LEFT JOIN reading_provenance p ON p.reading_id=r.id
-                    WHERE r.device_gid=? AND r.channel_name=? AND p.reading_id IS NULL
+                    WHERE r.device_gid=? AND r.channel_name=? AND p.interval_seconds IS NULL
                       AND r.timestamp>=? AND r.timestamp<=? LIMIT 1""",
                     (row[1], row[3], first_hour, last_hour, row[1], row[3],
                      first_hour+':00:00', last_hour+':59:59.999999')).fetchone()
@@ -2717,23 +2786,27 @@ def import_emporia_csv(
                         VALUES (?, 'csv_import', ?, ?, ?)""",
                         (cursor.lastrowid, row[6], zone, row[7]))
                     inserted += 1
-            skipped += len(rows_to_insert) - inserted - compacted_conflicts
-            if rows_to_insert:
+                    if row[6] is not None:
+                        for start, end in candidates:
+                            _add_coverage(coverage, start, end)
+            skipped += len(rows_to_insert) - inserted - compacted_conflicts - interval_conflicts
+            if inserted:
                 _refresh_import_snapshot_with_conn(conn, gid)
-            _save_device_capabilities_with_conn(
-                conn, device_gid=gid,
-                service_mode=_classify_service_mode(**capability),
-                source='csv_import', **capability,
-            )
+            if inserted or not (compacted_conflicts or interval_conflicts):
+                _save_device_capabilities_with_conn(
+                    conn, device_gid=gid,
+                    service_mode=_classify_service_mode(**capability),
+                    source='csv_import', **capability,
+                )
     finally:
         conn.close()
     duration = next(iter(durations)) if len(durations) == 1 else _CSV_FIXED_INTERVAL_SECONDS.get(interval)
     unit = next(iter(units)) if len(units) == 1 else 'mixed'
     return {
         'imported': inserted, 'skipped': skipped, 'errors': errors,
-        'compacted_conflicts': compacted_conflicts,
-        'message': (f'{compacted_conflicts} rows overlap summarized or unverified history and need review before import.'
-                    if compacted_conflicts else ''),
+        'compacted_conflicts': compacted_conflicts, 'interval_conflicts': interval_conflicts,
+        'message': (f'{compacted_conflicts + interval_conflicts} rows overlap existing recorded intervals or unverified history and need review before import.'
+                    if compacted_conflicts or interval_conflicts else ''),
         'unit': unit, 'interval': interval, 'interval_seconds': duration,
         'source_timezone': zone, 'ambiguous_timestamps': ambiguous,
         'nonexistent_timestamps': nonexistent,

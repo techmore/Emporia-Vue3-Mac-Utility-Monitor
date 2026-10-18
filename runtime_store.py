@@ -40,3 +40,21 @@ def update_private_json(path: str | Path, change: Callable[[dict], None]) -> dic
         change(data)
         write_private_json(target, data)
         return data
+
+
+def publish_private_text(path: str | Path, text: str) -> bool:
+    """Atomically publish a complete UTF-8 file without replacing an existing one."""
+    target = Path(path)
+    descriptor, name = tempfile.mkstemp(prefix=f'.{target.name}.', dir=target.parent)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(name, target)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        Path(name).unlink(missing_ok=True)

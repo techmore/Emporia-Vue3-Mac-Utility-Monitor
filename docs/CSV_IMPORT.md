@@ -28,6 +28,15 @@ the rejected upload value. Older uploads cannot replace newer accepted snapshots
 Known validation errors return HTTP 400; unexpected publication failures return
 HTTP 500 with a generic message and details in the private server log.
 
+Since 2.3.61, imports also compare known UTC interval coverage for the same panel
+and channel. Overlapping resolutions (such as an hour and its constituent
+15-minute buckets) are counted in `interval_conflicts` and `errors`, regardless
+of import order. Already accepted readings remain unchanged; adjacent intervals
+are allowed. Same-key, same-duration duplicates remain skipped. Unknown durations
+are handled conservatively rather than being assigned guessed coverage. Accepted
+non-overlapping rows still publish together in one transaction. Existing overlaps
+are not automatically rewritten or reconciled.
+
 ## Historical repair
 
 The old startup correction divided exact-second timestamps on non-primary

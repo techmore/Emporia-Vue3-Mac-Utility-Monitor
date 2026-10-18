@@ -77,7 +77,7 @@ class ReadingProvenanceTests(unittest.TestCase):
         self.import_bucket('1H')
         metadata = self.rows('reading_provenance')
         duplicate = self.import_bucket('1MIN', 999)
-        self.assertEqual((duplicate['imported'], duplicate['skipped']), (0, 1))
+        self.assertEqual((duplicate['imported'], duplicate['interval_conflicts'], duplicate['errors']), (0, 1, 1))
         self.assertEqual(self.rows('reading_provenance'), metadata)
         self.assertEqual(energy.get_circuit_history('Pump', 'QA')['average_watts'], 1000)
 

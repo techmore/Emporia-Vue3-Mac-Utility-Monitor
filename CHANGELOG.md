@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.61 - 2026-10-18
+
+- Reject overlapping recorded intervals across CSV resolutions and report conflicts in either import order, preserving accepted history.
+- Publish complete, private monthly reports atomically; interrupted writes leave no partial final report and retries can succeed.
+
 ## 2.3.60 - 2026-10-18
 
 - Preserve imported intervals during compaction and report imports overlapping summarized or unverified history.
