@@ -115,11 +115,26 @@ the enabled service configuration; a full reboot has not been performed.
 
 ## Direct Linux HTTPS connection — 2026-10-18
 
-The owner's desktop now selects `https://energy.stoverparc.org` instead of
-loopback 5052. The optional SSH forward is stopped and disabled. Public HTTPS
-responds with the Google OAuth gateway for anonymous dashboard and summary
-requests. The desktop retains its private cookie store and requires an allowed
-Google sign-in. Successful authenticated access remains pending the owner's
-sign-in; an anonymous redirect is not proof of completed OAuth access.
-The connection dialog now recommends direct HTTPS and no longer suggests a
-tunnel as the remedy for any transport failure.
+The final desktop origin is `https://sdolbec-ser8.tailf80972.ts.net:8445`.
+The optional SSH forward is stopped and disabled. A first attempt to use the
+public Google gateway failed in the embedded WebKitGTK browser (passkeys are
+unsupported), so that is not the native client's connection path.
+
+SER8 now uses persistent Tailscale Serve HTTPS port 8445 to proxy host loopback
+15033, preserving its existing 8443/8444 services. No Funnel is enabled. The
+collector accepts the exact `ENERGY_TAILNET_ORIGIN` only with the configured
+`ENERGY_TAILNET_USER` matching Serve's verified `Tailscale-User-Login` header.
+Both settings are opt-in; absent settings preserve the previous host policy.
+Deploy only behind Tailscale Serve, which supplies the verified identity header,
+and keep the backend loopback-bound. A caller-supplied header is not authentication
+on a directly exposed backend. Same-origin writes remain enforced.
+
+The public Google-protected site remains unchanged. Valid-certificate private
+HTTPS returns recorded power; requests to the tailnet origin without the identity
+header return 403. Client Tailscale connectivity is required; no SSH process is
+required. The existing collector/poller and database are retained.
+
+Rollback: switch the client origin back, disable only this Serve handler with
+`tailscale serve --https=8445 off`, remove the two ENERGY_TAILNET settings and
+restart only energy-dashboard. Deployment backups of web.py and the private
+environment file use the suffix `.pre-tailnet-20261018` inside the container.

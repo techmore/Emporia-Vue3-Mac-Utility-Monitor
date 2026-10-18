@@ -4,13 +4,18 @@ This client connects to an existing collector; it does not start another Emporia
 Run `bash linux/install.sh` with GTK 4, WebKitGTK 6, Python GI/Cairo and the Wingpanel 9
 build dependencies installed. The installer adds a desktop launcher, login autostart,
 and a native Wingpanel indicator. Choose **Collector Connection** to configure an
-HTTPS origin. The default is `https://energy.stoverparc.org`: sign in with your
-allowed Google account in the app. No SSH tunnel is needed for this connection.
-Cookies are stored privately and reused across launches. Never disable TLS verification.
-If an older installation still points to `http://127.0.0.1:5052` or another local
-port, change **Collector Connection** to `https://energy.stoverparc.org`.
-After confirming HTTPS access, disable the optional legacy forward with
-`systemctl --user disable --now energy-collector-tunnel.service`.
+HTTPS origin. The default is the private Tailscale Serve endpoint
+`https://sdolbec-ser8.tailf80972.ts.net:8445`. Keep Tailscale signed in on the
+client; no SSH tunnel or embedded Google login is needed. The server accepts
+only the configured Tailscale user identity. Never disable TLS verification.
+If an older installation still points to a loopback port or the public website,
+change **Collector Connection** to this private HTTPS origin. Disable the legacy
+forward with `systemctl --user disable --now energy-collector-tunnel.service`.
+
+The public `https://energy.stoverparc.org` site remains available in a regular
+browser with Google sign-in. WebKitGTK does not support passkeys, and Google OAuth
+should not be run in embedded browsers. Browser cookies do not sign the native
+client in; use the private Tailscale endpoint for the native app.
 
 The dashboard retains the collector's web functionality, authentication cookies and
 downloads. The native menu shows power, recorded totals and circuit history with

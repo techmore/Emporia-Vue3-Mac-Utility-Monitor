@@ -81,6 +81,40 @@ class ReleaseHardeningTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     web._public_origin_from_environment()
 
+    def test_tailnet_origin_requires_exact_identity_and_same_origin(self):
+        origin = 'https://collector.example.ts.net:8445'
+        with patch.object(web, 'TAILNET_ORIGIN', origin), patch.object(web, 'TAILNET_USER', 'owner@example.org'):
+            client = web.app.test_client()
+            for user in (None, 'other@example.org'):
+                headers = {} if user is None else {'Tailscale-User-Login': user}
+                self.assertEqual(client.get('/api/version', base_url=origin,
+                                            headers=headers).status_code, 403)
+            headers = {'Tailscale-User-Login': 'owner@example.org'}
+            self.assertEqual(client.get('/api/version', base_url=origin, headers=headers).status_code, 200)
+            self.assertEqual(client.get('/api/version', base_url=origin.replace('https:', 'http:'),
+                                        headers=headers).status_code, 403)
+            with patch.object(energy, '_write_json_file') as write:
+                response = client.post('/api/settings/config', base_url=origin, json={'rate_cents': 12},
+                                       headers={**headers, 'Origin': 'https://attacker.example'})
+                self.assertEqual(response.status_code, 403)
+                write.assert_not_called()
+
+    def test_tailnet_configuration_rejects_incomplete_and_unsafe_origins(self):
+        for origin, user in (('https://collector.example.ts.net', ''),
+                             ('', 'owner@example.org'),
+                             ('http://collector.example.ts.net', 'owner@example.org'),
+                             ('https://public.example.org', 'owner@example.org'),
+                             ('https://collector.example.ts.net/path', 'owner@example.org'),
+                             ('https://x@collector.example.ts.net', 'owner@example.org')):
+            with self.subTest(origin=origin), patch.dict(os.environ, {
+                    'ENERGY_TAILNET_ORIGIN': origin, 'ENERGY_TAILNET_USER': user}):
+                with self.assertRaises(ValueError):
+                    web._tailnet_access_from_environment()
+        with patch.dict(os.environ, {'ENERGY_TAILNET_ORIGIN': 'https://collector.example.ts.net:8445',
+                                     'ENERGY_TAILNET_USER': 'owner@example.org'}):
+            self.assertEqual(web._tailnet_access_from_environment(),
+                             ('https://collector.example.ts.net:8445', 'owner@example.org'))
+
     def test_mutations_require_json_objects(self):
         client = web.app.test_client()
         self.assertEqual(client.post('/api/settings/config', data='{}', content_type='text/plain').status_code, 415)
