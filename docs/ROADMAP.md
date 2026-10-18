@@ -70,3 +70,11 @@ Direct private HTTPS over Tailscale is now the Linux default. The owner's deskto
 uses SER8 Serve port 8445 with an exact origin/user allowlist; its SSH forward is
 disabled. Public Google sign-in stays in a regular browser because embedded
 WebKitGTK cannot handle passkeys. Next: confirm direct HTTPS after full reboot.
+
+## Public native HTTPS across reboots — 2026-10-18
+
+Supersedes the private Tailscale default: the native app now uses the public HTTPS
+gateway with a separate origin-bound device credential and automatic cookie
+renewal. It starts at graphical login through an enabled systemd user service
+with crash restart and network retry. Cold-session reauthentication is verified;
+full machine reboot remains untested. SSH/Tailscale are not runtime dependencies.
