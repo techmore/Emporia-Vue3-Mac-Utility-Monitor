@@ -55,7 +55,7 @@ class ReadingProvenanceTests(unittest.TestCase):
         self.assertEqual(result['interval_seconds'], 3600)
         row = energy.get_latest('QA')[0]
         self.assertFalse(web._reading_fresh(row))
-        self.assertEqual(web._watts_estimate(row), 0)
+        self.assertIsNone(web._watts_estimate(row))
         metadata = self.rows('reading_provenance')[0]
         self.assertEqual((metadata['source_timezone'], metadata['source_unit']), ('UTC', 'kWh'))
 

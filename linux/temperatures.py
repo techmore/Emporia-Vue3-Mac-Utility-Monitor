@@ -25,6 +25,7 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.closed = False
         self.collector_source = app.identity()[0]
         self.generation = 0
+        self.payload_endpoint = None
         self.connect('close-request', self.close)
         self.add_css_class('energy-monitor')
         self.set_titlebar(Gtk.HeaderBar())
@@ -93,6 +94,7 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.collector_source = source_id
         self.generation += 1
         self.payload = None
+        self.payload_endpoint = None
         self.pending = False
         self.ids = []
         self.requested = None
@@ -137,10 +139,14 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.generation += 1
         generation = self.generation
         cache = self.app.cache_file().parent / temperature_history_cache_key(self.app.origin, source_id, endpoint)
-        if not self.payload:
-            record = load_temperature_window_cache(cache.parent, self.app.origin, source_id, endpoint)
-            if record:
-                self.install(record['data'], cached=True)
+        record = load_temperature_window_cache(cache.parent, self.app.origin, source_id, endpoint)
+        if record:
+            self.payload_endpoint = endpoint
+            self.install(record['data'], cached=True)
+        elif self.payload and getattr(self, 'payload_endpoint', None) != endpoint:
+            self.payload = None
+            self.readout.set_label('No cached history for the selected range.')
+            self.chart.queue_draw()
         self.pending = True
         self.last_fetch = time.monotonic()
         self.status.set_label('Loading recorded temperature history…')
@@ -161,6 +167,7 @@ class TemperatureWindow(Gtk.ApplicationWindow):
                 self.status.set_label('Collector unavailable · retained history is cached. Connect and refresh with Now.')
                 self.render()
                 return
+            self.payload_endpoint = endpoint
             self.install(payload, cached=False)
         self.app.fetch_temperature_history(endpoint, received)
 

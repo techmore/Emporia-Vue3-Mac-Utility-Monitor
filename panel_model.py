@@ -1,11 +1,13 @@
 """Shared breaker display calculations; never infer an unconfigured rating."""
 
-def breaker_load(watts: float, amps: int | None, poles: int = 1) -> dict:
+def breaker_load(watts: float | None, amps: int | None, poles: int = 1) -> dict:
     unknown = {
         "zone_cls": "", "load_cls": "", "fill_cls": "fill-normal",
         "load_bar_w": 0, "load_label": "Rating not set" if not amps else "",
         "safe_bar_pct": 0, "safe_cls": "", "rating_known": bool(amps and amps > 0),
     }
+    if watts is None:
+        return {**unknown, 'load_label': 'No current reading'}
     if not amps or amps <= 0 or watts <= 0:
         return unknown
     current = watts / (240 if poles == 2 else 120)

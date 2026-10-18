@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.60 - 2026-10-18
+
+- Preserve imported intervals during compaction and report imports overlapping summarized or unverified history.
+- Keep unknown/stale power distinct from verified zero in web panels, cost displays and live updates.
+- Restore the selected cached temperature history range while offline; clear unavailable ranges.
+
 ## 2.3.59 - 2026-10-18
 
 - Record source and interval metadata for new polls/imports; prevent imports and unknown legacy rows from becoming live power estimates.

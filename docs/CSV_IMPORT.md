@@ -48,8 +48,14 @@ in `reading_provenance`, atomically with readings and snapshots. New live polls
 record their known 60-second interval. Circuit history exposes interval-average
 watts separately from live power: imports never establish live power. Unknown
 legacy provenance yields unknown power; existing energy and cost are unchanged.
-Compaction removes metadata with deleted raw rows; replacement aggregates retain
-unknown provenance. Replication does not yet transfer this metadata, so the full
+Since 2.3.60, compaction preserves entire channel-hours containing known CSV
+intervals, so reimporting accepted exports remains idempotent. Other rolled hours
+have durable markers. New rows overlapping those markers or existing history with
+unverified provenance are reported in `compacted_conflicts` and `errors`, with an
+explanation in `message`; they are not silently merged. Exact duplicates still
+skip without changing accepted values. Existing historical rollups are not
+reinterpreted or repaired. Compacted raw poll metadata is removed and replacement
+aggregates retain unknown provenance. Replication does not yet transfer this metadata, so the full
 interval-aware aggregation and synchronization work in #135 remains open.
 
 ## Verification

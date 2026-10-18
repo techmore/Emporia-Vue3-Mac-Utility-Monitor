@@ -358,6 +358,12 @@ def ensure_table():
             usage_kwh REAL,
             cost_cents REAL
         );
+        CREATE TABLE IF NOT EXISTS reading_compactions (
+            device_gid TEXT NOT NULL,
+            channel_name TEXT NOT NULL,
+            hour_key TEXT NOT NULL,
+            PRIMARY KEY(device_gid,channel_name,hour_key)
+        );
         CREATE TABLE IF NOT EXISTS reading_provenance (
             reading_id INTEGER PRIMARY KEY,
             source TEXT NOT NULL CHECK(source IN ('live_poll','csv_import')),
@@ -1466,7 +1472,8 @@ def compact_minute_readings(conn, days: int) -> int:
 
     Hourly rows reuse the readings table (timestamp = start of hour, usage and cost summed),
     like imported 1H CSV buckets, so existing sum-based queries are unchanged. Only whole
-    hours before the cutoff are folded. Returns the number of rows removed. Caller commits.
+    hours before the cutoff are folded. Hours containing known CSV intervals stay intact.
+    Durable hour markers prevent overlapping imports. Caller commits.
     """
     if days <= 0:
         return 0
@@ -1480,12 +1487,20 @@ def compact_minute_readings(conn, days: int) -> int:
                   SUM(usage_kwh) usage_kwh, SUM(cost_cents) cost_cents, COUNT(*) n
            FROM readings
            WHERE timestamp < ? AND channel_name IS NOT NULL AND usage_kwh IS NOT NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM readings imported JOIN reading_provenance p ON p.reading_id=imported.id
+                 WHERE imported.device_gid=readings.device_gid
+                   AND imported.channel_name=readings.channel_name AND p.source='csv_import'
+                   AND imported.timestamp>=substr(readings.timestamp,1,13)||':00:00'
+                   AND imported.timestamp<=substr(readings.timestamp,1,13)||':59:59.999999')
            GROUP BY device_gid, channel_name, substr(timestamp, 1, 13)
            HAVING COUNT(*) > 1 OR MIN(timestamp) != substr(MIN(timestamp), 1, 13) || ':00:00'""",
         (cutoff,),
     )
     removed = 0
     if conn.execute("SELECT COUNT(*) FROM _compact").fetchone()[0]:
+        conn.execute("""INSERT OR IGNORE INTO reading_compactions(device_gid,channel_name,hour_key)
+                        SELECT device_gid,channel_name,substr(ts,1,13) FROM _compact""")
         removed = conn.execute(
             """DELETE FROM readings WHERE id IN (
                    SELECT r.id FROM readings r JOIN _compact c
@@ -2664,7 +2679,34 @@ def import_emporia_csv(
         with conn:
             conn.execute('BEGIN IMMEDIATE')
             inserted = 0
+            compacted_conflicts = 0
             for row in rows_to_insert:
+                existing = conn.execute("SELECT 1 FROM readings WHERE timestamp=? AND device_gid=? AND channel_name=?",
+                                        (row[0], row[1], row[3])).fetchone()
+                if existing:
+                    continue
+                first_hour = last_hour = row[0][:13]
+                if row[6] is not None:
+                    try:
+                        start_utc = datetime.fromisoformat(row[0]).astimezone(timezone.utc)
+                        end_local = (start_utc + timedelta(seconds=row[6], microseconds=-1)).astimezone()
+                        last_hour = max(first_hour, end_local.replace(tzinfo=None).isoformat()[:13])
+                    except (ValueError, OverflowError):
+                        compacted_conflicts += 1
+                        errors += 1
+                        continue
+                overlap = conn.execute("""SELECT 1 FROM reading_compactions
+                    WHERE device_gid=? AND channel_name=? AND hour_key BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT 1 FROM readings r LEFT JOIN reading_provenance p ON p.reading_id=r.id
+                    WHERE r.device_gid=? AND r.channel_name=? AND p.reading_id IS NULL
+                      AND r.timestamp>=? AND r.timestamp<=? LIMIT 1""",
+                    (row[1], row[3], first_hour, last_hour, row[1], row[3],
+                     first_hour+':00:00', last_hour+':59:59.999999')).fetchone()
+                if overlap:
+                    compacted_conflicts += 1
+                    errors += 1
+                    continue
                 cursor = conn.execute(
                     """INSERT OR IGNORE INTO readings
                        (timestamp,device_gid,channel_num,channel_name,usage_kwh,cost_cents)
@@ -2675,7 +2717,7 @@ def import_emporia_csv(
                         VALUES (?, 'csv_import', ?, ?, ?)""",
                         (cursor.lastrowid, row[6], zone, row[7]))
                     inserted += 1
-            skipped += len(rows_to_insert) - inserted
+            skipped += len(rows_to_insert) - inserted - compacted_conflicts
             if rows_to_insert:
                 _refresh_import_snapshot_with_conn(conn, gid)
             _save_device_capabilities_with_conn(
@@ -2689,6 +2731,9 @@ def import_emporia_csv(
     unit = next(iter(units)) if len(units) == 1 else 'mixed'
     return {
         'imported': inserted, 'skipped': skipped, 'errors': errors,
+        'compacted_conflicts': compacted_conflicts,
+        'message': (f'{compacted_conflicts} rows overlap summarized or unverified history and need review before import.'
+                    if compacted_conflicts else ''),
         'unit': unit, 'interval': interval, 'interval_seconds': duration,
         'source_timezone': zone, 'ambiguous_timestamps': ambiguous,
         'nonexistent_timestamps': nonexistent,

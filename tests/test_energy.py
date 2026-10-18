@@ -201,6 +201,8 @@ class EnergyTests(unittest.TestCase):
                 (2, "HVAC", "HVAC", None, 20, 1),
             ],
         )
+        conn.execute("INSERT INTO reading_provenance(reading_id,source,interval_seconds,source_unit) "
+                     "SELECT id,'live_poll',60,'kWh' FROM readings")
         conn.commit()
         conn.close()
         energy.save_device_capabilities(
@@ -220,7 +222,7 @@ class EnergyTests(unittest.TestCase):
             with web.app.app_context():
                 total_main, legs, mode = web._detect_service_feed(
                     energy.get_latest("A"),
-                    {r["channel_name"]: r["usage_kwh"] for r in energy.get_latest("A")},
+                    {r["channel_name"]: r for r in energy.get_latest("A")},
                     {row["slot"]: row for row in energy.get_panel_layout()},
                 )
         finally:

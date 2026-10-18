@@ -128,3 +128,29 @@ class TemperatureWindowScopeTests(unittest.TestCase):
         Client.receive_temperatures(app, None, value)
         self.assertEqual(called, [])
         self.assertEqual(app.temperature_callbacks, {})
+
+    def test_offline_period_switch_uses_matching_cached_window(self):
+        self.window.fetch()
+        self.requests[-1][1](self.payload())
+        seven = {**self.payload(), 'window': '7d', 'seconds': 10800,
+                 'start': '2026-10-11T00:00:00+00:00'}
+        endpoint = '/api/house-control/temperatures?window=7d'
+        core.private_json(self.directory / core.temperature_history_cache_key(self.origin, self.source, endpoint),
+                          {'origin': self.origin, 'source_id': self.source, 'data': seven})
+        self.window.period.get_selected = lambda: 2
+        self.window.fetch()
+        self.requests[-1][1](None)
+        self.assertEqual(self.window.payload['window'], '7d')
+        self.assertTrue(self.installed[-1][1])
+        self.window.period.get_selected = lambda: 1
+        self.window.fetch()
+        self.requests[-1][1](None)
+        self.assertEqual(self.window.payload['window'], '24h')
+
+    def test_uncached_range_does_not_display_previous_range(self):
+        self.window.fetch()
+        self.requests[-1][1](self.payload())
+        self.window.period.get_selected = lambda: 2
+        self.window.fetch()
+        self.requests[-1][1](None)
+        self.assertIsNone(self.window.payload)
