@@ -3,6 +3,7 @@ import { createEditor } from './editor.js';
 import { retainRoomBindings } from './plan-edit.js';
 import { sensorReading } from './sensors.js';
 import { renderMainsChart } from './mains-chart.js';
+import { levelsFor, visibleRoomIds, levelName } from './levels.js';
 
 const $ = id => document.getElementById(`home3d-${id}`);
 const format = (value, metric) => value == null ? 'Unknown' : metric === 'watts'
@@ -10,6 +11,7 @@ const format = (value, metric) => value == null ? 'Unknown' : metric === 'watts'
     ? `${value.toFixed(2)} kWh` : `$${value.toFixed(2)}`;
 let config, state, view, timer, dirty = false, busy = false, needsReload = false, signature;
 let generation = 0, saving = false;
+let selectedLevel = new URLSearchParams(location.search).get('level') || '';
 const editorRoot = document.getElementById('home3d-editor');
 const editor = createEditor(editorRoot, {
   onSave: async (plan, bindings, sensors) => {
@@ -40,6 +42,7 @@ function node(tag, text, className) {
 }
 
 function renderState() {
+  const visible=visibleRoomIds(config.plan,selectedLevel);
   const metric = $('metric').value;
   $('status').textContent = `${state.online ? 'Collector live' : 'Collector offline or readings stale'} · `
     + `Whole home: ${format(state.current_watts, 'watts')} · Last reading: ${state.last_reading || 'none'}`;
@@ -69,7 +72,7 @@ function renderState() {
   $('recording-basis').textContent = state.circuit_history_basis || 'Circuit totals are recorded observations; gaps are not estimated.';
   const container = $('rooms');
   container.replaceChildren();
-  for (const room of state.rooms) {
+  for (const room of state.rooms.filter(room=>visible.has(room.id))) {
     const button = node('button', '', 'home3d-room');
     button.type = 'button';
     button.dataset.roomId = room.id;
@@ -81,7 +84,7 @@ function renderState() {
   }
   const sensors=$('sensors');sensors.replaceChildren();
   if(!state.sensors.length)sensors.append(node('p','No recorded sensors yet. Existing Aqara, climate and EcoQube observations appear here automatically.'));
-  for(const row of state.sensors){
+  for(const row of state.sensors.filter(row=>!row.placement || visible.has(row.placement.room_id))){
     const card=node('article','','home3d-sensor');
     card.dataset.sensorSource=row.source;
     const room=config.plan.rooms.find(room=>room.id===row.placement?.room_id);
@@ -93,6 +96,23 @@ function renderState() {
   }
   editor.refreshSensors(state.sensors);
   view?.update(state.rooms, metric, format, state.sensors);
+}
+
+function renderLevels() {
+  const levels=levelsFor(config.plan),select=$('level');
+  if(selectedLevel!=='all' && !levels.some(level=>level.id===selectedLevel))selectedLevel=levels[0].id;
+  select.replaceChildren();
+  for(const level of [...levels,{id:'all',name:'All floors · stacked'}]) {
+    const option=node('option',level.name);option.value=level.id;select.append(option);
+  }
+  select.value=selectedLevel;
+}
+function changeLevel() {
+  if(!config || !state)return;
+  selectedLevel=$('level').value;
+  const url=new URL(location.href);url.searchParams.set('level',selectedLevel);
+  history.replaceState(null,'',url);
+  view?.setLevel(selectedLevel);editor.setLevel(selectedLevel);renderState();
 }
 
 function selectRoom(id) {
@@ -119,7 +139,7 @@ function renderMappings() {
     select.dataset.channel = circuit.channel_name;
     const empty = node('option', 'Unassigned'); empty.value = ''; select.append(empty);
     for (const room of config.plan.rooms) {
-      const option = node('option', room.name); option.value = room.id; select.append(option);
+      const option = node('option', `${levelName(config.plan,room)} · ${room.name}`); option.value = room.id; select.append(option);
     }
     select.value = circuit.room_id || '';
     select.addEventListener('change', () => {
@@ -177,7 +197,9 @@ async function load() {
   $('name').textContent = `${config.plan.name}${config.example ? ' · Example layout, not your measured home' : ''}`;
   $('save-status').textContent = '';
   renderMappings();
+  renderLevels();
   editor.setConfig(config, state.sensors);
+  editor.setLevel(selectedLevel);
   editorRoot.hidden = false;
   view?.dispose(); view = null;
   $('render-error').hidden = true;
@@ -187,6 +209,7 @@ async function load() {
     $('render-error').textContent = '3D rendering is unavailable in this browser. Room data and mappings still work below.';
     console.warn('Home 3D renderer unavailable:', error.message);
   }
+  view?.setLevel(selectedLevel);
   renderState();
 }
 
@@ -223,6 +246,7 @@ function collectBindings() {
   return bindings;
 }
 $('save').addEventListener('click', () => save(config.plan, collectBindings()));
+$('level').addEventListener('change',changeLevel);
 $('metric').addEventListener('change', () => { if (state) renderState(); });
 $('reset').addEventListener('click', () => view?.reset());
 $('refresh').addEventListener('click', refresh);

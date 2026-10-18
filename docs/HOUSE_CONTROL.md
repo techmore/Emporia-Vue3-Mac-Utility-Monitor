@@ -7,6 +7,18 @@ The page works in browser clients on macOS and Linux; no AppKit bridge is used.
 
 ## Use
 
+The **Floor** dropdown selects First floor, Upstairs, or All floors · stacked.
+Levels use shared X/Z coordinates and a saved elevation in meters, rather than
+offsetting upstairs beside the ground floor. Floor selection filters room cards,
+placed sensor cards/markers and the editor; all circuit mapping options remain
+available with their level names. Switching floors does not discard drafts.
+The stacked view shows both elevations; its editor operates on the first floor.
+Old plans without level metadata remain valid single-floor plans. Room `floor`
+continues to describe material; `level` identifies its storey. Optional stairs
+connect levels with rising treads and cut an opening through the upper surface.
+The Linux app menu and Wingpanel dropdown include **Barn · First floor** and
+**Barn · Upstairs**, opening the authenticated app directly to the selected floor.
+
 1. The initial four-room plan is explicitly an example, with no circuits mapped.
 2. Import a house-control JSON plan under Floor plan. Import replaces geometry
    and clears all mappings and sensor placements after confirmation. Only rooms, openings, furniture,

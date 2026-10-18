@@ -40,6 +40,7 @@ class EnergyMonitor(Gtk.Application):
         self.last_auth_success = 0
         self.transport_failed = False
         self.history_windows = {}
+        self.pending_path = '/'
         self.origin = DEFAULT_ORIGIN
         try:
             self.origin = validate_origin((read_json(CONFIG) or {}).get("origin", DEFAULT_ORIGIN))
@@ -57,6 +58,8 @@ class EnergyMonitor(Gtk.Application):
         self.load_theme()
         self.hold()
         for name, callback in (("dashboard", lambda *_: self.open_path("/")),
+                               ("barn-first", lambda *_: self.open_path("/home-3d?level=first#home3d-floor-plan")),
+                               ("barn-upstairs", lambda *_: self.open_path("/home-3d?level=upstairs#home3d-floor-plan")),
                                ("settings", lambda *_: self.open_path("/settings")),
                                ("connection", lambda *_: self.connection_dialog()),
                                ("refresh", lambda *_: self.refresh()),
@@ -86,6 +89,11 @@ class EnergyMonitor(Gtk.Application):
             self.connection_dialog()
         elif "--settings" in args:
             self.open_path("/settings")
+        elif "--floor" in args:
+            index = args.index("--floor")
+            if index + 1 >= len(args) or args[index + 1] not in ('first', 'upstairs', 'all'):
+                return 2
+            self.open_path('/home-3d?level=' + args[index + 1] + '#home3d-floor-plan')
         elif "--refresh" in args:
             self.refresh()
         elif "--quit" in args:
@@ -115,6 +123,7 @@ class EnergyMonitor(Gtk.Application):
         header.pack_start(refresh)
         menu = Gio.Menu()
         for label, action in (("Dashboard", "dashboard"), ("Collector Settings", "settings"),
+                              ("Barn · First floor", "barn-first"), ("Barn · Upstairs", "barn-upstairs"),
                               ("Collector Connection…", "connection"), ("Quit", "quit")):
             menu.append(label, "app." + action)
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
@@ -249,7 +258,7 @@ class EnergyMonitor(Gtk.Application):
                 self.last_auth_success = time.monotonic()
                 self.transport_failed = False
                 self.pending = False
-                self.web.load_uri(self.origin)
+                self.web.load_uri(self.origin + self.pending_path)
         threading.Thread(target=work, daemon=True).start()
         return True
 
@@ -260,7 +269,7 @@ class EnergyMonitor(Gtk.Application):
                 return GLib.SOURCE_CONTINUE
         if self.transport_failed and not self.web.is_loading():
             self.transport_failed = False
-            self.web.load_uri(self.origin)
+            self.web.load_uri(self.origin + self.pending_path)
             return GLib.SOURCE_CONTINUE
         if self.pending:
             return GLib.SOURCE_CONTINUE
@@ -318,6 +327,7 @@ class EnergyMonitor(Gtk.Application):
         self.publish()
 
     def open_path(self, path):
+        self.pending_path = path
         self.web.load_uri(self.origin + path)
         self.window.present()
 

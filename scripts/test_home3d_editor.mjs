@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import './test_mains_chart.mjs';
 import { drawnRoom, moveItem, resizeRoom, retainRoomBindings, clampSensor, relocateSensors, furnitureDimensions } from '../frontend/house-control/src/plan-edit.js';
 import { sensorKey, sensorReading } from '../frontend/house-control/src/sensors.js';
+import { levelsFor, planForLevel, visibleRoomIds, stairTreads, floorTiles } from '../frontend/house-control/src/levels.js';
+const stacked={levels:[{id:'first',name:'First floor',elevation:0},{id:'upstairs',name:'Upstairs',elevation:2.9}],
+  rooms:[{id:'lower',rect:[0,0,10,9]},{id:'upper',level:'upstairs',rect:[0,0,10,9]}],
+  furniture:[{type:'sofa',pos:[1,1],level:'upstairs'}],
+  openings:[{type:'door',from:[0,0],to:[1,0]}]};
+assert.deepEqual(planForLevel(stacked,'first').rooms.map(room=>room.id),['lower']);
+assert.deepEqual(planForLevel(stacked,'upstairs').rooms[0].rect,stacked.rooms[0].rect);
+assert.equal(planForLevel(stacked,'upstairs').furniture.length,1);
+assert.equal(planForLevel(stacked,'upstairs').openings.length,0);
+assert.deepEqual([...visibleRoomIds(stacked,'upstairs')],['upper']);
+assert.equal(visibleRoomIds(stacked,'all').size,2);
+assert.equal(levelsFor({rooms:[]})[0].elevation,0);
+const stair={path:[[8,6],[8,8],[4,8]],width:1,steps:14,level:'first',toLevel:'upstairs'};
+const treads=stairTreads(stair,stacked.levels);
+assert.equal(treads.length,14);assert.equal(treads.at(-1).y,2.9);
+assert.ok(treads.every((tread,i)=>tread.y>0 && (!i || tread.y>treads[i-1].y)));
+const tiles=floorTiles([0,0,10,9],[stair]);
+assert.ok(tiles.reduce((area,[,,w,d])=>area+w*d,0)<90);
+assert.ok(!tiles.some(([x,z,w,d])=>x<8 && x+w>8 && z<7 && z+d>7));
+assert.deepEqual(floorTiles([0,0,2,2],[]),[[0,0,2,2]]);
+console.log('Stacked levels isolate geometry, rooms and stairs; upper-floor cutouts preserve the opening');
 const room = drawnRoom([4,4],[1.1,1.2],'r');
 assert.deepEqual(room.rect,[1,1.25,3,2.75]);
 const plan={rooms:[room],furniture:[{pos:[1,1]}],openings:[{from:[99,0],to:[100,0]}]};
