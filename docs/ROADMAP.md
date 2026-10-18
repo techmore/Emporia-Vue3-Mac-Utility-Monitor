@@ -65,3 +65,8 @@ checks and rollback notes. Do not bundle a structural rewrite with new analytics
 Persistent user SSH tunnel implemented; recovery tests cover loopback binding,
 SSH verification and reconnect policy. Live local-port outage repaired against
 the existing SER8 collector. Next: confirm recovery through a full login/reboot.
+
+Direct private HTTPS over Tailscale is now the Linux default. The owner's desktop
+uses SER8 Serve port 8445 with an exact origin/user allowlist; its SSH forward is
+disabled. Public Google sign-in stays in a regular browser because embedded
+WebKitGTK cannot handle passkeys. Next: confirm direct HTTPS after full reboot.

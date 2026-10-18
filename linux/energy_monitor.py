@@ -183,7 +183,7 @@ class EnergyMonitor(Gtk.Application):
         self.transport_failed = True
         self.pending = False
         self.connected = False
-        self.status.set_label("Collector unavailable. Open Collector Connection to select the private tunnel.")
+        self.status.set_label("Collector unavailable. Check your connection or open Collector Connection.")
         self.publish()
         return False
 
@@ -416,9 +416,9 @@ class EnergyMonitor(Gtk.Application):
                             default_width=540)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
                       margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
-        box.append(Gtk.Label(label="Use the existing collector's HTTPS origin or loopback SSH tunnel.",
+        box.append(Gtk.Label(label="Connect directly over HTTPS. Sign in when prompted to access your collector.",
                              wrap=True, xalign=0))
-        entry = Gtk.Entry(text=self.origin, placeholder_text="http://127.0.0.1:15001")
+        entry = Gtk.Entry(text=self.origin, placeholder_text=DEFAULT_ORIGIN)
         box.append(entry)
         error = Gtk.Label(wrap=True, xalign=0)
         box.append(error)

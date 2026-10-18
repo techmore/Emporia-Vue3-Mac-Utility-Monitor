@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-DEFAULT_ORIGIN = "https://energy.stoverparc.org"
+DEFAULT_ORIGIN = "https://sdolbec-ser8.tailf80972.ts.net:8445"
 
 
 def validate_origin(value):
