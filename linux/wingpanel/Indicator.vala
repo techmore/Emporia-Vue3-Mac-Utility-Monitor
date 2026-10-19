@@ -197,34 +197,35 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private Gtk.Widget breaker_cell (Json.Object? circuit, int slot, bool left, bool live, int span, Gtk.SizeGroup handles) {
-        int ROW = compact ? 34 : 46;
+        int ROW = compact ? 26 : 46;
         int height = ROW * span + 4 * (span - 1);
         string state = circuit != null ? string_member (circuit, "slot_state", "empty") : "empty";
         string channel = circuit != null ? string_member (circuit, "channel_name") : "";
         string display = circuit != null ? string_member (circuit, "display_name", channel) : "";
-        var info = new Gtk.Box (Gtk.Orientation.VERTICAL, 1) { hexpand = true, valign = Gtk.Align.CENTER };
+        // Compact: name and reading share one line; comfortable: reading under the name.
+        var info = new Gtk.Box (compact ? Gtk.Orientation.HORIZONTAL : Gtk.Orientation.VERTICAL, compact ? 8 : 1) { hexpand = true, valign = Gtk.Align.CENTER };
         var name_label = new Gtk.Label (state == "empty" ? "Empty" : display) {
-            xalign = left ? 1 : 0, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 14
+            xalign = left ? 1 : 0, ellipsize = Pango.EllipsizeMode.END, max_width_chars = compact ? 9 : 14, hexpand = compact
         };
-        info.append (name_label);
         string detail = "";
         int poles = 1;
         if (circuit != null) {
             poles = circuit.has_member ("poles") && !circuit.get_member ("poles").is_null () ? (int) circuit.get_int_member ("poles") : 1;
             if (state == "monitored") detail = live ? metric (circuit, "watts", "%.0f W") : "—";
             else if (state == "unmonitored") detail = "Unmonitored";
-            if (circuit.has_member ("amps") && !circuit.get_member ("amps").is_null ())
+            if (!compact && circuit.has_member ("amps") && !circuit.get_member ("amps").is_null ())
                 detail += (detail != "" ? " · " : "") + "%dP %d A".printf (poles, (int) circuit.get_int_member ("amps"));
-            else if (poles == 2) detail += (detail != "" ? " · " : "") + "2P";
+            else if (!compact && poles == 2) detail += (detail != "" ? " · " : "") + "2P";
         }
         var detail_label = new Gtk.Label (detail) { xalign = left ? 1 : 0, ellipsize = Pango.EllipsizeMode.END };
         detail_label.add_css_class (Granite.CssClass.SMALL);
         detail_label.add_css_class (Granite.CssClass.NUMERIC);
         if (state != "monitored") { name_label.add_css_class (Granite.CssClass.DIM); }
         detail_label.add_css_class (Granite.CssClass.DIM);
-        info.append (detail_label);
+        if (compact && left) { info.append (detail_label); info.append (name_label); }
+        else { info.append (name_label); info.append (detail_label); }
         // The toggle handle sits on the bus side, like the real breaker's: accent when carrying load, amber/red when loaded, grey when idle or offline.
-        var handle = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { width_request = 10, height_request = span == 2 ? 36 : 18, valign = Gtk.Align.CENTER };
+        var handle = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { width_request = 10, height_request = compact ? (span == 2 ? 28 : 12) : (span == 2 ? 36 : 18), valign = Gtk.Align.CENTER };
         handle.add_css_class ("energy-handle");
         handles.add_widget (handle);
         if (state != "monitored" || !live) handle.add_css_class ("energy-handle-off");
@@ -289,7 +290,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
             (is_left ? left_column : right_column).append (breaker_cell (circuit, slot, is_left, live, span, handles));
         }
         for (int row = 0; row < total / 2; row++) {
-            var label = new Gtk.Label ("%d–%d".printf (row * 2 + 1, row * 2 + 2)) { height_request = compact ? 34 : 46, justify = Gtk.Justification.CENTER };
+            var label = new Gtk.Label ("%d–%d".printf (row * 2 + 1, row * 2 + 2)) { height_request = compact ? 26 : 46, justify = Gtk.Justification.CENTER };
             label.add_css_class ("energy-bus-label");
             label.add_css_class (Granite.CssClass.NUMERIC);
             bus.append (label);
@@ -429,7 +430,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     var channel = string_member (circuit, "channel_name");
                     int slot = (int) circuit.get_int_member ("slot");
                     string display = string_member (circuit, "display_name", channel);
-                    var line = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) { margin_top = 6, margin_bottom = 6, margin_start = 9, margin_end = 9 };
+                    var line = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) { margin_top = compact ? 2 : 6, margin_bottom = compact ? 2 : 6, margin_start = 9, margin_end = 9 };
                     var number_label = new Gtk.Label ("%02d".printf (slot)) { width_chars = 2, xalign = 1 };
                     number_label.add_css_class (Granite.CssClass.DIM);
                     number_label.add_css_class (Granite.CssClass.NUMERIC);
@@ -445,7 +446,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
                         name_row.append (star);
                     }
                     names.append (name_row);
-                    if (live && circuit.has_member ("load_percent") && !circuit.get_member ("load_percent").is_null ()) {
+                    if (!compact && live && circuit.has_member ("load_percent") && !circuit.get_member ("load_percent").is_null ()) {
                         var bar = new Gtk.ProgressBar () { fraction = double.min (double.max (circuit.get_double_member ("load_percent") / 100.0, 0.0), 1.0) };
                         bar.add_css_class ("energy-load-bar");
                         string load_state = string_member (circuit, "load_state");
@@ -457,7 +458,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     var watts = new Gtk.Label (live ? metric (circuit, "watts", "%.0f W") : "—") { xalign = 1 };
                     watts.add_css_class ("energy-circuit-value");
                     values.append (watts);
-                    if (circuit.has_member ("amps") && !circuit.get_member ("amps").is_null ()) {
+                    if (!compact && circuit.has_member ("amps") && !circuit.get_member ("amps").is_null ()) {
                         int poles = circuit.has_member ("poles") ? (int) circuit.get_int_member ("poles") : 1;
                         var rating = new Gtk.Label ("%dP · %d A".printf (poles, (int) circuit.get_int_member ("amps"))) { xalign = 1 };
                         rating.add_css_class (Granite.CssClass.DIM);
