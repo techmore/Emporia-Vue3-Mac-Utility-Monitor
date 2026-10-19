@@ -209,3 +209,40 @@ class ShellWiringTests(unittest.TestCase):
                        'add_tick_callback(self.responsive_sidebar)', 'OutageNotifier()', 'send_notification("collector-offline"'):
             self.assertIn(needle, source)
         ast.parse(source)
+
+
+class ChartMathTests(unittest.TestCase):
+    def test_ticks_cover_the_data_and_survive_flat_series(self):
+        ticks, low, high = core.nice_ticks(0.02, 0.26, 4)
+        self.assertLessEqual(low, 0.02)
+        self.assertGreaterEqual(high, 0.26)
+        self.assertEqual(ticks[0], low)
+        flat, low, high = core.nice_ticks(72.0, 72.0, 4)
+        self.assertLess(low, 72.0)
+        self.assertGreater(high, 72.0)
+        self.assertGreater(len(flat), 1)
+        self.assertEqual(core.nice_ticks(5, 1, 4)[0][0] <= 1, True)
+        with self.assertRaises(ValueError):
+            core.nice_ticks(float('nan'), 1)
+
+    def test_gaps_split_runs_and_are_never_zero(self):
+        self.assertEqual(core.value_runs([1, None, 2, 3, float('nan'), 4]),
+                         [[(0, 1)], [(2, 2), (3, 3)], [(5, 4)]])
+        self.assertEqual(core.value_runs([None, None]), [])
+        self.assertEqual(core.value_runs([True, 0]), [[(1, 0)]])  # a bool is not a reading; zero is
+
+    def test_pointer_maps_to_nearest_bucket_and_clamps(self):
+        self.assertEqual(core.index_at(48, 48, 100, 11), 0)
+        self.assertEqual(core.index_at(148, 48, 100, 11), 10)
+        self.assertEqual(core.index_at(98, 48, 100, 11), 5)
+        self.assertEqual(core.index_at(-50, 48, 100, 11), 0)
+        self.assertEqual(core.index_at(900, 48, 100, 11), 10)
+        self.assertIsNone(core.index_at(10, 48, 0, 11))
+        self.assertIsNone(core.index_at(10, 48, 100, 0))
+        self.assertEqual(core.index_at(10, 48, 100, 1), 0)
+
+    def test_both_windows_use_the_shared_chart_and_it_is_installed(self):
+        root = Path(__file__).parents[1] / 'linux'
+        for name in ('energy_monitor.py', 'temperatures.py'):
+            self.assertIn('Chart(', (root / name).read_text())
+        self.assertIn('chart.py', (root / 'install.sh').read_text())
