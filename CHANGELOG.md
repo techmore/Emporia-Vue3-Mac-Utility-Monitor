@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Wingpanel dropdown keeps a single 520 px width in the Power and Temperatures views, so switching no longer resizes or shifts the popover.
 - One shared chart for the history and temperature windows: round gridline values with a gutter sized to the labels, first/last time labels, a hover read-out with value and time that stays inside the plot, click selection, per-run fill and line so missing buckets stay gaps (never zero), an accessible summary, and a clear empty state.
 - Window shell for the elementary OS client: the window remembers its size, sidebar and last page; Ctrl+1..9 open the sidebar pages in order and Ctrl+K opens a type-to-filter page switcher; F1 and the menu show an About dialog; the sidebar collapses on its own below 760 px and returns when there is room; the embedded view paints the theme's page colour before first paint (no white flash in dark mode); and a desktop notification says when the collector has been offline for 90 s (never during startup, at most once per 30 minutes) and when it is back. Ctrl+2 now opens Reports rather than Temperatures (Ctrl+5).
 - Wingpanel dropdown, native layout: a frameless power hero with cost beside it, three stat tiles, and the monitored circuits as one boxed list (busiest first, slot number kept, name, load bar, watts, rating, chevron) in place of the two-column slot grid with placeholder rows; unassigned slots are summarised in one line. Rows are keyboard-activatable with spoken names.
