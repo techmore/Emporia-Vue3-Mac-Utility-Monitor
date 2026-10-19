@@ -279,3 +279,21 @@ class SidebarFooterTests(unittest.TestCase):
             self.assertEqual((headline, live), ('Offline', False))
         self.assertEqual(core.sidebar_footer({'last_reading': '2026-10-19 03:59:00'})[1], 'Last recorded 03:59')
         self.assertEqual(core.sidebar_footer({})[1], 'No recorded reading')
+
+
+class ShortcutsWindowTests(unittest.TestCase):
+    def test_help_window_lists_every_registered_accelerator(self):
+        import xml.etree.ElementTree as ET
+        root = Path(__file__).parents[1] / 'linux'
+        source = (root / 'energy_monitor.py').read_text()
+        tree = ast.parse(source)
+        func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'shortcuts_xml')
+        namespace = {}
+        exec(compile(ast.Module([func], []), 'shortcuts_xml', 'exec'), namespace)
+        xml = namespace['shortcuts_xml']([('Dashboard', '/'), ('Reports', '/reports')])
+        document = ET.fromstring(xml)
+        accelerators = {e.text for e in document.iter('property') if e.get('name') == 'accelerator'}
+        for accelerator in ('<Control>1', '<Control>2', '<Control>k', 'F9', '<Control>r F5', 'F1', '<Control>q', '<Control>question'):
+            self.assertIn(accelerator, accelerators)
+        for registered in ('<Control>k', '<Control>question', 'F1', '<Control>q'):
+            self.assertIn(registered, source)
