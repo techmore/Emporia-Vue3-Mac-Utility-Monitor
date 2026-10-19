@@ -204,6 +204,8 @@ a:not([class]) {{ color: var(--accent-text); }}
 /* Inline status colours the collector writes as literals; swap them for the AA-checked variables. */
 {rules('.int-badge.ok { background: color-mix(in srgb, var(--green) 14%, var(--surface)); } .int-badge.warn { background: color-mix(in srgb, var(--amber) 14%, var(--surface)); }')}
 {rules('[style*="color:#81c784"], [style*="color: #81c784"] { color: var(--green); } [style*="color:#f87171"], [style*="color: #f87171"] { color: var(--red); } [style*="color:#fbbf24"], [style*="color: #fbbf24"] { color: var(--amber); }')}
+/* Type scale and rhythm (6/12 px): elementary's 14 px body, tighter titles, quieter labels, tabular readings. */
+{rules('body { font-size: 14px; line-height: 1.5; } .page { padding: 24px 24px 48px; } .page h1 { font-size: 1.9rem; letter-spacing: -0.02em; } .section { margin-top: 30px; } .section-head h2 { font-size: 1.25rem; letter-spacing: -0.01em; } .card { padding: 18px; border-radius: 9px; transition: box-shadow .15s ease; } .card-label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em; } .card-value { font-size: 1.75rem; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; } .data-table th { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-light); } .data-table td { padding: 9px 12px; font-variant-numeric: tabular-nums; } .grid-2, .grid-3, .grid-4 { gap: 12px; }')}
 ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
 ::-webkit-scrollbar-thumb {{ background: color-mix(in srgb, var(--text) 30%, transparent); border-radius: 5px;
   border: 2px solid transparent; background-clip: content-box; }}
