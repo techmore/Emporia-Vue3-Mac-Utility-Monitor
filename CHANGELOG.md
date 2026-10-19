@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Narrower Wingpanel dropdown: 440 px (was 520), and 340 px in Compact density; still one width for both views.
 - Circuit history window shows a dense second line: peak (with its time), lowest, average and how many buckets were actually recorded; gaps are excluded, never averaged as zero.
 - Preferences (Ctrl+, or the menu) for the elementary OS client: **Density** (Comfortable or Compact, a CodexBar-style dense layout for the dashboard, native windows, sidebar and the panel dropdown) and **Dashboard style** (elementary OS native, or the collector's original olive design). Applied as you choose and remembered in `ui.json`. The dropdown also loads the installed `theme.css`, so style changes no longer need a panel reinstall.
 - Dashboard type and rhythm in the elementary OS client: 14 px body, 24 px page padding, tighter page and section titles, quieter uppercase card labels, tabular figures in card values and tables, 12 px grid gaps. Client-side style sheet only.

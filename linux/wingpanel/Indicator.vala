@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 public class EnergyIndicator : Wingpanel.Indicator {
-    private const int MENU_WIDTH = 520;
+    private const int MENU_WIDTH = 440;          // comfortable
+    private const int MENU_WIDTH_COMPACT = 340;  // dense, CodexBar-like
     private Gtk.Box display_box;
     private Gtk.Label power;
     private Gtk.Box menu;
@@ -309,7 +310,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         var monitor = Gdk.Display.get_default ().get_monitors ().get_item (0) as Gdk.Monitor;
         if (monitor != null) { var bounds = monitor.get_geometry (); screen_height = bounds.height; screen_width = bounds.width; }
         // One width for both views so switching never moves or resizes the popover.
-        menu.width_request = int.min (MENU_WIDTH, screen_width - 32);
+        menu.width_request = int.min (compact ? MENU_WIDTH_COMPACT : MENU_WIDTH, screen_width - 32);
         house_preview.set_view_height (int.min (440, int.max (300, screen_height * 38 / 100)));
         scroll.max_content_height = showing_temperatures ? int.max (360, screen_height - 240) : 440;
         try {
