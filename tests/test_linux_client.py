@@ -343,3 +343,11 @@ class SeriesStatsTests(unittest.TestCase):
         self.assertIsNone(core.series_stats([None, None]))
         self.assertIsNone(core.series_stats([]))
         self.assertEqual(core.series_stats([0, 0])['mean'], 0)  # a recorded zero is a reading
+
+
+class SingleLineCompactTests(unittest.TestCase):
+    def test_compact_breakers_and_rows_are_one_line(self):
+        vala = (Path(__file__).parents[1] / 'linux/wingpanel/Indicator.vala').read_text()
+        self.assertIn('int ROW = compact ? 26 : 46;', vala)
+        self.assertIn('compact ? Gtk.Orientation.HORIZONTAL : Gtk.Orientation.VERTICAL', vala)
+        self.assertIn('!compact && live && circuit.has_member ("load_percent")', vala)

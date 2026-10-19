@@ -177,7 +177,7 @@
 .energy-compact .energy-sidebar row { margin: 0; }
 .energy-compact .energy-side-heading { margin-top: 4px; }
 .energy-compact .energy-sidebar-footer { margin-top: 4px; margin-bottom: 6px; }
-.energy-compact .energy-circuits row { min-height: 28px; }
+.energy-compact .energy-circuits row { min-height: 24px; }
 .energy-compact .energy-circuits row > box { margin-top: 2px; margin-bottom: 2px; }
 .energy-compact button.energy-circuit { min-height: 28px; padding: 2px 6px; }
 .energy-compact .energy-menu-title { font-size: 1em; }
