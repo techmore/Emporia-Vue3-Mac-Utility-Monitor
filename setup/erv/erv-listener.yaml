@@ -1,0 +1,37 @@
+# Receive-only RS-485 listener for the Broan AI-series ERV bus. It never transmits.
+# Wiring: see docs/BROAN_ERV_LISTENER.md. Flash with `esphome run setup/erv/erv-listener.yaml`.
+esphome:
+  name: erv-listener
+
+esp32:
+  board: esp32dev        # change to your board; any ESP32 with one free RX pin works
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+  baud_rate: 0           # keep the log on USB/Wi-Fi; do not share UART0 with the bus
+
+api:
+  encryption:
+    key: !secret erv_api_key       # generate: esphome -> "Encryption key" helper; never commit it
+ota:
+  - platform: esphome
+    password: !secret erv_ota_password
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+uart:
+  id: erv_bus
+  rx_pin: GPIO16         # transceiver RO (3.3 V logic only)
+  # tx_pin deliberately omitted: this device cannot talk on the bus.
+  baud_rate: 38400       # per the community component; if frames look like noise try parity EVEN/ODD
+  rx_buffer_size: 2048
+  debug:
+    direction: RX
+    dummy_receiver: true
+    after:
+      timeout: 8ms       # frames are separated by bus idle time
+    sequence:
+      - lambda: UARTDebug::log_hex(direction, bytes, ':');
