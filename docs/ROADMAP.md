@@ -95,3 +95,8 @@ native access. See INCUS_DEPLOYMENT.md for the verified cutover. The plan is sti
 an example until the owner enters real geometry and circuit mappings. Remaining:
 continuous source-interval history for branch circuits, sensor measurement-time
 provenance and a separately authorized full reboot test.
+
+## Ventilation (Broan ERV)
+
+- Add read-only ERV monitoring, then gated remote control, through an ESP32 on the VTouch
+  RS-485 bus. Context, options and safety rules: `docs/BROAN_ERV.md`. Blocked on probing the bus.
