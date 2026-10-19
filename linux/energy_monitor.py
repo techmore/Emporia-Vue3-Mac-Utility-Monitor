@@ -46,6 +46,7 @@ def shortcuts_xml(entries):
             group("Pages", pages) +
             group("General", [("<Control>k", "Go to page…"), ("F9", "Show or hide the sidebar"),
                               ("<Control>r F5", "Refresh"), ("F1", "About Energy Monitor"),
+                              ("<Control>comma", "Preferences"),
                               ("<Control>question", "Keyboard shortcuts"), ("<Control>q", "Quit")]) +
             '</object></child></object></interface>')
 
@@ -117,6 +118,7 @@ class EnergyMonitor(Gtk.Application):
                                ("switcher", lambda *_: self.quick_switcher()),
                                ("about", lambda *_: self.about_dialog()),
                                ("shortcuts", lambda *_: self.shortcuts_dialog()),
+                               ("preferences", lambda *_: self.preferences_dialog()),
                                ("quit", lambda *_: self.quit())) + tuple(
                 (f"page{i + 1}", (lambda target: lambda *_: self.open_nav(target))(entry))
                 for i, entry in enumerate(self.nav_entries()[:9])):
@@ -125,9 +127,11 @@ class EnergyMonitor(Gtk.Application):
             self.add_action(action)
         for action, keys in (("app.refresh", ["<Control>r", "F5"]), ("app.quit", ["<Control>q"]),
                              ("app.switcher", ["<Control>k"]), ("app.about", ["F1"]),
-                             ("app.shortcuts", ["<Control>question", "<Control>slash"])) + tuple(
+                             ("app.shortcuts", ["<Control>question", "<Control>slash"]),
+                             ("app.preferences", ["<Control>comma"])) + tuple(
                 (f"app.page{i}", [f"<Control>{i}"]) for i in range(1, 10)):
             self.set_accels_for_action(action, keys)
+        self.connect("window-added", lambda app, window: self.apply_density(window))
         self.build_window()
         self.restore_cache()
         if not self.authenticate_device():
@@ -158,7 +162,8 @@ class EnergyMonitor(Gtk.Application):
         manager = self.web.get_user_content_manager()
         manager.remove_all_style_sheets()
         manager.add_style_sheet(WebKit.UserStyleSheet.new(
-            web_css(dark, accent if found else None), WebKit.UserContentInjectedFrames.ALL_FRAMES,
+            web_css(dark, accent if found else None, self.ui['density'], self.ui['dashboard_style']),
+            WebKit.UserContentInjectedFrames.ALL_FRAMES,
             WebKit.UserStyleLevel.USER, None, None))
         return False
 
@@ -221,7 +226,7 @@ class EnergyMonitor(Gtk.Application):
                         (("Barn · First floor", "barn-first"), ("Barn · Upstairs", "barn-upstairs"),
                          ("Barn · Attic", "barn-attic")),
                         (("Collector Settings", "settings"), ("Collector Connection…", "connection")),
-                        (("Quick Switcher…", "switcher"), ("Refresh", "refresh")),
+                        (("Quick Switcher…", "switcher"), ("Refresh", "refresh"), ("Preferences…", "preferences")),
                         (("Keyboard Shortcuts", "shortcuts"), ("About Energy Monitor", "about"), ("Quit", "quit"))):
             part = Gio.Menu()
             for label, action in section:
@@ -372,7 +377,8 @@ class EnergyMonitor(Gtk.Application):
         width, height = self.window.get_default_size()
         path = urlsplit(self.web.get_uri() or "").path or "/"
         query = urlsplit(self.web.get_uri() or "").query
-        state = {"width": width, "height": height,
+        state = {"width": width, "height": height, "density": self.ui["density"],
+                 "dashboard_style": self.ui["dashboard_style"],
                  "sidebar": self.sidebar_before_narrow if self.narrow else self.sidebar_toggle.get_active(),
                  "page": path + ("?" + query if query else "")}
         try:
@@ -455,6 +461,60 @@ class EnergyMonitor(Gtk.Application):
         refilter()
         window.present()
         entry.grab_focus()
+
+    def apply_density(self, window=None):
+        """Compact mode is one CSS class on every window (theme.css) plus the web style sheet's compact rules."""
+        for target in ([window] if window else Gtk.Window.list_toplevels()):
+            (target.add_css_class if self.ui["density"] == "compact" else target.remove_css_class)("energy-compact")
+
+    def preferences_dialog(self):
+        """Visual preferences, applied as you choose: density and the dashboard's visual style."""
+        window = Gtk.Window(title="Preferences", transient_for=self.window, modal=True, default_width=460,
+                            resizable=False, destroy_with_parent=True)
+        window.add_css_class("energy-monitor")
+        header = Gtk.HeaderBar()
+        window.set_titlebar(header)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_bottom=12,
+                      margin_start=12, margin_end=12)
+        listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        listbox.add_css_class("boxed-list")
+        def row(title, subtitle, choices, key, values):
+            line = Gtk.Box(spacing=12, margin_top=9, margin_bottom=9, margin_start=12, margin_end=12)
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+            text.append(Gtk.Label(label=title, xalign=0))
+            hint = Gtk.Label(label=subtitle, xalign=0, wrap=True, max_width_chars=34)
+            hint.add_css_class("dim-label")
+            hint.add_css_class("caption")
+            text.append(hint)
+            drop = Gtk.DropDown.new_from_strings(choices)
+            drop.set_valign(Gtk.Align.CENTER)
+            drop.set_selected(values.index(self.ui[key]))
+            def changed(*_):
+                self.ui[key] = values[drop.get_selected()]
+                self.apply_density()
+                self.apply_web_theme()
+                self.web.reload()
+                self.save_ui_state()
+            drop.connect("notify::selected", changed)
+            line.append(text)
+            line.append(drop)
+            listbox.append(Gtk.ListBoxRow(child=line, activatable=False))
+        row("Density", "Compact tightens rows, padding and type to show more data at once.",
+            ["Comfortable", "Compact"], "density", ["comfortable", "compact"])
+        row("Dashboard style", "Native follows your elementary OS theme and accent. Original keeps the collector’s olive design.",
+            ["elementary OS", "Original"], "dashboard_style", ["elementary", "original"])
+        box.append(listbox)
+        note = Gtk.Label(label="The panel dropdown follows the density setting. The Panel/List switch lives in the dropdown.",
+                         xalign=0, wrap=True)
+        note.add_css_class("dim-label")
+        note.add_css_class("caption")
+        box.append(note)
+        escape = Gtk.ShortcutController()
+        escape.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"),
+                                             Gtk.CallbackAction.new(lambda *_: window.destroy() or True)))
+        window.add_controller(escape)
+        window.set_child(box)
+        window.present()
 
     def shortcuts_dialog(self):
         window = Gtk.Builder.new_from_string(shortcuts_xml(self.nav_entries()), -1).get_object("shortcuts")

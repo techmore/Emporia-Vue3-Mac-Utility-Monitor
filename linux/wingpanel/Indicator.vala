@@ -7,6 +7,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private Gtk.Box readings;
     private Gtk.Label status;
     private Gtk.Image live_dot;
+    private bool compact = false;
     private Gtk.Box notice;
     private Gtk.Label notice_text;
     private Gtk.Image panel_icon;
@@ -119,7 +120,25 @@ public class EnergyIndicator : Wingpanel.Indicator {
 
     private void load_theme () {
         // One stylesheet built on the elementary named colours: light, dark and accent follow the system.
-        css.load_from_resource ("/org/techmore/energy/theme.css");
+        // Prefer the installed copy next to the app so style changes never need a panel reinstall.
+        var installed = Path.build_filename (Environment.get_home_dir (), ".local", "lib", "energy-monitor", "theme.css");
+        if (FileUtils.test (installed, FileTest.IS_REGULAR)) css.load_from_path (installed);
+        else css.load_from_resource ("/org/techmore/energy/theme.css");
+    }
+
+    // Density is chosen in the app's Preferences (ui.json); the dropdown only follows it.
+    private void refresh_density () {
+        bool wanted = false;
+        try {
+            string text;
+            FileUtils.get_contents (Path.build_filename (Environment.get_user_config_dir (), "energy-monitor", "ui.json"), out text);
+            var parser = new Json.Parser ();
+            parser.load_from_data (text);
+            var saved = parser.get_root ().get_object ();
+            wanted = saved.has_member ("density") && saved.get_string_member ("density") == "compact";
+        } catch (Error e) { wanted = false; }
+        compact = wanted;
+        if (compact) menu.add_css_class ("energy-compact"); else menu.remove_css_class ("energy-compact");
     }
 
     private void set_live (bool live) {
@@ -177,7 +196,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private Gtk.Widget breaker_cell (Json.Object? circuit, int slot, bool left, bool live, int span, Gtk.SizeGroup handles) {
-        const int ROW = 46;
+        int ROW = compact ? 34 : 46;
         int height = ROW * span + 4 * (span - 1);
         string state = circuit != null ? string_member (circuit, "slot_state", "empty") : "empty";
         string channel = circuit != null ? string_member (circuit, "channel_name") : "";
@@ -269,7 +288,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
             (is_left ? left_column : right_column).append (breaker_cell (circuit, slot, is_left, live, span, handles));
         }
         for (int row = 0; row < total / 2; row++) {
-            var label = new Gtk.Label ("%d–%d".printf (row * 2 + 1, row * 2 + 2)) { height_request = 46, justify = Gtk.Justification.CENTER };
+            var label = new Gtk.Label ("%d–%d".printf (row * 2 + 1, row * 2 + 2)) { height_request = compact ? 34 : 46, justify = Gtk.Justification.CENTER };
             label.add_css_class ("energy-bus-label");
             label.add_css_class (Granite.CssClass.NUMERIC);
             bus.append (label);
@@ -284,6 +303,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private void update () {
+        refresh_density ();
         bool showing_temperatures = current_view == 1;
         int screen_height = 900, screen_width = 1200;
         var monitor = Gdk.Display.get_default ().get_monitors ().get_item (0) as Gdk.Monitor;
@@ -302,7 +322,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
             var age = root.has_member ("fetched_at") ?
                 new DateTime.now_utc ().to_unix () - root.get_double_member ("fetched_at") : 1e10;
             bool live = root.has_member ("online") && root.get_boolean_member ("online") && age >= 0 && age <= 180;
-            string fingerprint = text + (live ? "live" : "offline");
+            string fingerprint = text + (live ? "live" : "offline") + (compact ? "compact" : "roomy");
             if (previous == fingerprint) return;
             previous = fingerprint;
             panel_title.label = string_member (root, "panel_label", "Energy Monitor");

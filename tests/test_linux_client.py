@@ -180,7 +180,8 @@ class ShellStateTests(unittest.TestCase):
             path = Path(directory) / 'ui.json'
             self.assertEqual(core.load_ui_state(path)['page'], '/')
             core.private_json(path, {'width': 900, 'height': 600, 'sidebar': False, 'page': '/reports'})
-            self.assertEqual(core.load_ui_state(path), {'width': 900, 'height': 600, 'sidebar': False, 'page': '/reports'})
+            self.assertEqual(core.load_ui_state(path), {'width': 900, 'height': 600, 'sidebar': False, 'page': '/reports',
+                                                        'density': 'comfortable', 'dashboard_style': 'elementary'})
             for page in ('https://evil.example/', '//evil.example', '/a@b', 'reports', '/x' * 200):
                 core.private_json(path, {'page': page, 'width': 10 ** 9, 'height': True, 'sidebar': 'yes'})
                 state = core.load_ui_state(path)
@@ -299,3 +300,34 @@ class ShortcutsWindowTests(unittest.TestCase):
             self.assertIn(accelerator, accelerators)
         for registered in ('<Control>k', '<Control>question', 'F1', '<Control>q'):
             self.assertIn(registered, source)
+
+
+class VisualPreferenceTests(unittest.TestCase):
+    def test_preferences_are_closed_sets_and_default_to_comfortable_native(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'ui.json'
+            state = core.load_ui_state(path)
+            self.assertEqual((state['density'], state['dashboard_style']), ('comfortable', 'elementary'))
+            core.private_json(path, {'density': 'compact', 'dashboard_style': 'original'})
+            state = core.load_ui_state(path)
+            self.assertEqual((state['density'], state['dashboard_style']), ('compact', 'original'))
+            core.private_json(path, {'density': 'x; } body { display:none', 'dashboard_style': ['elementary']})
+            state = core.load_ui_state(path)
+            self.assertEqual((state['density'], state['dashboard_style']), ('comfortable', 'elementary'))
+
+    def test_compact_css_is_denser_and_original_keeps_the_collector_design(self):
+        roomy = web_theme.build_css(False, '#3689e6')
+        dense = web_theme.build_css(False, '#3689e6', 'compact')
+        self.assertNotIn('font-size: 12.5px', roomy)
+        self.assertIn('font-size: 12.5px !important', dense)
+        self.assertEqual(web_theme.build_css(True, '#3689e6', 'compact', 'original').strip(),
+                         'nav.topnav { display: none !important; }')
+
+    def test_dropdown_and_app_follow_the_density_setting(self):
+        root = Path(__file__).parents[1] / 'linux'
+        vala = (root / 'wingpanel/Indicator.vala').read_text()
+        self.assertIn('ui.json', vala)
+        self.assertIn('energy-compact', vala)
+        self.assertIn('compact ? "compact" : "roomy"', vala)  # a density change must defeat the unchanged-data shortcut
+        self.assertIn('.energy-compact', (root / 'theme.css').read_text())
+        self.assertIn('preferences_dialog', (root / 'energy_monitor.py').read_text())

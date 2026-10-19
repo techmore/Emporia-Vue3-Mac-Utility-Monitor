@@ -167,3 +167,20 @@
 .energy-sidebar-footer .energy-footer-power { font-size: 1.25em; font-weight: 700; font-feature-settings: "tnum"; }
 .energy-sidebar-footer .energy-dot { color: @success_color; }
 .energy-sidebar-footer .energy-dot.energy-offline { color: alpha(@fg_color, 0.4); }
+
+/* ---- compact density (CodexBar-style): same colours, less air --------------------------------- */
+.energy-compact .energy-card { padding: 3px 6px; border-radius: 4px; }
+.energy-compact .energy-hero { padding: 3px 0; }
+.energy-compact .energy-hero .energy-value { font-size: 1.6em; }
+.energy-compact .energy-value { font-size: 1.1em; }
+.energy-compact .energy-history-title { font-size: 1.4em; }
+.energy-compact .energy-sidebar row { margin: 0; }
+.energy-compact .energy-side-heading { margin-top: 4px; }
+.energy-compact .energy-sidebar-footer { margin-top: 4px; margin-bottom: 6px; }
+.energy-compact .energy-circuits row { min-height: 28px; }
+.energy-compact .energy-circuits row > box { margin-top: 2px; margin-bottom: 2px; }
+.energy-compact button.energy-circuit { min-height: 28px; padding: 2px 6px; }
+.energy-compact .energy-menu-title { font-size: 1em; }
+.energy-compact .energy-notice { padding: 3px 6px; }
+.energy-compact .energy-panel { padding: 3px; }
+.energy-compact .energy-bus-label { font-size: 0.74em; }
