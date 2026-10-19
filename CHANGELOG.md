@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- elementary OS client dashboard re-skin: colours are computed so text, links, status colours and button labels reach 4.5:1 for every accent in light and dark; the collector's dark brand panels (Now panel, breaker panel) become light cards in the light theme and neutral charcoal in the dark theme; unstyled form controls, links, hover/active rows and heatmap labels follow the system theme; reduced-motion and high-contrast preferences are honoured. Browsers and the Mac app are unchanged. Verified by unit tests only; the on-screen render check was not completed.
 - Temperature window: current sensors are a boxed list with band swatches, room and a large reading; hovering or clicking the chart moves the readout to the nearest recorded bucket.
 - Polish the elementary OS client: grouped sidebar (Monitor, Home, Devices, App) with accent selection, connection status as the window subtitle instead of a bottom bar, a clear offline page with Try Again and Collector Connection actions, and quieter circuit rows in the menu, a live/offline dot in the dropdown header (panel icon dims when readings are stale) and a proper elementary-style app icon.
 - Native shell for the elementary OS client: a source-list sidebar replaces the web top bar, the embedded dashboard follows the system light/dark palette, accent colour and font through a client-side style sheet, and the connection status moves to a bottom bar. Browsers and the Mac app are unchanged.

@@ -4,7 +4,15 @@ The collector's pages are styled with CSS variables (an olive/stone palette shar
 The native client overrides those variables with the system's light/dark palette and accent colour,
 swaps the web fonts for the system font and hides the page's own top bar, which the native sidebar
 replaces. The collector itself is not changed.
+
+The palette is computed, not hand-picked: every accent the user can choose is adjusted until text,
+links, status colours and button labels reach 4.5:1 against the surface they are drawn on. The
+collector's "dark brand" panels (Now panel, breaker panel, forecast strip) were written for a dark
+olive ramp and would stay dark-on-dark or navy-on-white in the light theme, so in the light theme
+those panels re-map the ramp locally (custom properties inherit) instead of being restyled one rule
+at a time; in the dark theme they get a neutral charcoal ramp rather than an accent-tinted one.
 """
+import re
 
 
 def _hex(rgb):
@@ -13,6 +21,39 @@ def _hex(rgb):
 
 def _mix(a, b, t):
     return tuple(x + (y - x) * t for x, y in zip(a, b))
+
+
+def _channel(v):
+    v /= 255
+    return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def luminance(rgb):
+    r, g, b = (_channel(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a, b):
+    hi, lo = sorted((luminance(a), luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def ensure(fg, backgrounds, target=4.6):
+    """Move fg towards black (light surfaces) or white (dark surfaces) until it reaches `target` on all of them."""
+    if not isinstance(backgrounds, (list, tuple)) or isinstance(backgrounds[0], (int, float)):
+        backgrounds = [backgrounds]
+    towards = (0, 0, 0) if sum(luminance(b) for b in backgrounds) / len(backgrounds) > 0.4 else (255, 255, 255)
+    for step in range(41):
+        candidate = _mix(fg, towards, step / 40)
+        if all(contrast(candidate, b) >= target for b in backgrounds):
+            return candidate
+    return towards
+
+
+def on_colour(background, target=4.6):
+    """Black or white label text, whichever reads better on `background`."""
+    white, black = (255, 255, 255), (17, 17, 17)
+    return white if contrast(white, background) >= contrast(black, background) else black
 
 
 def parse_accent(value, fallback=(0x36, 0x89, 0xe6)):
@@ -26,38 +67,114 @@ def parse_accent(value, fallback=(0x36, 0x89, 0xe6)):
         return fallback
 
 
+WHITE, BLACK = (255, 255, 255), (0, 0, 0)
+LIGHT = {'bg': (245, 245, 245), 'surface': (255, 255, 255), 'surface2': (250, 250, 250), 'border': (200, 200, 200),
+         'text': (51, 51, 51), 'text-light': (102, 102, 102)}
+DARK = {'bg': (43, 43, 43), 'surface': (53, 53, 53), 'surface2': (61, 61, 61), 'border': (74, 74, 74),
+        'text': (250, 250, 250), 'text-light': (178, 178, 178)}
+# elementary palette status colours (Lime, Strawberry, Orange 500), pulled to AA for text use.
+STATUS = {'green': (0x68, 0xb7, 0x23), 'red': (0xed, 0x53, 0x53), 'amber': (0xf3, 0x73, 0x29)}
+
+
+def palette(dark, accent):
+    """All computed colours as {name: (r, g, b)}; exposed so tests can assert contrast for every accent."""
+    mode = DARK if dark else LIGHT
+    text_surfaces = [mode['bg'], mode['surface'], mode['surface2']]
+    ramp = {50: _mix(accent, WHITE, .92), 100: _mix(accent, WHITE, .84), 200: _mix(accent, WHITE, .68),
+            300: _mix(accent, WHITE, .5), 400: _mix(accent, WHITE, .28), 500: accent,
+            600: _mix(accent, BLACK, .12), 700: _mix(accent, BLACK, .28), 800: _mix(accent, BLACK, .45),
+            900: _mix(accent, BLACK, .62), 950: _mix(accent, BLACK, .8)}
+    # Button fill: the accent, darkened until white labels pass; the same shade is the accent in both modes.
+    button = ensure(accent, [WHITE], 4.6)
+    out = {'ramp': ramp, 'button': button, 'on-button': WHITE, 'ring': _mix(accent, WHITE, .0)}
+    out['accent-text'] = ensure(accent, text_surfaces)
+    for name, value in STATUS.items():
+        # Also clear the 12% tint of the status colour itself, which the collector uses behind badges.
+        out[name] = ensure(value, text_surfaces + [_mix(mode['surface'], value, .14)], 5.3)
+    out.update(mode)
+    return out
+
+
 def build_css(dark, accent=None):
     accent = parse_accent(accent) if accent is not None else (0x36, 0x89, 0xe6)
-    white, black = (255, 255, 255), (0, 0, 0)
-    ramp = {50: _mix(accent, white, .92), 100: _mix(accent, white, .84), 200: _mix(accent, white, .68),
-            300: _mix(accent, white, .5), 400: _mix(accent, white, .28), 500: accent,
-            600: _mix(accent, black, .12), 700: _mix(accent, black, .28), 800: _mix(accent, black, .45),
-            900: _mix(accent, black, .62), 950: _mix(accent, black, .8)}
+    p = palette(dark, accent)
+    ramp = dict(p['ramp'])
+    # Deep ramp steps are used as button fills and active chips with --olive-50 labels: keep them on the
+    # AA button shade rather than a near-black navy.
+    ramp[800] = p['button']
+    ramp[700] = _mix(p['button'], BLACK, .16)
+    # 500/400 are the collector's mid-weight *text* steps (no-data notes, small labels) on cards.
+    ramp[600] = ramp[500] = ramp[400] = p['accent-text']
     olive = ''.join('--olive-%d:%s;' % (k, _hex(v)) for k, v in ramp.items())
+
     # Author styles beat user style sheets unless the declaration is !important.
     def important(block):
         return ';'.join(d + ' !important' for d in block.split(';') if d.strip()) + ';'
 
+    def rules(css):
+        return re.sub(r'\{([^{}]*)\}', lambda m: '{' + important(m.group(1)) + '}', css)
+
+    mode = DARK if dark else LIGHT
+    surface = ''.join('--%s:%s;' % (k, _hex(mode[k])) for k in ('bg', 'surface', 'surface2', 'border', 'text', 'text-light'))
     if dark:
-        surface = ('--bg:#2b2b2b;--surface:#353535;--surface2:#3d3d3d;--border:#4a4a4a;--text:#fafafa;'
-                   '--text-light:#a8a8a8;--stone-50:#2b2b2b;--stone-100:#333;--stone-200:#3d3d3d;'
-                   '--stone-300:#4a4a4a;--stone-400:#7a7a7a;--stone-500:#a8a8a8;--stone-600:#c8c8c8;'
-                   '--stone-700:#dedede;--stone-800:#fafafa;--stone-900:#fff;')
-        scheme = 'dark'
-        card_shadow = '0 1px 2px rgba(0,0,0,.4)'
-        extra = '.circuit-bar-wrap { background: rgba(255,255,255,.12) !important; }'
+        stone = ('--stone-50:#2b2b2b;--stone-100:#333;--stone-200:#3d3d3d;--stone-300:#4a4a4a;--stone-400:#a0a0a0;'
+                 '--stone-500:#b4b4b4;--stone-600:#c8c8c8;--stone-700:#dedede;--stone-800:#fafafa;--stone-900:#fff;')
+        scheme, card_shadow = 'dark', '0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.45)'
+        accent_var = p['accent-text']
     else:
-        surface = ('--bg:#f5f5f5;--surface:#ffffff;--surface2:#fafafa;--border:#d4d4d4;--text:#333333;'
-                   '--text-light:#666666;--stone-50:#fafafa;--stone-100:#f5f5f5;--stone-200:#e8e8e8;'
-                   '--stone-300:#d4d4d4;--stone-400:#a0a0a0;--stone-500:#7a7a7a;--stone-600:#5a5a5a;'
-                   '--stone-700:#444;--stone-800:#333;--stone-900:#1f1f1f;')
-        scheme = 'light'
-        card_shadow = '0 1px 2px rgba(0,0,0,.12)'
-        extra = ''
+        stone = ('--stone-50:#fafafa;--stone-100:#f5f5f5;--stone-200:#e8e8e8;--stone-300:#d4d4d4;--stone-400:#6b6b6b;'
+                 '--stone-500:#616161;--stone-600:#5a5a5a;--stone-700:#444;--stone-800:#333;--stone-900:#1f1f1f;')
+        scheme, card_shadow = 'light', '0 0 0 1px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.10)'
+        accent_var = p['button']
+    status = '--green:%s;--red:%s;--amber:%s;' % tuple(_hex(p[k]) for k in ('green', 'red', 'amber'))
+    bands = '--temperature-cold:#3689e6;--temperature-comfortable:#f9c440;--temperature-warm:#ffa154;--temperature-hot:#ed5353;'
+    root = olive + surface + stone + status + bands + '--accent:%s;--accent-fg:%s;--accent-text:%s' % (
+        _hex(accent_var), _hex(on_colour(accent_var) if dark else p['on-button']), _hex(p['accent-text']))
+
+    if dark:
+        # Neutral charcoal for the collector's "dark brand" panels; the accent only tints the labels.
+        panel = {950: (38, 38, 38), 900: (50, 50, 50), 800: (61, 61, 61), 700: (78, 78, 78), 600: (96, 96, 96),
+                 500: ensure(accent, [(38, 38, 38), (78, 78, 78)]), 400: ensure(accent, [(38, 38, 38), (78, 78, 78)]), 300: (205, 205, 205),
+                 200: (222, 222, 222), 100: (236, 236, 236), 50: (250, 250, 250)}
+        plate = '#262626'
+        extra = """
+[style*="color:var(--olive-800)"], [style*="color: var(--olive-800)"], [style*="color:var(--olive-700)"], [style*="color: var(--olive-700)"] { color: var(--accent-text); }
+.circuit-bar-wrap { background: rgba(255,255,255,.12) !important; }
+.sys-link:hover { background: rgba(255,255,255,.07); }
+.sys-link.active { background: color-mix(in srgb, var(--accent-text) 12%, transparent); }
+.delta.flat, .delta.nodata { background: var(--surface2); }
+.data-table tr:hover td { background: rgba(255,255,255,.05); }
+.skeleton, [class*="skeleton"] { background: linear-gradient(90deg, var(--surface2) 25%, var(--border) 50%, var(--surface2) 75%); }
+"""
+    else:
+        # Light theme: the dark panels become light cards. The ramp is mirrored locally so every
+        # var(--olive-N) inside them (backgrounds, borders, labels) lands on a legible light/dark pair.
+        tint = lambda t: _mix(accent, WHITE, t)
+        label = ensure(accent, [WHITE, tint(.84)], 4.8)
+        panel = {950: WHITE, 900: tint(.94), 800: tint(.9), 700: tint(.78), 600: tint(.6), 500: label,
+                 400: label, 300: _mix(label, BLACK, .25), 200: _mix(label, BLACK, .45), 100: (51, 51, 51), 50: (31, 31, 31)}
+        plate = '#2b3138'
+        green, orange, yellow, red = (ensure(c, [WHITE, tint(.93)], 3.0) for c in
+                                      ((0x4a, 0xde, 0x80), (0xf9, 0x73, 0x16), (0xfa, 0xcc, 0x15), (0xef, 0x44, 0x44)))
+        extra = """
+[style*="color:var(--olive-300)"], [style*="color: var(--olive-300)"], [style*="color:var(--olive-200)"], [style*="color: var(--olive-200)"] { color: var(--accent-text); }
+.breaker-safe .breaker-bar, .fill-normal { background: %s; }
+.fill-moderate { background: %s; }
+.breaker-safe.warn .breaker-bar, .fill-caution { background: %s; }
+.breaker-safe.danger .breaker-bar, .fill-danger { background: %s; }
+.load-normal { color: %s; } .load-moderate { color: %s; } .load-caution { color: %s; } .load-danger { color: %s; }
+.breaker-peak-badge { color: %s; }
+.breaker-load-text, .breaker-watts, .breaker-name { color: var(--olive-100); }
+""" % (_hex(green), _hex(yellow), _hex(orange), _hex(red),
+       _hex(ensure(green, tint(.93), 4.5)), _hex(ensure(yellow, tint(.93), 4.5)),
+       _hex(ensure(orange, tint(.93), 4.5)), _hex(ensure(red, tint(.93), 4.5)), _hex(ensure(yellow, tint(.93), 4.5)))
+    panel_vars = ''.join('--olive-%d:%s;' % (k, _hex(v)) for k, v in panel.items())
+    panel_selectors = '.now-panel, .panel-wrap, .banner-chart'
+    ring = _hex(accent_var if dark else p['button'])
     return f"""
 :root {{
   color-scheme: {scheme};
-  {important(olive + surface + '--accent:' + _hex(ramp[600] if not dark else ramp[400]) + ';--accent-fg:#fff;--green:#68b723;--red:#ed5353;--amber:#f37329;--temperature-cold:#3689e6;--temperature-comfortable:#f9c440;--temperature-warm:#ffa154;--temperature-hot:#ed5353')}
+  {important(root)}
 }}
 /* System font, not the web fonts: elementary's UI font with tabular figures for readings. */
 *:not(code):not(pre):not(kbd):not(samp):not(svg *) {{
@@ -70,11 +187,31 @@ nav.topnav {{ display: none !important; }}
 /* elementary rhythm: 6 px controls, 9 px panels, hairline borders, restrained shadows. */
 button, input, select, textarea {{ border-radius: 6px; }}
 .card, .chart-box, .mains-card, .history-device-summary {{ border-radius: 9px; box-shadow: {card_shadow}; }}
+/* Dark brand panels (see module docstring): remapped ramp, inherited by everything inside. */
+{panel_selectors} {{ {panel_vars} box-shadow: {card_shadow}; }}
+/* Controls the collector leaves unstyled get the system look; styled ones keep their own rules. */
+input:not([type=checkbox]):not([type=radio]):not([type=range]):not([class]):not([style]), select:not([class]):not([style]), textarea:not([class]):not([style]) {{
+  color: var(--text); background: var(--surface); border: 1px solid var(--border); padding: 5px 8px; min-height: 30px; box-sizing: border-box;
+}}
+button:not([class]):not([style]) {{
+  color: var(--text); background: var(--surface2); border: 1px solid var(--border); padding: 5px 12px; min-height: 30px; cursor: pointer;
+}}
+button:not([class]):not([style]):hover {{ background: color-mix(in srgb, var(--text) 8%, var(--surface2)); }}
+a:not([class]) {{ color: var(--accent-text); }}
+{rules('.page-jump-nav a { color: var(--accent-text); border-color: var(--border); } .sys-name, .sys-sub { white-space: normal; overflow-wrap: anywhere; }')}
+/* Heatmaps keep the collector's "brighter means more energy" legend, so they sit on a dark plate in both themes. */
+{rules('.power-heatmap { background: ' + plate + '; border-radius: 9px; padding: 4px; } .power-heatmap th, .power-heatmap tbody th { background: ' + plate + '; color: #f2f2f2; }')}
+/* Inline status colours the collector writes as literals; swap them for the AA-checked variables. */
+{rules('.int-badge.ok { background: color-mix(in srgb, var(--green) 14%, var(--surface)); } .int-badge.warn { background: color-mix(in srgb, var(--amber) 14%, var(--surface)); }')}
+{rules('[style*="color:#81c784"], [style*="color: #81c784"] { color: var(--green); } [style*="color:#f87171"], [style*="color: #f87171"] { color: var(--red); } [style*="color:#fbbf24"], [style*="color: #fbbf24"] { color: var(--amber); }')}
 ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
 ::-webkit-scrollbar-thumb {{ background: color-mix(in srgb, var(--text) 30%, transparent); border-radius: 5px;
   border: 2px solid transparent; background-clip: content-box; }}
 ::-webkit-scrollbar-thumb:hover {{ background: color-mix(in srgb, var(--text) 50%, transparent); background-clip: content-box; }}
-:focus-visible {{ outline: 2px solid {_hex(ramp[500])}; outline-offset: 2px; }}
-{extra}
-::selection {{ background: color-mix(in srgb, {_hex(ramp[500])} 40%, transparent); }}
+:focus-visible {{ outline: 2px solid {ring}; outline-offset: 2px; }}
+{rules(extra)}
+::selection {{ background: color-mix(in srgb, {_hex(accent)} 40%, transparent); }}
+/* No motion for people who ask for none; stronger hairlines when the system asks for more contrast. */
+@media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{ animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }} }}
+@media (prefers-contrast: more) {{ :root {{ --border: {'#c8c8c8' if dark else '#6a6a6a'} !important; --text-light: {'#e0e0e0' if dark else '#444'} !important; }} }}
 """
