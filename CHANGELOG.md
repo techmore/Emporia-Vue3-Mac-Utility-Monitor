@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Native shell for the elementary OS client: a source-list sidebar replaces the web top bar, the embedded dashboard follows the system light/dark palette, accent colour and font through a client-side style sheet, and the connection status moves to a bottom bar. Browsers and the Mac app are unchanged.
 - Make the elementary OS client native in look and feel: one stylesheet on the system's named colours (follows light/dark and accent), system type, a Quick Settings-style Power/Temperatures switch, header-bar dialogs with keyboard shortcuts, sectioned app menu, redrawn history and temperature charts, elementary-palette temperature bands. The embedded web dashboard is unchanged.
 
 ## 2.3.65 - 2026-10-18

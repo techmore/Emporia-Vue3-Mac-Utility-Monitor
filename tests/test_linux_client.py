@@ -8,6 +8,10 @@ spec = importlib.util.spec_from_file_location('linux_client_core', Path(__file__
 core = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core)
 
+web_spec = importlib.util.spec_from_file_location('linux_web_theme', Path(__file__).parents[1] / 'linux/web_theme.py')
+web_theme = importlib.util.module_from_spec(web_spec)
+web_spec.loader.exec_module(web_theme)
+
 
 class LinuxClientTests(unittest.TestCase):
     def test_temperature_bands_and_cached_readings_never_look_live(self):
@@ -107,3 +111,12 @@ class TemperatureTrendCacheTests(unittest.TestCase):
             self.assertIsNone(core.load_temperature_trend_cache(directory, original['origin'], 'collector-A'))
             core.private_json(path, original)
             self.assertIsNone(core.load_temperature_trend_cache(directory, original['origin'], None))
+
+    def test_web_theme_follows_system_palette_and_accent(self):
+        light, dark = web_theme.build_css(False, '#3689e6'), web_theme.build_css(True, '#3689e6')
+        self.assertIn('color-scheme: light', light)
+        self.assertIn('color-scheme: dark', dark)
+        self.assertIn('--olive-500:#3689e6 !important', light)
+        self.assertIn('nav.topnav { display: none !important; }', light)
+        self.assertNotIn('--olive-500:#3689e6', web_theme.build_css(False, '#ed5353'))
+        self.assertEqual(web_theme.parse_accent('garbage'), (0x36, 0x89, 0xe6))
