@@ -102,3 +102,7 @@
 .energy-sidebar row:not(:selected) image { opacity: 0.75; }
 .energy-side-heading { opacity: 0.6; font-size: 0.82em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .energy-offline-title { font-size: 1.7em; font-weight: 700; margin-top: 6px; }
+
+/* live indicator dot in the dropdown header: green when readings are recent, grey when cached */
+.energy-monitor .energy-dot { color: @success_color; }
+.energy-monitor .energy-dot.energy-offline { color: alpha(@fg_color, 0.4); }

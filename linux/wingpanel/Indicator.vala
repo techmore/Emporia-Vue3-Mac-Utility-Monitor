@@ -5,6 +5,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private Gtk.Box menu;
     private Gtk.Box readings;
     private Gtk.Label status;
+    private Gtk.Image live_dot;
+    private Gtk.Image panel_icon;
     private Gtk.Label panel_title;
     private uint timer;
     private string previous = "";
@@ -19,7 +21,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
     public EnergyIndicator () {
         Object (code_name: "energy-monitor", visible: true);
         display_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 3);
-        display_box.append (new Gtk.Image.from_icon_name ("weather-storm-symbolic"));
+        panel_icon = new Gtk.Image.from_icon_name ("weather-storm-symbolic");
+        display_box.append (panel_icon);
         power = new Gtk.Label ("");
         display_box.append (power);
         display_box.tooltip_text = "Energy Monitor";
@@ -41,6 +44,9 @@ public class EnergyIndicator : Wingpanel.Indicator {
         status.add_css_class ("energy-timestamp");
         var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
         header.append (panel_title);
+        live_dot = new Gtk.Image.from_icon_name ("media-record-symbolic") { pixel_size = 10 };
+        live_dot.add_css_class ("energy-dot");
+        header.append (live_dot);
         header.append (status);
         menu.append (header);
         prefs = new EnergyPrefs ();
@@ -100,6 +106,11 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private void load_theme () {
         // One stylesheet built on the elementary named colours: light, dark and accent follow the system.
         css.load_from_resource ("/org/techmore/energy/theme.css");
+    }
+
+    private void set_live (bool live) {
+        if (live) { live_dot.remove_css_class ("energy-offline"); panel_icon.remove_css_class ("dim-label"); }
+        else { live_dot.add_css_class ("energy-offline"); panel_icon.add_css_class ("dim-label"); }
     }
 
     private void launch (string[] options) {
@@ -170,6 +181,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
             previous = fingerprint;
             panel_title.label = string_member (root, "panel_label", "Energy Monitor");
             power.label = live ? metric (root, "current_watts", "%.0f W") : "";
+            set_live (live);
             string stamp = string_member (root, "last_reading");
             int separator = stamp.index_of ("T");
             if (separator >= 0 && stamp.length >= separator + 6) stamp = stamp.substring (separator + 1, 5);
@@ -301,6 +313,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
             }
         } catch (Error e) {
             power.label = "";
+            set_live (false);
             status.label = "Collector connection required";
         }
     }
