@@ -44,6 +44,11 @@ if pkg-config --exists wingpanel-9; then
   trap 'rm -rf "$build"' EXIT
   meson setup "$build" "$repo/linux/wingpanel" --buildtype=release
   ninja -C "$build"
-  sudo install -m644 "$build/libenergy-monitor.so" "$(pkg-config --variable=indicatorsdir wingpanel-9)/libenergy-monitor.so"
+  if sudo -n true 2>/dev/null || [[ -t 0 ]]; then
+    sudo install -m644 "$build/libenergy-monitor.so" "$(pkg-config --variable=indicatorsdir wingpanel-9)/libenergy-monitor.so" \
+      || echo "Panel library NOT installed (administrator rights were refused). The app itself is up to date; re-run this script from a terminal to update the panel." >&2
+  else
+    echo "Panel library NOT installed (no administrator rights without a terminal). The app itself is up to date; re-run this script from a terminal to update the panel." >&2
+  fi
 fi
 echo 'Energy Monitor installed. Launch energy-monitor, then choose Collector Connection if needed.'

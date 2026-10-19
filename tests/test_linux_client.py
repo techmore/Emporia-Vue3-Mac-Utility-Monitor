@@ -351,3 +351,25 @@ class SingleLineCompactTests(unittest.TestCase):
         self.assertIn('int ROW = compact ? 26 : 46;', vala)
         self.assertIn('compact ? Gtk.Orientation.HORIZONTAL : Gtk.Orientation.VERTICAL', vala)
         self.assertIn('!compact && live && circuit.has_member ("load_percent")', vala)
+
+
+class InstallCompletenessTests(unittest.TestCase):
+    def test_every_local_module_the_app_imports_is_installed(self):
+        root = Path(__file__).parents[1] / 'linux'
+        modules = {path.stem for path in root.glob('*.py')}
+        install = (root / 'install.sh').read_text()
+        imported = set()
+        for name in ('energy_monitor.py', 'temperatures.py', 'chart.py', 'native_auth.py', 'web_theme.py'):
+            for node in ast.walk(ast.parse((root / name).read_text())):
+                if isinstance(node, ast.ImportFrom) and node.module in modules:
+                    imported.add(node.module)
+                elif isinstance(node, ast.Import):
+                    imported.update(alias.name for alias in node.names if alias.name in modules)
+        self.assertTrue({'client_core', 'chart', 'web_theme', 'native_auth', 'temperatures'} <= imported)
+        for module in imported:
+            self.assertIn('linux/%s.py' % module, install, module + ' is imported but never installed')
+        self.assertIn('linux/theme.css', install)
+
+    def test_panel_install_failure_is_reported_not_fatal(self):
+        install = (Path(__file__).parents[1] / 'linux/install.sh').read_text()
+        self.assertIn('Panel library NOT installed', install)
