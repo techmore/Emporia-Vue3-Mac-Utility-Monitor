@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Serve the dashboard with waitress, a production WSGI server, instead of Werkzeug's development server (which was also used behind the public HTTPS gateway). Every launcher keeps running `web.py`; it stays loopback-only, live updates still stream immediately, and 32 worker threads (`WEB_THREADS`) keep the dashboard responsive with several tabs open. `ENERGY_DEV_SERVER=1` restores the old server for debugging; if waitress is missing after a code-only upgrade the dashboard still starts and logs how to fix it. `build.sh` now syncs `requirements.lock` after pulling.
+- `/api/health` reports whether the server and database are up (503 when the database cannot open) plus the poller heartbeat age, for service monitoring.
+- Response hardening: `Cache-Control: no-store` on API responses that set no policy, `Cross-Origin-Opener-Policy`, a restrictive `Permissions-Policy`, and host-only HSTS when reached through the configured HTTPS origin. Weather and poller-reconnect failures are logged instead of returning raw error or file-path text.
 - Compact density makes the dropdown's circuits single-line: in the panel view each breaker is 26 px with name and watts on one line (no rating line), and list rows drop the rating and load bar.
 - Narrower Wingpanel dropdown: 440 px (was 520), and 340 px in Compact density; still one width for both views.
 - Circuit history window shows a dense second line: peak (with its time), lowest, average and how many buckets were actually recorded; gaps are excluded, never averaged as zero.
