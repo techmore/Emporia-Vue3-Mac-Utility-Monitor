@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.0.4 - 2026-10-07
+
+### Added
+- Circuit comparison of two complete seven-day windows in Reports
+- Minute-capture eligibility gates suppress changes for sparse or mismatched history
+- Tests for missing capture, zero baselines, device isolation, and partial-day exclusion
+
+## 2.0.3 - 2026-10-07
+
+### Added
+- Configurable monthly fixed charge, kept separate from circuit usage costs
+- Reports projected bill breakdown before assistance credits, with explicit tax handling
+- Billing configuration validation and preservation tests
+
+## 2.0.2 - 2026-10-07
+
+### Added
+- Opt-in Mac collector-client mode via ENERGY_COLLECTOR_URL, with secure-origin validation
+- Persistent Collector Connection menu setting for Finder/login launches
+- Verified online SQLite backup command for collector-history migration
+- Measured top-five consumption reviews with explicitly hypothetical savings scenarios
+- Collector migration and offline synchronization requirements in COLLECTOR_CLIENT.md
+
+### Fixed
+- Reports no longer labels instantaneous low loads as verified always-on consumption
+- Collector startup requires a successful version response instead of accepting HTTP errors
+
+## 2.0.1 - 2026-10-07
+
+### Added
+- Aqara Cloud account configuration and authorization controls in Settings
+- Aqara v3 sensor discovery with regional API endpoints, token refresh, and device-model resource lookup
+
+### Fixed
+- Aqara API signing, request paths, device pagination, and resource-value request structure
+- Aqara sensor errors now surface in the UI instead of being silently converted into an empty list
+
+### Verification
+- venv/bin/python3 -m unittest discover -s tests -v
+
 ## 2.0.0 - 2026-03-13
 
 ### Added

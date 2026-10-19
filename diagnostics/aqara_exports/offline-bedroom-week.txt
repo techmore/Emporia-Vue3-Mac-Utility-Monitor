@@ -1,0 +1,24 @@
+Window: "Aqara Home", App: AqaraHome.
+0 standard window Aqara Home, ID: SceneWindow, Secondary Actions: Raise
+	1 container
+		2 container Secondary Actions: Cancel
+			3 button Description: nav return, Secondary Actions: Cancel
+			4 text Description: Barn - 3rd bedroom, Secondary Actions: Cancel
+			5 button Description: Day, Secondary Actions: Cancel
+			6 button (selected) Description: Week, Secondary Actions: Cancel
+			7 button Description: - ℉, Secondary Actions: Cancel
+			8 text Description: 10/03-10/09 Average Temperature, Secondary Actions: Cancel
+			9 heading Description: Line Chart. 0 datasets. , Secondary Actions: Cancel
+			10 button Description: floating icon more, Secondary Actions: Cancel
+			11 text Description: Time Zone: GMT-04:00, Secondary Actions: Cancel
+	12 close button
+	13 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	14 minimize button
+	15 text Aqara Home
+16 menu bar
+	17 Aqara Home, ID: com.apple.menu.application
+	18 File, ID: com.apple.menu.file
+	19 Edit, ID: com.apple.menu.edit
+	20 View, ID: com.apple.menu.view
+	21 Window, ID: com.apple.menu.window
+	22 Help, ID: com.apple.menu.help

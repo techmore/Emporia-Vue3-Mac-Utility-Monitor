@@ -1,0 +1,36 @@
+Aqara Home interim collection workflow (verified October 8, 2026)
+
+Use the locally installed, logged-in Aqara Home app through cua_repl.
+Locate the running app with cua.listApps(); the iOS wrapper path may change.
+Do not hardcode accessibility indices. Read a fresh full accessibility tree before each navigation.
+
+1. Open Accessories and select the sensor by its visible name.
+2. Open Temperature. Capture getAXState({disableDiffing:true,emit:false}).
+   The chart exposes individual timestamp/value pairs as text. Save the full tree
+   to <device>-temperature.ax.txt under this directory using Node filesystem APIs.
+3. Return to the sensor overview and repeat for Humidity and Atmospheric Pressure,
+   saving <device>-humidity.ax.txt and <device>-pressure.ax.txt.
+4. Run from the project directory:
+   python3 diagnostics/aqara_chart_to_csv.py diagnostics/aqara_exports --year 2026
+5. Check the CSV sample count and latest timestamps. A successful capture is not
+   proof of a fresh reading: sensors only publish when they report changes.
+
+Hourly runs should capture overlapping Day charts, then merge by device,
+timestamp and metric. The converter preserves existing records and deduplicates.
+The tested chart includes the previous evening as well as today. Month/year
+boundaries and ambiguous daylight-saving timestamps need extra handling before
+unattended use across those boundaries. Keep raw captures for auditing.
+
+Known devices seen in Accessories:
+Barn - 3rd bedroom (appeared grey/offline)
+Barn-1st (all three metrics verified)
+Barn-Attic
+Barn-living room
+Barn-Master
+Temp-Ranch-living
+Hub M3 (hub, not a temperature sensor)
+
+Requirements: Mac awake, logged-in Aqara app, network connectivity, and an active
+Codex computer-use run. This is a UI fallback, not an unattended API daemon.
+No hourly schedule has been installed yet. Do not toggle devices, change account
+settings, or export credentials. Saved captures only contain the sensor chart view.

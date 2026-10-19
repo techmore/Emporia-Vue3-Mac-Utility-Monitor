@@ -1,0 +1,326 @@
+Window: "Aqara Home", App: AqaraHome.
+0 standard window Aqara Home, ID: SceneWindow, Secondary Actions: Raise
+	1 container
+		2 container Secondary Actions: Cancel
+			3 button Description: nav return, Secondary Actions: Cancel
+			4 text Description: Barn-1st, Secondary Actions: Cancel
+			5 button (selected) Description: Day, Secondary Actions: Cancel
+			6 button Description: Week, Secondary Actions: Cancel
+			7 button Description: 99.9 kPa, Secondary Actions: Cancel
+			8 button Description: 99.9 kPa, Secondary Actions: Cancel
+			9 text Description: Latest Atmospheric Pressure, Secondary Actions: Cancel
+			10 text Description: 10/08 Average Atmospheric Pressure, Secondary Actions: Cancel
+			11 heading Description: Line Chart. 1 dataset. DataSet, Secondary Actions: Cancel
+			12 element Secondary Actions: Cancel, Description:  5:02 
+PM
+10/07: 99.900
+			13 element Secondary Actions: Cancel, Description:  5:30 
+PM
+10/07: 99.900
+			14 element Secondary Actions: Cancel, Description:  5:30 
+PM
+10/07: 99.900
+			15 element Secondary Actions: Cancel, Description:  5:47 
+PM
+10/07: 99.900
+			16 element Secondary Actions: Cancel, Description:  5:47 
+PM
+10/07: 99.900
+			17 element Secondary Actions: Cancel, Description:  5:56 
+PM
+10/07: 99.900
+			18 element Secondary Actions: Cancel, Description:  5:56 
+PM
+10/07: 99.900
+			19 element Secondary Actions: Cancel, Description:  6:02 
+PM
+10/07: 99.900
+			20 element Secondary Actions: Cancel, Description:  6:14 
+PM
+10/07: 99.900
+			21 element Secondary Actions: Cancel, Description:  6:14 
+PM
+10/07: 99.900
+			22 element Secondary Actions: Cancel, Description:  6:24 
+PM
+10/07: 99.900
+			23 element Secondary Actions: Cancel, Description:  6:24 
+PM
+10/07: 99.900
+			24 element Secondary Actions: Cancel, Description:  6:58 
+PM
+10/07: 99.900
+			25 element Secondary Actions: Cancel, Description:  7:16 
+PM
+10/07: 99.900
+			26 element Secondary Actions: Cancel, Description:  7:16 
+PM
+10/07: 99.900
+			27 element Secondary Actions: Cancel, Description:  7:26 
+PM
+10/07: 99.900
+			28 element Secondary Actions: Cancel, Description:  7:26 
+PM
+10/07: 99.900
+			29 element Secondary Actions: Cancel, Description:  7:48 
+PM
+10/07: 99.900
+			30 element Secondary Actions: Cancel, Description:  8:26 
+PM
+10/07: 100.000
+			31 element Secondary Actions: Cancel, Description:  8:26 
+PM
+10/07: 100.000
+			32 element Secondary Actions: Cancel, Description:  8:39 
+PM
+10/07: 100.000
+			33 element Secondary Actions: Cancel, Description:  9:16 
+PM
+10/07: 100.000
+			34 element Secondary Actions: Cancel, Description:  9:16 
+PM
+10/07: 100.000
+			35 element Secondary Actions: Cancel, Description:  9:37 
+PM
+10/07: 100.000
+			36 element Secondary Actions: Cancel, Description:  10:02 
+PM
+10/07: 100.000
+			37 element Secondary Actions: Cancel, Description:  10:02 
+PM
+10/07: 100.000
+			38 element Secondary Actions: Cancel, Description:  10:34 
+PM
+10/07: 100.000
+			39 element Secondary Actions: Cancel, Description:  10:41 
+PM
+10/07: 100.000
+			40 element Secondary Actions: Cancel, Description:  10:41 
+PM
+10/07: 100.000
+			41 element Secondary Actions: Cancel, Description:  11:14 
+PM
+10/07: 99.900
+			42 element Secondary Actions: Cancel, Description:  11:14 
+PM
+10/07: 99.900
+			43 element Secondary Actions: Cancel, Description:  11:30 
+PM
+10/07: 99.900
+			44 element Secondary Actions: Cancel, Description:  12:18 
+AM
+10/08: 99.900
+			45 element Secondary Actions: Cancel, Description:  12:18 
+AM
+10/08: 99.900
+			46 element Secondary Actions: Cancel, Description:  12:25 
+AM
+10/08: 99.900
+			47 element Secondary Actions: Cancel, Description:  12:37 
+AM
+10/08: 99.900
+			48 element Secondary Actions: Cancel, Description:  12:37 
+AM
+10/08: 99.900
+			49 element Secondary Actions: Cancel, Description:  1:01 
+AM
+10/08: 99.900
+			50 element Secondary Actions: Cancel, Description:  1:01 
+AM
+10/08: 99.900
+			51 element Secondary Actions: Cancel, Description:  1:24 
+AM
+10/08: 99.800
+			52 element Secondary Actions: Cancel, Description:  1:36 
+AM
+10/08: 99.800
+			53 element Secondary Actions: Cancel, Description:  1:36 
+AM
+10/08: 99.800
+			54 element Secondary Actions: Cancel, Description:  2:15 
+AM
+10/08: 99.800
+			55 element Secondary Actions: Cancel, Description:  2:15 
+AM
+10/08: 99.800
+			56 element Secondary Actions: Cancel, Description:  2:23 
+AM
+10/08: 99.800
+			57 element Secondary Actions: Cancel, Description:  3:04 
+AM
+10/08: 99.800
+			58 element Secondary Actions: Cancel, Description:  3:04 
+AM
+10/08: 99.800
+			59 element Secondary Actions: Cancel, Description:  3:14 
+AM
+10/08: 99.700
+			60 element Secondary Actions: Cancel, Description:  3:20 
+AM
+10/08: 99.700
+			61 element Secondary Actions: Cancel, Description:  3:20 
+AM
+10/08: 99.700
+			62 element Secondary Actions: Cancel, Description:  3:42 
+AM
+10/08: 99.700
+			63 element Secondary Actions: Cancel, Description:  3:42 
+AM
+10/08: 99.700
+			64 element Secondary Actions: Cancel, Description:  4:08 
+AM
+10/08: 99.700
+			65 element Secondary Actions: Cancel, Description:  5:02 
+AM
+10/08: 99.700
+			66 element Secondary Actions: Cancel, Description:  5:15 
+AM
+10/08: 99.700
+			67 element Secondary Actions: Cancel, Description:  5:15 
+AM
+10/08: 99.700
+			68 element Secondary Actions: Cancel, Description:  5:59 
+AM
+10/08: 99.700
+			69 element Secondary Actions: Cancel, Description:  6:03 
+AM
+10/08: 99.700
+			70 element Secondary Actions: Cancel, Description:  6:03 
+AM
+10/08: 99.700
+			71 element Secondary Actions: Cancel, Description:  6:52 
+AM
+10/08: 99.700
+			72 element Secondary Actions: Cancel, Description:  6:52 
+AM
+10/08: 99.700
+			73 element Secondary Actions: Cancel, Description:  6:57 
+AM
+10/08: 99.800
+			74 element Secondary Actions: Cancel, Description:  7:04 
+AM
+10/08: 99.800
+			75 element Secondary Actions: Cancel, Description:  7:04 
+AM
+10/08: 99.800
+			76 element Secondary Actions: Cancel, Description:  7:30 
+AM
+10/08: 99.800
+			77 element Secondary Actions: Cancel, Description:  7:30 
+AM
+10/08: 99.800
+			78 element Secondary Actions: Cancel, Description:  7:48 
+AM
+10/08: 99.800
+			79 element Secondary Actions: Cancel, Description:  7:57 
+AM
+10/08: 99.800
+			80 element Secondary Actions: Cancel, Description:  7:57 
+AM
+10/08: 99.800
+			81 element Secondary Actions: Cancel, Description:  8:12 
+AM
+10/08: 99.800
+			82 element Secondary Actions: Cancel, Description:  8:12 
+AM
+10/08: 99.800
+			83 element Secondary Actions: Cancel, Description:  8:41 
+AM
+10/08: 99.900
+			84 element Secondary Actions: Cancel, Description:  8:41 
+AM
+10/08: 99.900
+			85 element Secondary Actions: Cancel, Description:  8:46 
+AM
+10/08: 99.900
+			86 element Secondary Actions: Cancel, Description:  9:41 
+AM
+10/08: 99.900
+			87 element Secondary Actions: Cancel, Description:  9:41 
+AM
+10/08: 99.900
+			88 element Secondary Actions: Cancel, Description:  9:46 
+AM
+10/08: 99.900
+			89 element Secondary Actions: Cancel, Description:  10:04 
+AM
+10/08: 99.900
+			90 element Secondary Actions: Cancel, Description:  10:04 
+AM
+10/08: 99.900
+			91 element Secondary Actions: Cancel, Description:  10:40 
+AM
+10/08: 100.000
+			92 element Secondary Actions: Cancel, Description:  10:56 
+AM
+10/08: 100.000
+			93 element Secondary Actions: Cancel, Description:  10:56 
+AM
+10/08: 100.000
+			94 element Secondary Actions: Cancel, Description:  11:26 
+AM
+10/08: 100.000
+			95 element Secondary Actions: Cancel, Description:  11:26 
+AM
+10/08: 100.000
+			96 element Secondary Actions: Cancel, Description:  11:36 
+AM
+10/08: 100.000
+			97 element Secondary Actions: Cancel, Description:  12:01 
+PM
+10/08: 100.000
+			98 element Secondary Actions: Cancel, Description:  12:01 
+PM
+10/08: 100.000
+			99 element Secondary Actions: Cancel, Description:  12:13 
+PM
+10/08: 100.000
+			100 element Secondary Actions: Cancel, Description:  12:13 
+PM
+10/08: 100.000
+			101 element Secondary Actions: Cancel, Description:  12:30 
+PM
+10/08: 100.000
+			102 element Secondary Actions: Cancel, Description:  12:59 
+PM
+10/08: 100.000
+			103 element Secondary Actions: Cancel, Description:  12:59 
+PM
+10/08: 100.000
+			104 element Secondary Actions: Cancel, Description:  1:25 
+PM
+10/08: 100.000
+			105 element Secondary Actions: Cancel, Description:  1:57 
+PM
+10/08: 100.000
+			106 element Secondary Actions: Cancel, Description:  1:57 
+PM
+10/08: 100.000
+			107 element Secondary Actions: Cancel, Description:  2:17 
+PM
+10/08: 100.000
+			108 element Secondary Actions: Cancel, Description:  2:17 
+PM
+10/08: 100.000
+			109 element Secondary Actions: Cancel, Description:  2:21 
+PM
+10/08: 99.900
+			110 element Secondary Actions: Cancel, Description:  3:15 
+PM
+10/08: 99.900
+			111 element Secondary Actions: Cancel, Description:  3:15 
+PM
+10/08: 99.900
+			112 button Description: floating icon more, Secondary Actions: Cancel
+			113 text Description: Time Zone: GMT-04:00, Secondary Actions: Cancel
+	114 close button
+	115 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	116 minimize button
+	117 text Aqara Home
+118 menu bar
+	119 Aqara Home, ID: com.apple.menu.application
+	120 File, ID: com.apple.menu.file
+	121 Edit, ID: com.apple.menu.edit
+	122 View, ID: com.apple.menu.view
+	123 Window, ID: com.apple.menu.window
+	124 Help, ID: com.apple.menu.help

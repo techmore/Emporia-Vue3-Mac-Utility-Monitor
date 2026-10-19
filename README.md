@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for local-first energy monitoring with [Emporia Vue 3](https://www.emporiaenergy.com/) smart panels. It combines a native Swift/AppKit wrapper, a Flask dashboard, and a SQLite-backed polling engine.
 
-![Dashboard](https://img.shields.io/badge/version-2.0.0-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+![Dashboard](https://img.shields.io/badge/version-2.0.4-olive) ![Python](https://img.shields.io/badge/python-3.12-blue) ![Swift](https://img.shields.io/badge/swift-5.9-orange) ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
@@ -241,4 +241,4 @@ Current test coverage includes:
 
 ## Release Notes
 
-See `/Users/seandolbec/Projects/Emporia_energy_monitoring/CHANGELOG.md` for the 2.0.0 release summary.
+See `/Users/seandolbec/Projects/Emporia_energy_monitoring/CHANGELOG.md` for the 2.0.4 release summary.

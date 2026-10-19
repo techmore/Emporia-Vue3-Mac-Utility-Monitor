@@ -1,0 +1,28 @@
+Local Aqara connection investigation — October 8, 2026
+
+Verified in logged-in Aqara Home app:
+Hub M3, Ethernet address 192.168.222.165, six child devices.
+HomeKit menu requests local access and reports:
+“Connect your phone and device to the same LAN and try again”.
+
+Mac route to hub: gateway 10.20.0.1, interface en15.
+SER8 address: 10.20.0.117. It also reaches the hub via a router.
+Eight-second HomeKit/Matter mDNS discovery on Mac found no advertisements.
+Directed DNS query to hub UDP5353 timed out.
+Bounded TCP checks from SER8 found none of these reachable:
+80, 443, 8080, 8443, 51826, 51827, 5556, 5353.
+This does not prove that every port is blocked or that HomeKit is disabled.
+
+Next requirement: a collector or pairing client on the hub’s subnet, or a
+verified network configuration that supports access and service discovery.
+No network/firewall settings changed; no hub reset or pairing attempted.
+The isolated diagnostic dependency environment is /tmp/aqara-homekit-venv.
+Aiohomekit CLI supports pairing, listing accessories, reading values and
+watching characteristic events. Actual exposed sensor capabilities remain
+unverified until pairing succeeds.
+
+Preferred eventual workflow: local characteristic events -> existing SQLite
+sensor data layer -> existing dashboard, with periodic reconciliation and
+health logs. Keep app chart exports for historical cloud backfill.
+
+Correction: SER8 uses WireGuard wg0 policy table51820 for the hub. ICMP works in6–10ms. Matter port5540 reachable. Matter commissioning reached credential exchange but stalled at operational rediscovery. Controller stopped after timeout; successful pairing is NOT established. M3 failsafe310s should roll back incomplete commissioning, not yet verified. NAS192.168.222.188 SSH reachable but existing key denied. Next: discovery relay on remote LAN or local collector. Isolated matter-server1.4.0 installed at ~/.local/lib/aqara-matter on SER8; controller data private at ~/.local/share/aqara-matter. Temporary pairing-code files cleared.

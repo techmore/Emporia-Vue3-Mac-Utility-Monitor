@@ -60,7 +60,27 @@ private func resolveProjectRoot() -> URL {
 private let projectRoot   = resolveProjectRoot()
 private let venvPython    = projectRoot.appendingPathComponent("venv/bin/python3").path
 private let flaskPort     = ProcessInfo.processInfo.environment["FLASK_PORT"] ?? "5001"
-private let dashboardURL  = URL(string: "http://localhost:\(flaskPort)")!
+private let collectorURLSetting = ProcessInfo.processInfo.environment["ENERGY_COLLECTOR_URL"]
+    ?? UserDefaults.standard.string(forKey: "collectorURL")
+private let isCollectorClient = collectorURLSetting != nil
+private let dashboardURL = URL(string: collectorURLSetting ?? "http://localhost:\(flaskPort)")
+    ?? URL(string: "http://localhost:\(flaskPort)")!
+
+private func validateCollectorURL(_ setting: String? = collectorURLSetting) -> String? {
+    guard let raw = setting else { return nil }
+    guard let url = URL(string: raw),
+          let host = url.host, !host.isEmpty,
+          ["http", "https"].contains(url.scheme ?? ""),
+          url.user == nil, url.password == nil,
+          url.query == nil, url.fragment == nil,
+          url.path.isEmpty || url.path == "/" else {
+        return "ENERGY_COLLECTOR_URL must be an HTTP(S) server origin without credentials or a path."
+    }
+    if url.scheme == "http" && !["localhost", "127.0.0.1", "::1"].contains(host) {
+        return "Use HTTPS or a loopback SSH tunnel for the collector connection."
+    }
+    return nil
+}
 
 private func validateProjectRoot() -> String? {
     let fm = FileManager.default
@@ -159,7 +179,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         print("Energy Monitor — project root: \(projectRoot.path)")
-        if let problem = validateProjectRoot() {
+        if let problem = validateCollectorURL() ?? (isCollectorClient ? nil : validateProjectRoot()) {
             let alert = NSAlert()
             alert.messageText = "Invalid project environment"
             alert.informativeText = problem
@@ -171,7 +191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSApp.setActivationPolicy(.accessory)
-        startFlaskServer()
+        if !isCollectorClient {
+            startFlaskServer()
+        }
         buildStatusItem()
         waitForFlaskThenOpen()
     }
@@ -187,6 +209,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
+        menu.font = NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)
 
         // ── Header: app name + version (fetched live from Flask) ──
         let headerItem = NSMenuItem(title: "Energy Monitor  v\(APP_VERSION_FALLBACK)",
@@ -205,23 +228,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         openItem.target = self
         menu.addItem(openItem)
 
-        let copyItem = NSMenuItem(title: "Copy Local URL",
+        let copyItem = NSMenuItem(title: "Copy Dashboard URL",
                                   action: #selector(copyLocalURL),
                                   keyEquivalent: "")
         copyItem.target = self
         menu.addItem(copyItem)
         copyURLMenuItem = copyItem
 
+        let connectionItem = NSMenuItem(title: "Collector Connection…",
+                                        action: #selector(configureCollector),
+                                        keyEquivalent: "")
+        connectionItem.target = self
+        menu.addItem(connectionItem)
+
         menu.addItem(.separator())
 
         // ── Uninstall ──
-        let uninstallItem = NSMenuItem(title: "Uninstall Energy Monitor…",
+        let uninstallItem = NSMenuItem(title: "Uninstall…",
                                        action: #selector(showUninstall),
                                        keyEquivalent: "")
         uninstallItem.target = self
         menu.addItem(uninstallItem)
-
-        menu.addItem(.separator())
 
         // ── Quit ──
         menu.addItem(NSMenuItem(title: "Quit",
@@ -236,14 +263,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(dashboardURL)
     }
 
+    @objc private func configureCollector() {
+        let alert = NSAlert()
+        alert.messageText = "Collector Connection"
+        alert.informativeText = "Enter the collector origin, or leave blank for local mode. Changes apply on the next launch. An ENERGY_COLLECTOR_URL environment variable overrides this setting. This does not stop a separately running poller."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.stringValue = UserDefaults.standard.string(forKey: "collectorURL") ?? ""
+        field.placeholderString = "http://127.0.0.1:15001"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let problem = validateCollectorURL(value.isEmpty ? nil : value) {
+            let error = NSAlert()
+            error.messageText = "Invalid collector address"
+            error.informativeText = problem
+            error.runModal()
+            return
+        }
+        if value.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "collectorURL")
+        } else {
+            UserDefaults.standard.set(value, forKey: "collectorURL")
+        }
+    }
+
     @objc private func copyLocalURL() {
-        let ip  = localNetworkIP() ?? "localhost"
-        let url = "http://\(ip):\(flaskPort)"
+        let url = dashboardURL.absoluteString
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
         copyURLMenuItem?.title = "Copied!"
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.copyURLMenuItem?.title = "Copy Local URL"
+            self?.copyURLMenuItem?.title = "Copy Dashboard URL"
         }
     }
 
@@ -295,7 +347,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ── Live version fetch ────────────────────────────────────────────────
 
     private func fetchVersionFromFlask() {
-        guard let url = URL(string: "http://localhost:\(flaskPort)/api/version") else { return }
+        let url = dashboardURL.appendingPathComponent("api/version")
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -412,11 +464,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let deadline = Date().addingTimeInterval(probeTimeout)
 
         func probe() {
-            var request = URLRequest(url: dashboardURL, timeoutInterval: probeInterval)
-            request.httpMethod = "HEAD"
+            let request = URLRequest(
+                url: dashboardURL.appendingPathComponent("api/version"),
+                timeoutInterval: 2
+            )
 
-            URLSession.shared.dataTask(with: request) { _, response, _ in
-                let ready = (response as? HTTPURLResponse)?.statusCode != nil
+            URLSession.shared.dataTask(with: request) { data, response, _ in
+                let payload = data.flatMap { try? JSONSerialization.jsonObject(with: $0) }
+                    as? [String: Any]
+                let ready = (response as? HTTPURLResponse)?.statusCode == 200
+                    && payload?["version"] is String
                 DispatchQueue.main.async {
                     if ready {
                         print("Flask is ready — opening browser")
