@@ -170,3 +170,42 @@ class DropdownStyleTests(unittest.TestCase):
         self.assertIn('notice.visible = !live', vala)
         self.assertIn('boxed-list', vala)
         self.assertNotIn('row.activate ()', vala)  # would recurse through row-activated
+
+
+class ShellStateTests(unittest.TestCase):
+    def test_ui_state_restores_and_rejects_untrusted_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'ui.json'
+            self.assertEqual(core.load_ui_state(path)['page'], '/')
+            core.private_json(path, {'width': 900, 'height': 600, 'sidebar': False, 'page': '/reports'})
+            self.assertEqual(core.load_ui_state(path), {'width': 900, 'height': 600, 'sidebar': False, 'page': '/reports'})
+            for page in ('https://evil.example/', '//evil.example', '/a@b', 'reports', '/x' * 200):
+                core.private_json(path, {'page': page, 'width': 10 ** 9, 'height': True, 'sidebar': 'yes'})
+                state = core.load_ui_state(path)
+                self.assertEqual(state['page'], '/')
+                self.assertEqual((state['width'], state['height'], state['sidebar']), (1240, 800, True))
+            path.write_text('not json')
+            self.assertEqual(core.load_ui_state(path)['width'], 1240)
+
+    def test_outage_notifier_is_quiet_and_rate_limited(self):
+        n = core.OutageNotifier(grace=90, cooldown=1800, startup=60)
+        self.assertIsNone(n.update(False, 0))        # startup: nothing
+        self.assertIsNone(n.update(False, 80))       # not long enough
+        self.assertEqual(n.update(False, 100), 'offline')
+        self.assertIsNone(n.update(False, 200))      # announced once
+        self.assertEqual(n.update(True, 300), 'recovered')
+        self.assertIsNone(n.update(True, 400))
+        self.assertIsNone(n.update(False, 500))
+        self.assertIsNone(n.update(False, 700))      # cooldown (1800 s) not over
+        self.assertEqual(n.update(True, 710) , None)  # no notice was sent, so no recovery either
+        self.assertIsNone(n.update(False, 1000))
+        self.assertEqual(n.update(False, 2000), 'offline')
+
+
+class ShellWiringTests(unittest.TestCase):
+    def test_shell_features_are_wired(self):
+        source = (Path(__file__).parents[1] / 'linux/energy_monitor.py').read_text()
+        for needle in ('<Control>k', 'app.about', 'load_ui_state(UI_STATE)', 'set_background_color',
+                       'add_tick_callback(self.responsive_sidebar)', 'OutageNotifier()', 'send_notification("collector-offline"'):
+            self.assertIn(needle, source)
+        ast.parse(source)
