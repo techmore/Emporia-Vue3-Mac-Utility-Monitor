@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Wingpanel dropdown, native layout: a frameless power hero with cost beside it, three stat tiles, and the monitored circuits as one boxed list (busiest first, slot number kept, name, load bar, watts, rating, chevron) in place of the two-column slot grid with placeholder rows; unassigned slots are summarised in one line. Rows are keyboard-activatable with spoken names.
 - elementary OS client dashboard re-skin: colours are computed so text, links, status colours and button labels reach 4.5:1 for every accent in light and dark; the collector's dark brand panels (Now panel, breaker panel) become light cards in the light theme and neutral charcoal in the dark theme; unstyled form controls, links, hover/active rows and heatmap labels follow the system theme; reduced-motion and high-contrast preferences are honoured. Browsers and the Mac app are unchanged. Verified by unit tests only; the on-screen render check was not completed.
 - Wingpanel dropdown: title over a status line (the live dot is labelled for screen readers and never carries state alone), a visible notice when readings are stale, a dashed muted hero for last-recorded power, 6/12 px spacing, roomier circuit rows with accessible names (name, watts, action), and the stale state reflected in the panel tooltip.
 - Temperature window: current sensors are a boxed list with band swatches, room and a large reading; hovering or clicking the chart moves the readout to the nearest recorded bucket.
