@@ -1,7 +1,12 @@
 # Broan ERV with VTouch wall control
 
-Context recorded 2026-10-18 from the owner: the house has a **Broan ERV** (energy recovery
-ventilator) controlled by a **VTouch** wall control (Broan VTTOUCHW-class touchscreen control).
+Context recorded 2026-10-18 from the owner: the house has a **Broan AI Series ERV, model
+B210E75RT** (the "AI 206" listing: top ports, rated 210 CFM nominal / 206 CFM in some listings,
+120 V, built-in LCD for airflow, power and diagnostics) controlled by a **VTouch** wall control
+(Broan VTTOUCHW-class touchscreen control). Retailer compatibility lists include the B210E75RT with
+the VTTOUCHW, which is the combination the community RS-485 component below targets. The
+installer/user manual (Broan 1107081 Rev. C, ~52 pages, listed as covering the B210E75RT) has the
+wall-control terminal labels; it has not been read for this page yet.
 Nothing in this repo reads or controls it yet. This page is the starting point; every protocol
 statement below is **unverified on this unit** until someone has probed the bus.
 
@@ -64,7 +69,7 @@ board uses the control bus and 12 V only. Power the ERV off before touching its 
 
 ## Next steps
 
-1. Owner: photograph the ERV model label and the VTouch/terminal wiring (A/B/+12 V/ground).
+1. Read the wiring section of the B210E75RT manual (terminal labels, 12 V, A/B); owner photographs the actual terminals to match.
 2. Get an RS-485 ESP32 board; run option 1 and capture a frame log.
 3. Compare with the community component; record the verified model, firmware and frames here.
 4. Build the Phase 1 collector module with tests using the captured frames as fixtures.
