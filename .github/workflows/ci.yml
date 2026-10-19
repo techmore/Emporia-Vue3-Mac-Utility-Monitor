@@ -78,6 +78,15 @@ jobs:
             --environment "$RUNNER_TEMP/kasa-service-verification/kasa.env"
           systemd-analyze verify "$RUNNER_TEMP/energy-system-plan/"*.service
 
+  swift-typecheck:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Type-check the Mac app sources
+        run: xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path)" EnergyMonitorApp/Sources/*.swift
+
   test:
     runs-on: macos-latest
 
