@@ -18,7 +18,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo, WebKit, Soup
 
 from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key, display_state, private_json,
                          read_json, validate_origin, validate_summary, validate_temperature_history,
-                         load_temperature_trend_cache, load_ui_state, OutageNotifier)
+                         load_temperature_trend_cache, load_ui_state, OutageNotifier, sidebar_footer)
 
 from chart import Chart
 from native_auth import load_credentials, session_cookie
@@ -287,7 +287,26 @@ class EnergyMonitor(Gtk.Application):
                 self.nav.append(row)
                 self.nav_rows.append((path, row))
         self.nav.connect("row-activated", self.nav_activated)
-        side = Gtk.ScrolledWindow(child=self.nav, hscrollbar_policy=Gtk.PolicyType.NEVER, width_request=190)
+        scroller = Gtk.ScrolledWindow(child=self.nav, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+        # Glanceable live power at the foot of the source list.
+        self.footer_dot = Gtk.Image(icon_name="media-record-symbolic", pixel_size=10, valign=Gtk.Align.CENTER)
+        self.footer_dot.add_css_class("energy-dot")
+        self.footer_power = Gtk.Label(label="—", xalign=0)
+        self.footer_power.add_css_class("energy-footer-power")
+        self.footer_caption = Gtk.Label(label="", xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        self.footer_caption.add_css_class("dim-label")
+        self.footer_caption.add_css_class("caption")
+        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        texts.append(self.footer_power)
+        texts.append(self.footer_caption)
+        footer = Gtk.Box(spacing=8, margin_start=12, margin_end=12, margin_top=8, margin_bottom=10)
+        footer.add_css_class("energy-sidebar-footer")
+        footer.append(self.footer_dot)
+        footer.append(texts)
+        side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, width_request=190)
+        side.append(scroller)
+        side.append(Gtk.Separator())
+        side.append(footer)
         self.sidebar = Gtk.Revealer(child=Gtk.Box(), transition_type=Gtk.RevealerTransitionType.SLIDE_RIGHT,
                                     reveal_child=self.ui["sidebar"])
         pane = Gtk.Box()
@@ -489,6 +508,11 @@ class EnergyMonitor(Gtk.Application):
                 'series': [{'source': row['source'], 'sensor_id': row['sensor_id'],
                             'values': row['values']} for row in payload['series']],
             }
+        headline, caption, live = sidebar_footer(state)
+        self.footer_power.set_label(headline)
+        self.footer_caption.set_label(caption)
+        (self.footer_dot.remove_css_class if live else self.footer_dot.add_css_class)("energy-offline")
+        self.footer_dot.set_tooltip_text("Collector live" if live else "Collector offline or stale")
         private_json(STATE / "summary.json", state)
         if self.temperature_window:
             self.temperature_window.update_current(state.get('temperature_sensors', []))
