@@ -58,6 +58,9 @@ def main():
         def check():
             try:
                 assert app.connected, 'Summary bridge did not connect'
+                assert app.lookup_action('page9') and app.lookup_action('switcher') and app.lookup_action('about')
+                app.save_ui_state()
+                assert client.UI_STATE.exists(), 'Window state was not remembered'
                 assert app.record['data']['current_watts'] == 123
                 assert app.history_windows['Fixture Circuit'][1]['record']['data']['windows']
                 result.append('passed')

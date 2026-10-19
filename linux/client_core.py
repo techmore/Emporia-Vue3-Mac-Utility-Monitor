@@ -165,3 +165,57 @@ def validate_temperature_history(value):
         if any(v is not None and (type(v) not in (float, int) or not math.isfinite(v)) for v in values):
             raise ValueError('Invalid recorded temperature')
     return value
+
+
+def load_ui_state(path):
+    """Remembered window size, sidebar and last page. Anything malformed falls back to defaults."""
+    state = {"width": 1240, "height": 800, "sidebar": True, "page": "/"}
+    try:
+        saved = read_json(path) or {}
+    except (OSError, ValueError):
+        return state
+    for key, low, high in (("width", 480, 7680), ("height", 360, 4320)):
+        value = saved.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high:
+            state[key] = value
+    if isinstance(saved.get("sidebar"), bool):
+        state["sidebar"] = saved["sidebar"]
+    page = saved.get("page")
+    # Only a collector path: never a scheme, host, credentials or protocol-relative URL.
+    if isinstance(page, str) and page.startswith("/") and not page.startswith("//") and len(page) <= 200 \
+            and "\\" not in page and "@" not in page.split("?")[0]:
+        state["page"] = page
+    return state
+
+
+class OutageNotifier:
+    """Decides when to tell the user the collector went offline or came back; quiet and rate limited.
+
+    Offline is announced only after `grace` seconds of continuous failure (and never during startup),
+    at most once per `cooldown`; recovery is announced only if an offline notice was sent.
+    """
+
+    def __init__(self, grace=90, cooldown=1800, startup=60):
+        self.grace, self.cooldown, self.startup = grace, cooldown, startup
+        self.started = None
+        self.down_since = None
+        self.last_offline = None
+        self.announced = False
+
+    def update(self, connected, now):
+        if self.started is None:
+            self.started = now
+        if connected:
+            self.down_since = None
+            if self.announced:
+                self.announced = False
+                return "recovered"
+            return None
+        if self.down_since is None:
+            self.down_since = now
+        if (not self.announced and now - self.started >= self.startup and now - self.down_since >= self.grace
+                and (self.last_offline is None or now - self.last_offline >= self.cooldown)):
+            self.announced = True
+            self.last_offline = now
+            return "offline"
+        return None

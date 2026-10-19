@@ -18,7 +18,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo, WebKit, Soup
 
 from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key, display_state, private_json,
                          read_json, validate_origin, validate_summary, validate_temperature_history,
-                         load_temperature_trend_cache)
+                         load_temperature_trend_cache, load_ui_state, OutageNotifier)
 
 from native_auth import load_credentials, session_cookie
 from web_theme import build_css as web_css
@@ -26,6 +26,9 @@ from web_theme import build_css as web_css
 STATE = Path(GLib.get_user_state_dir()) / "energy-monitor"
 CONFIG = Path(GLib.get_user_config_dir()) / "energy-monitor/client.json"
 DATA = Path(GLib.get_user_data_dir()) / "energy-monitor"
+UI_STATE = CONFIG.with_name("ui.json")
+NARROW_WIDTH = 760  # below this the sidebar collapses by itself
+SWITCHER_PAGES = None  # filled lazily from NAVIGATION
 
 
 def draw_axis(area, cr, color, left, top, plot_w, plot_h, labels):
@@ -80,7 +83,11 @@ class EnergyMonitor(Gtk.Application):
         self.last_auth_success = 0
         self.transport_failed = False
         self.history_windows = {}
-        self.pending_path = '/'
+        self.ui = load_ui_state(UI_STATE)
+        self.pending_path = self.ui['page']
+        self.notifier = OutageNotifier()
+        self.narrow = False
+        self.sidebar_before_narrow = True
         self.temperature_window = None
         self.temperature_callbacks = {}
         self.temperature_request = 0
@@ -108,17 +115,22 @@ class EnergyMonitor(Gtk.Application):
                                ("settings", lambda *_: self.open_path("/settings")),
                                ("connection", lambda *_: self.connection_dialog()),
                                ("refresh", lambda *_: self.refresh()),
-                               ("quit", lambda *_: self.quit())):
+                               ("switcher", lambda *_: self.quick_switcher()),
+                               ("about", lambda *_: self.about_dialog()),
+                               ("quit", lambda *_: self.quit())) + tuple(
+                (f"page{i + 1}", (lambda target: lambda *_: self.open_nav(target))(entry))
+                for i, entry in enumerate(self.nav_entries()[:9])):
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", callback)
             self.add_action(action)
         for action, keys in (("app.refresh", ["<Control>r", "F5"]), ("app.quit", ["<Control>q"]),
-                             ("app.dashboard", ["<Control>1"]), ("app.temperatures", ["<Control>2"])):
+                             ("app.switcher", ["<Control>k"]), ("app.about", ["F1"])) + tuple(
+                (f"app.page{i}", [f"<Control>{i}"]) for i in range(1, 10)):
             self.set_accels_for_action(action, keys)
         self.build_window()
         self.restore_cache()
         if not self.authenticate_device():
-            self.web.load_uri(self.origin)
+            self.web.load_uri(self.origin + self.pending_path)
         GLib.timeout_add_seconds(30, self.refresh)
 
     def load_theme(self):
@@ -138,6 +150,10 @@ class EnergyMonitor(Gtk.Application):
         colour = self.window.get_color()
         dark = (0.299 * colour.red + 0.587 * colour.green + 0.114 * colour.blue) > 0.5
         found, accent = self.window.get_style_context().lookup_color("accent_color")
+        # Paint the theme's page colour before the first frame so pages never flash white in dark mode.
+        background = Gdk.RGBA()
+        background.parse("#2b2b2b" if dark else "#f5f5f5")
+        self.web.set_background_color(background)
         manager = self.web.get_user_content_manager()
         manager.remove_all_style_sheets()
         manager.add_style_sheet(WebKit.UserStyleSheet.new(
@@ -190,7 +206,7 @@ class EnergyMonitor(Gtk.Application):
 
     def build_window(self):
         self.window = Gtk.ApplicationWindow(application=self, title="Energy Monitor",
-                                            default_width=1240, default_height=800)
+                                            default_width=self.ui["width"], default_height=self.ui["height"])
         self.window.connect("close-request", self.hide_window)
         header = Gtk.HeaderBar()
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
@@ -204,7 +220,8 @@ class EnergyMonitor(Gtk.Application):
                         (("Barn · First floor", "barn-first"), ("Barn · Upstairs", "barn-upstairs"),
                          ("Barn · Attic", "barn-attic")),
                         (("Collector Settings", "settings"), ("Collector Connection…", "connection")),
-                        (("Refresh", "refresh"), ("Quit", "quit"))):
+                        (("Quick Switcher…", "switcher"), ("Refresh", "refresh")),
+                        (("About Energy Monitor", "about"), ("Quit", "quit"))):
             part = Gio.Menu()
             for label, action in section:
                 part.append(label, "app." + action)
@@ -291,12 +308,12 @@ class EnergyMonitor(Gtk.Application):
         self.nav.connect("row-activated", self.nav_activated)
         side = Gtk.ScrolledWindow(child=self.nav, hscrollbar_policy=Gtk.PolicyType.NEVER, width_request=190)
         self.sidebar = Gtk.Revealer(child=Gtk.Box(), transition_type=Gtk.RevealerTransitionType.SLIDE_RIGHT,
-                                    reveal_child=True)
+                                    reveal_child=self.ui["sidebar"])
         pane = Gtk.Box()
         pane.append(side)
         pane.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
         self.sidebar.set_child(pane)
-        toggle = Gtk.ToggleButton(icon_name="sidebar-show-symbolic", active=True,
+        toggle = Gtk.ToggleButton(icon_name="sidebar-show-symbolic", active=self.ui["sidebar"],
                                   tooltip_text="Show sidebar (F9)")
         toggle.bind_property("active", self.sidebar, "reveal-child")
         header.pack_start(toggle)
@@ -313,6 +330,8 @@ class EnergyMonitor(Gtk.Application):
         self.apply_web_theme()
         self.web.connect("notify::uri", lambda *_: self.sync_navigation())
         self.window.connect("map", lambda *_: GLib.idle_add(self.apply_web_theme))
+        self.window.add_tick_callback(self.responsive_sidebar)
+        self.first_load = True
 
     def nav_activated(self, box, row):
         if row.nav_path is None:
@@ -329,9 +348,101 @@ class EnergyMonitor(Gtk.Application):
         if path.startswith("/circuit"):
             self.nav.select_row(self.nav_rows[0][1])
 
+    def save_ui_state(self):
+        width, height = self.window.get_default_size()
+        path = urlsplit(self.web.get_uri() or "").path or "/"
+        query = urlsplit(self.web.get_uri() or "").query
+        state = {"width": width, "height": height,
+                 "sidebar": self.sidebar_before_narrow if self.narrow else self.sidebar_toggle.get_active(),
+                 "page": path + ("?" + query if query else "")}
+        try:
+            private_json(UI_STATE, state)
+        except OSError:
+            pass
+
     def hide_window(self, *_):
+        self.save_ui_state()
         self.window.set_visible(False)
         return True
+
+    def responsive_sidebar(self, widget, clock):
+        """Collapse the sidebar below NARROW_WIDTH and restore the user's choice when there is room again."""
+        width = widget.get_width()
+        if width <= 1:
+            return GLib.SOURCE_CONTINUE
+        if width < NARROW_WIDTH and not self.narrow:
+            self.narrow = True
+            self.sidebar_before_narrow = self.sidebar_toggle.get_active()
+            self.sidebar_toggle.set_active(False)
+        elif width >= NARROW_WIDTH + 40 and self.narrow:
+            self.narrow = False
+            self.sidebar_toggle.set_active(self.sidebar_before_narrow)
+        return GLib.SOURCE_CONTINUE
+
+    @staticmethod
+    def nav_entries():
+        return [(label, path) for _, items in NAVIGATION for label, path, _ in items]
+
+    def open_nav(self, entry):
+        if entry[1] is None:
+            self.open_temperatures()
+        else:
+            self.open_path(entry[1])
+
+    def quick_switcher(self):
+        """Ctrl+K: type to filter pages, Enter opens the first match, Escape closes."""
+        window = Gtk.Window(title="Go to…", transient_for=self.window, modal=True, default_width=420,
+                            default_height=360, destroy_with_parent=True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=12, margin_bottom=12,
+                      margin_start=12, margin_end=12)
+        entry = Gtk.SearchEntry(placeholder_text="Go to a page…", activates_default=False)
+        entries = self.nav_entries()
+        listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        listbox.add_css_class("boxed-list")
+        rows = []
+        for label, path in entries:
+            row = Gtk.ListBoxRow()
+            row.set_child(Gtk.Label(label=label, xalign=0, margin_top=8, margin_bottom=8, margin_start=10))
+            row.nav_entry = (label, path)
+            listbox.append(row)
+            rows.append(row)
+        def refilter(*_):
+            text = entry.get_text().strip().lower()
+            first = None
+            for row in rows:
+                match = text in row.nav_entry[0].lower()
+                row.set_visible(match)
+                if match and first is None:
+                    first = row
+            if first:
+                listbox.select_row(first)
+        def choose(*_):
+            row = listbox.get_selected_row()
+            if row and row.get_visible():
+                window.destroy()
+                self.open_nav(row.nav_entry)
+        entry.connect("search-changed", refilter)
+        entry.connect("activate", choose)
+        listbox.connect("row-activated", lambda _, row: (listbox.select_row(row), choose()))
+        escape = Gtk.ShortcutController()
+        escape.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"),
+                                             Gtk.CallbackAction.new(lambda *_: window.destroy() or True)))
+        window.add_controller(escape)
+        scroll = Gtk.ScrolledWindow(child=listbox, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        box.append(entry)
+        box.append(scroll)
+        window.set_child(box)
+        refilter()
+        window.present()
+        entry.grab_focus()
+
+    def about_dialog(self):
+        about = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Energy Monitor",
+                                logo_icon_name="org.techmore.EnergyMonitor", license_type=Gtk.License.MIT_X11,
+                                comments="Energy, circuits, costs and home sensors from your collector.",
+                                website="https://github.com/techmore/Emporia-Vue3-Mac-Utility-Monitor",
+                                website_label="Project on GitHub")
+        about.present()
 
     def popup(self, source, navigation):
         view = WebKit.WebView.new_with_related_view(source)
@@ -367,7 +478,26 @@ class EnergyMonitor(Gtk.Application):
             STATE / 'responses', self.origin, self.identity()[0])
         self.publish()
 
+    def notify_outage(self):
+        event = self.notifier.update(self.connected, time.monotonic())
+        if not event:
+            return
+        if event == "offline":
+            note = Gio.Notification.new("Energy collector offline")
+            note.set_body("Readings are paused. Recorded history stays available and the client keeps retrying.")
+            note.set_icon(Gio.ThemedIcon.new("network-offline-symbolic"))
+            note.set_default_action("app.dashboard")
+            self.send_notification("collector-offline", note)
+        else:
+            self.withdraw_notification("collector-offline")
+            note = Gio.Notification.new("Energy collector is back")
+            note.set_body("Live readings have resumed.")
+            note.set_icon(Gio.ThemedIcon.new("network-transmit-receive-symbolic"))
+            self.send_notification("collector-online", note)
+            GLib.timeout_add_seconds(30, lambda: (self.withdraw_notification("collector-online"), False)[1])
+
     def publish(self):
+        self.notify_outage()
         state = display_state(self.record, self.origin, self.connected)
         if (self.trend_record and self.trend_record.get('origin') == self.origin
                 and self.trend_record.get('source_id') == self.identity()[0]):
