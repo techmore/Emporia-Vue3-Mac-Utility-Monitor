@@ -134,6 +134,7 @@ All have sensible defaults; none are required to run locally with an existing `k
 | `MONTHLY_BUDGET`   | `150`       | Monthly cost budget in dollars (web.py only) |
 | `EMPORIA_EMAIL`    | —           | Only needed on first login (no `keys.json`)  |
 | `EMPORIA_PASSWORD` | —           | Only needed on first login (no `keys.json`)  |
+| `ENERGY_CSP`       | `enforce`   | Page Content-Security-Policy: `enforce`, `report-only` or `off` |
 
 `RATE` in `web.py` is always derived from `energy.RATE_CENTS / 100` — never hardcode it
 separately in web.py.
@@ -200,6 +201,10 @@ separately in web.py.
 - Chart.js and fonts are self-hosted in `static/vendor/` (exact pins, hashes in
   `UPSTREAM.json`). Never add a CDN `<script>`, stylesheet or font; upgrade with
   `python3 scripts/vendor_web_assets.py` and commit the result.
+- Pages are served with a nonce-based Content-Security-Policy. Inline scripts must be
+  written as `<script nonce="{{ csp_nonce() }}">`; never add `onclick=`/`on*=` attributes —
+  use `data-action="globalFunction"` (optional `data-arg`) handled by `static/actions.js`,
+  or `addEventListener` in a nonce'd script. Do not add `'unsafe-inline'` to `script-src`.
 
 ---
 

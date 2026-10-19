@@ -177,3 +177,11 @@ PR #150 plus #154 are now merged to main and deployed as 2.3.54. The deployment
 receipt in INCUS_DEPLOYMENT.md supersedes earlier not-deployed statements. Existing
 tables/rows survived verified backup and migration; measured UTC mains backfill,
 public authenticated access and the Linux client are working.
+
+## 2026-10-19 — production hardening
+
+Remaining finding 7 (remote CDNs, no CSP) is addressed: Chart.js and fonts are self-hosted with
+recorded hashes, and every page is served with a nonce-based Content-Security-Policy that
+blocks injected script (styles still allow inline). The dashboard is served by waitress rather
+than Werkzeug's development server, with `/api/health` for supervisors. Credential storage,
+signing/notarization and the full reboot test remain open.

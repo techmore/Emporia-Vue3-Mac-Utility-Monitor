@@ -22,7 +22,7 @@
     <button type="submit">Save connection and collect readings</button>
     <p id="ecosense-result" role="status"></p>
   </form>
-  <script>
+  <script nonce="{{ csp_nonce() }}">
   document.getElementById('ecosense-connect').addEventListener('submit', async function(event) {
     event.preventDefault();
     const button = this.querySelector('button');
