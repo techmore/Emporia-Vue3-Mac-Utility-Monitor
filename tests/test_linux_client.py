@@ -394,3 +394,17 @@ class DensityToggleTests(unittest.TestCase):
         app = (root / 'energy_monitor.py').read_text()
         self.assertIn('monitor_file', app)
         self.assertIn('reload_ui_state', app)
+
+
+class ElementaryIntegrationTests(unittest.TestCase):
+    def test_client_follows_system_colour_scheme_and_ships_desktop_metadata(self):
+        root = Path(__file__).parents[1]
+        app = (root / 'linux/energy_monitor.py').read_text()
+        self.assertIn('org.gnome.desktop.interface', app)
+        self.assertIn('lookup("org.gnome.desktop.interface", True)', app)  # a missing schema would abort the process
+        install = (root / 'linux/install.sh').read_text()
+        for needle in ('StartupNotify=true', 'X-GNOME-UsesNotifications=true', 'Actions=Temperatures;Settings;',
+                       'org.techmore.EnergyMonitor.metainfo.xml'):
+            self.assertIn(needle, install)
+        meta = (root / 'linux/org.techmore.EnergyMonitor.metainfo.xml').read_text()
+        self.assertIn('<id>org.techmore.EnergyMonitor</id>', meta)

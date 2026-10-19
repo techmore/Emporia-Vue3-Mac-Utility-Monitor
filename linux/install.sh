@@ -26,12 +26,26 @@ cat > "$HOME/.local/share/applications/org.techmore.EnergyMonitor.desktop" <<DES
 [Desktop Entry]
 Type=Application
 Name=Energy Monitor
+GenericName=Home Energy Monitor
 Comment=Energy, circuits, costs and home sensors from your existing collector
+Keywords=energy;power;electricity;circuits;cost;temperature;emporia;
 Exec="$HOME/.local/bin/energy-monitor"
 Icon=org.techmore.EnergyMonitor
 Categories=Utility;Monitor;
+StartupNotify=true
 StartupWMClass=org.techmore.EnergyMonitor
+X-GNOME-UsesNotifications=true
+Actions=Temperatures;Settings;
+
+[Desktop Action Temperatures]
+Name=Temperatures
+Exec="$HOME/.local/bin/energy-monitor" --temperatures
+
+[Desktop Action Settings]
+Name=Collector Connection…
+Exec="$HOME/.local/bin/energy-monitor" --connection
 DESKTOP
+install -Dm644 "$repo/linux/org.techmore.EnergyMonitor.metainfo.xml" "$HOME/.local/share/metainfo/org.techmore.EnergyMonitor.metainfo.xml"
 mkdir -p "$HOME/.config/systemd/user"
 install -m644 "$repo/linux/energy-monitor-client.service" "$HOME/.config/systemd/user/"
 if [[ -f "$HOME/.config/autostart/energy-monitor.desktop" ]]; then
