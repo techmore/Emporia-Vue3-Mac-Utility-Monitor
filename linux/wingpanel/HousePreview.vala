@@ -29,7 +29,7 @@ public class HousePreview : Gtk.Box {
     public HousePreview () {
         Object (orientation: Gtk.Orientation.VERTICAL, spacing: 4);
         title = new Gtk.Label ("House preview") { xalign = 0, ellipsize = Pango.EllipsizeMode.END };
-        title.add_css_class (Granite.CssClass.DIM);
+        title.add_css_class ("dim-label");
         append (title);
         floors = new Gtk.DropDown.from_strings ({});
         floors.notify["selected"].connect (() => {
