@@ -50,19 +50,19 @@ def draw_axis(area, cr, color, left, top, plot_w, plot_h, labels):
 
 # (label, collector path, symbolic icon); path None opens the native temperature window.
 NAVIGATION = (
-    ("Dashboard", "/", "go-home-symbolic"),
-    ("Reports", "/reports", "document-properties-symbolic"),
-    ("Trends", "/trends", "view-list-symbolic"),
-    ("Temperatures", None, "weather-clear-symbolic"),
-    ("Home 3D", "/home-3d", "find-location-symbolic"),
-    ("House · Lab", "/house", "applications-science-symbolic"),
-    ("Radon", "/radon", "dialog-information-symbolic"),
-    ("Aqara", "/aqara", "network-wireless-symbolic"),
-    ("HVAC", "/mitsubishi", "weather-clear-night-symbolic"),
-    ("Kasa", "/kasa", "preferences-system-network-symbolic"),
-    ("Guide", "/guide", "help-contents-symbolic"),
-    ("Settings", "/settings", "preferences-system-symbolic"),
-    ("Collector Log", "/log", "text-x-log-symbolic"),
+    ("Monitor", (("Dashboard", "/", "go-home-symbolic"),
+                 ("Reports", "/reports", "document-properties-symbolic"),
+                 ("Trends", "/trends", "view-list-symbolic"),
+                 ("Collector Log", "/log", "utilities-terminal-symbolic"))),
+    ("Home", (("Temperatures", None, "weather-clear-symbolic"),
+              ("Home 3D", "/home-3d", "find-location-symbolic"),
+              ("House · Lab", "/house", "applications-science-symbolic"),
+              ("Radon", "/radon", "dialog-information-symbolic"))),
+    ("Devices", (("Aqara", "/aqara", "network-wireless-symbolic"),
+                 ("HVAC", "/mitsubishi", "weather-clear-night-symbolic"),
+                 ("Kasa", "/kasa", "preferences-system-network-symbolic"))),
+    ("App", (("Guide", "/guide", "help-contents-symbolic"),
+             ("Settings", "/settings", "preferences-system-symbolic"))),
 )
 
 
@@ -212,11 +212,17 @@ class EnergyMonitor(Gtk.Application):
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu, tooltip_text="Menu"))
         self.window.set_titlebar(header)
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.status = Gtk.Label(label="Connecting to the energy collector…", xalign=0,
-                                margin_start=12, margin_end=12, margin_top=4, margin_bottom=4,
-                                ellipsize=Pango.EllipsizeMode.END)
+        # Window title with the connection status as its subtitle, as in elementary's own apps.
+        self.status = Gtk.Label(label="Connecting to the energy collector…", ellipsize=Pango.EllipsizeMode.END,
+                                max_width_chars=70)
         self.status.add_css_class("dim-label")
         self.status.add_css_class("caption")
+        heading = Gtk.Label(label="Energy Monitor")
+        heading.add_css_class("title")
+        titles = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
+        titles.append(heading)
+        titles.append(self.status)
+        header.set_title_widget(titles)
         DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
         session = WebKit.NetworkSession.new(str(DATA / "web-data"), str(DATA / "web-cache"))
         cookies = session.get_cookie_manager()
@@ -238,20 +244,50 @@ class EnergyMonitor(Gtk.Application):
         self.web.connect("load-failed-with-tls-errors", self.tls_failed)
         self.web.connect("create", self.popup)
         session.connect("download-started", self.download)
-        content.append(self.web)
-        content.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-        content.append(self.status)
+        # Offline page: a clear state with actions instead of a blank or broken web view.
+        offline = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, valign=Gtk.Align.CENTER,
+                          halign=Gtk.Align.CENTER, vexpand=True, hexpand=True)
+        offline.append(Gtk.Image(icon_name="network-offline-symbolic", pixel_size=64))
+        offline.get_first_child().add_css_class("dim-label")
+        self.offline_title = Gtk.Label(label="Can’t reach the collector")
+        self.offline_title.add_css_class("energy-offline-title")
+        self.offline_text = Gtk.Label(label="", wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=48)
+        self.offline_text.add_css_class("dim-label")
+        offline.append(self.offline_title)
+        offline.append(self.offline_text)
+        actions = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER, margin_top=12)
+        retry = Gtk.Button(label="Try Again")
+        retry.add_css_class("suggested-action")
+        retry.connect("clicked", lambda *_: (self.show_page("web"), self.web.reload()))
+        change = Gtk.Button(label="Collector Connection…")
+        change.connect("clicked", lambda *_: self.connection_dialog())
+        actions.append(retry)
+        actions.append(change)
+        offline.append(actions)
+        self.pages = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, vexpand=True, hexpand=True)
+        self.pages.add_named(self.web, "web")
+        self.pages.add_named(offline, "offline")
+        content.append(self.pages)
         # Source-list sidebar, as in elementary's own apps; it replaces the web page's top bar.
         self.nav = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.nav.add_css_class("navigation-sidebar")
-        for label, path, icon in NAVIGATION:
-            row = Gtk.ListBoxRow()
-            box = Gtk.Box(spacing=9, margin_top=3, margin_bottom=3, margin_start=3, margin_end=3)
-            box.append(Gtk.Image.new_from_icon_name(icon))
-            box.append(Gtk.Label(label=label, xalign=0, hexpand=True))
-            row.set_child(box)
-            row.nav_path = path
-            self.nav.append(row)
+        self.nav.add_css_class("energy-sidebar")
+        self.nav_rows = []
+        for group, items in NAVIGATION:
+            heading = Gtk.ListBoxRow(selectable=False, activatable=False)
+            title = Gtk.Label(label=group, xalign=0, margin_start=6, margin_top=10, margin_bottom=2)
+            title.add_css_class("energy-side-heading")
+            heading.set_child(title)
+            self.nav.append(heading)
+            for label, path, icon in items:
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(spacing=9, margin_top=2, margin_bottom=2, margin_start=3, margin_end=3)
+                box.append(Gtk.Image.new_from_icon_name(icon))
+                box.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+                row.set_child(box)
+                row.nav_path = path
+                self.nav.append(row)
+                self.nav_rows.append((path, row))
         self.nav.connect("row-activated", self.nav_activated)
         side = Gtk.ScrolledWindow(child=self.nav, hscrollbar_policy=Gtk.PolicyType.NEVER, width_request=190)
         self.sidebar = Gtk.Revealer(child=Gtk.Box(), transition_type=Gtk.RevealerTransitionType.SLIDE_RIGHT,
@@ -286,12 +322,12 @@ class EnergyMonitor(Gtk.Application):
 
     def sync_navigation(self):
         path = urlsplit(self.web.get_uri() or "").path or "/"
-        for index, (_, target, _) in enumerate(NAVIGATION):
+        for target, row in self.nav_rows:
             if target and (path == target or (target != "/" and path.startswith(target + "/"))):
-                self.nav.select_row(self.nav.get_row_at_index(index))
+                self.nav.select_row(row)
                 return
         if path.startswith("/circuit"):
-            self.nav.select_row(self.nav.get_row_at_index(0))
+            self.nav.select_row(self.nav_rows[0][1])
 
     def hide_window(self, *_):
         self.window.set_visible(False)
@@ -346,8 +382,14 @@ class EnergyMonitor(Gtk.Application):
         if self.temperature_window:
             self.temperature_window.update_current(state.get('temperature_sensors', []))
 
+    def show_page(self, name, text=""):
+        self.pages.set_visible_child_name(name)
+        if text:
+            self.offline_text.set_label(text)
+
     def loaded(self, view, event):
         if event == WebKit.LoadEvent.FINISHED:
+            self.show_page("web")
             self.refresh()
 
     def failed(self, view, event, uri, error):
@@ -355,12 +397,16 @@ class EnergyMonitor(Gtk.Application):
         self.pending = False
         self.connected = False
         self.status.set_label("Collector unavailable. Check your connection or open Collector Connection.")
+        self.show_page("offline", "Check your network connection, or choose a different collector address. "
+                                  "Recorded history stays available in the menu bar while you are offline.")
         self.publish()
         return False
 
     def tls_failed(self, view, uri, certificate, errors):
         self.failed(view, None, uri, None)
         self.status.set_label("The collector's TLS connection failed. Its certificate was not bypassed.")
+        self.show_page("offline", "The collector’s secure connection could not be verified, so nothing was loaded. "
+                                  "The certificate is never bypassed.")
         return False
 
     def authenticate_device(self):

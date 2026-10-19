@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Polish the elementary OS client: grouped sidebar (Monitor, Home, Devices, App) with accent selection, connection status as the window subtitle instead of a bottom bar, a clear offline page with Try Again and Collector Connection actions, and quieter circuit rows in the menu, a live/offline dot in the dropdown header (panel icon dims when readings are stale) and a proper elementary-style app icon.
 - Native shell for the elementary OS client: a source-list sidebar replaces the web top bar, the embedded dashboard follows the system light/dark palette, accent colour and font through a client-side style sheet, and the connection status moves to a bottom bar. Browsers and the Mac app are unchanged.
 - Make the elementary OS client native in look and feel: one stylesheet on the system's named colours (follows light/dark and accent), system type, a Quick Settings-style Power/Temperatures switch, header-bar dialogs with keyboard shortcuts, sectioned app menu, redrawn history and temperature charts, elementary-palette temperature bands. The embedded web dashboard is unchanged.
 

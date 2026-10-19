@@ -92,3 +92,17 @@
 }
 .energy-monitor button.temperature-alert { padding: 3px 6px; min-height: 0; }
 .energy-monitor .temperature-fast { color: mix(@warning_color, @fg_color, 0.4); font-weight: 700; }
+
+/* ---- window shell ---------------------------------------------------------------------------- */
+.energy-sidebar { background: transparent; padding: 2px 6px 6px 6px; }
+.energy-sidebar row { border-radius: 6px; margin: 1px 0; }
+.energy-sidebar row:selected { background: alpha(@accent_color, 0.18); color: @fg_color; font-weight: 600; }
+.energy-sidebar row:selected image { color: @accent_color; }
+.energy-sidebar row:hover:not(:selected) { background: alpha(@fg_color, 0.06); }
+.energy-sidebar row:not(:selected) image { opacity: 0.75; }
+.energy-side-heading { opacity: 0.6; font-size: 0.82em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.energy-offline-title { font-size: 1.7em; font-weight: 700; margin-top: 6px; }
+
+/* live indicator dot in the dropdown header: green when readings are recent, grey when cached */
+.energy-monitor .energy-dot { color: @success_color; }
+.energy-monitor .energy-dot.energy-offline { color: alpha(@fg_color, 0.4); }

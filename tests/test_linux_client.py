@@ -138,4 +138,5 @@ class NativeNavigationTests(unittest.TestCase):
                       and any(isinstance(target, ast.Name) and target.id == 'NAV_HTML'
                               for target in node.targets))
         destinations = set(re.findall(r'href="(/[^"{]*)"', header))
-        self.assertLessEqual(destinations, {path for _, path, _ in navigation})
+        paths = {path for _, items in navigation for _, path, _ in items}
+        self.assertLessEqual(destinations, paths)

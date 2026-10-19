@@ -13,6 +13,8 @@ install -Dm644 "$repo/linux/temperatures.py" "$HOME/.local/lib/energy-monitor/te
 install -Dm755 "$repo/linux/energy_monitor.py" "$HOME/.local/lib/energy-monitor/energy_monitor.py"
 install -m644 "$repo/linux/theme.css" "$HOME/.local/lib/energy-monitor/theme.css"
 rm -f "$HOME/.local/lib/energy-monitor/theme-light.css" "$HOME/.local/lib/energy-monitor/theme-dark.css"
+install -Dm644 "$repo/linux/org.techmore.EnergyMonitor.svg" "$HOME/.local/share/icons/hicolor/scalable/apps/org.techmore.EnergyMonitor.svg"
+gtk-update-icon-cache -q -f "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications" "$HOME/.config/autostart"
 cat > "$HOME/.local/bin/energy-monitor" <<'APP'
 #!/usr/bin/env bash
@@ -25,7 +27,7 @@ Type=Application
 Name=Energy Monitor
 Comment=Energy, circuits, costs and home sensors from your existing collector
 Exec="$HOME/.local/bin/energy-monitor"
-Icon=weather-storm-symbolic
+Icon=org.techmore.EnergyMonitor
 Categories=Utility;Monitor;
 StartupWMClass=org.techmore.EnergyMonitor
 DESKTOP
