@@ -24,6 +24,10 @@ statement below is **unverified on this unit** until someone has probed the bus.
   prove the protocol and to monitor, but control needs a single owner.
 - We found no published Modbus register map for the VTouch. Treat "it is Modbus" as a guess.
 
+Update 2026-10-18: only the VTTOUCHW is wired to the unit. The owner mostly uses it manually and
+wants to **detect the current cycle** and be able to **stop or switch** it remotely. Wiring facts from
+Broan's VTTOUCHW guide and the listener procedure are in `docs/BROAN_ERV_LISTENER.md`.
+
 ## Options, easiest first
 
 1. **Read-only sniff (no risk to the ERV).** ESP32 + RS-485 transceiver wired in parallel to the
