@@ -9,6 +9,7 @@ public class EnergyPrefs : Object {
     public int sort { get; set; default = 0; }
     public bool house_open { get; set; default = true; }
     public bool sensors_open { get; set; default = true; }
+    public bool circuits_panel { get; set; default = true; }
     private string path;
 
     public EnergyPrefs () {
@@ -19,6 +20,7 @@ public class EnergyPrefs : Object {
             if (file.has_key ("dropdown", "view")) view = file.get_integer ("dropdown", "view").clamp (0, 1);
             if (file.has_key ("temperatures", "sort")) sort = file.get_integer ("temperatures", "sort").clamp (0, 3);
             if (file.has_key ("temperatures", "house_open")) house_open = file.get_boolean ("temperatures", "house_open");
+            if (file.has_key ("dropdown", "circuits_panel")) circuits_panel = file.get_boolean ("dropdown", "circuits_panel");
             if (file.has_key ("temperatures", "sensors_open")) sensors_open = file.get_boolean ("temperatures", "sensors_open");
         } catch (Error error) { /* First run or unreadable: keep defaults. */ }
     }
@@ -28,6 +30,7 @@ public class EnergyPrefs : Object {
         file.set_integer ("dropdown", "view", view);
         file.set_integer ("temperatures", "sort", sort);
         file.set_boolean ("temperatures", "house_open", house_open);
+        file.set_boolean ("dropdown", "circuits_panel", circuits_panel);
         file.set_boolean ("temperatures", "sensors_open", sensors_open);
         try {
             DirUtils.create_with_parents (Path.get_dirname (path), 0700);
