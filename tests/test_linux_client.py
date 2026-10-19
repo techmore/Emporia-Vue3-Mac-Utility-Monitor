@@ -373,3 +373,11 @@ class InstallCompletenessTests(unittest.TestCase):
     def test_panel_install_failure_is_reported_not_fatal(self):
         install = (Path(__file__).parents[1] / 'linux/install.sh').read_text()
         self.assertIn('Panel library NOT installed', install)
+
+
+class DropdownMinimumWidthTests(unittest.TestCase):
+    def test_no_fixed_minimum_width_exceeds_the_compact_popover(self):
+        import re
+        for path in (Path(__file__).parents[1] / 'linux/wingpanel').glob('*.vala'):
+            for match in re.finditer(r'content_width\s*=\s*(\d+)', path.read_text()):
+                self.assertLessEqual(int(match.group(1)), 300, path.name + ' would force the 340 px popover wider')
