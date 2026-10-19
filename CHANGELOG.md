@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Self-host Chart.js and the dashboard fonts instead of loading them from jsDelivr and Google Fonts. Chart.js is pinned to exactly 4.5.1 (it previously floated on `chart.js@4` with no integrity check, on pages that include device controls), and Inter/Instrument Serif are served from `static/vendor/` with their licenses. Pages now render fully offline and no visit is disclosed to a third party. `scripts/vendor_web_assets.py` refreshes the files and records SHA-256 hashes in `static/vendor/UPSTREAM.json`; `scripts/check_release.py` and the tests verify them and fail if any page loads an external script, stylesheet or font.
 - Compact density makes the dropdown's circuits single-line: in the panel view each breaker is 26 px with name and watts on one line (no rating line), and list rows drop the rating and load bar.
 - Narrower Wingpanel dropdown: 440 px (was 520), and 340 px in Compact density; still one width for both views.
 - Circuit history window shows a dense second line: peak (with its time), lowest, average and how many buckets were actually recorded; gaps are excluded, never averaged as zero.

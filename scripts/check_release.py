@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Check release metadata and the portable source layout before packaging."""
+import hashlib
+import json
 import plistlib
 import re
 import sys
@@ -28,4 +30,13 @@ for name in ('house_control.py', 'preview_sensor_sync.py', 'preview_mains.py', '
              'templates/home_3d.html', 'static/house-control/home-3d.js',
              'static/house-control/LICENSES.txt', 'docs/HOUSE_CONTROL.md'):
     assert (root / name).is_file(), f'Missing Home 3D release file: {name}'
+# Self-hosted Chart.js and fonts: every recorded file present and unmodified.
+vendor = root / 'static/vendor'
+recorded = json.loads((vendor / 'UPSTREAM.json').read_text())['files']
+for name in ('chart.umd.min.js', 'fonts.css'):
+    assert name in recorded, f'Missing vendored asset: {name}'
+for name, digest in recorded.items():
+    path = vendor / name
+    assert path.is_file(), f'Missing vendored asset: {name}'
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, f'Vendored asset changed: {name}'
 print(version)

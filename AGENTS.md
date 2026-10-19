@@ -197,6 +197,9 @@ separately in web.py.
   or rgb in templates.
 - Chart.js colours must be read from CSS custom properties at runtime via
   `getComputedStyle` so dark/light mode is respected.
+- Chart.js and fonts are self-hosted in `static/vendor/` (exact pins, hashes in
+  `UPSTREAM.json`). Never add a CDN `<script>`, stylesheet or font; upgrade with
+  `python3 scripts/vendor_web_assets.py` and commit the result.
 
 ---
 
