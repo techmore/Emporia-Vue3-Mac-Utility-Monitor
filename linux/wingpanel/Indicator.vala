@@ -278,8 +278,6 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     var rating = new Gtk.Label (rating_text) { width_chars = 6, xalign = 1 };
                     rating.add_css_class ("energy-muted");
                     detail.append (rating);
-                    var arrow = new Gtk.Image.from_icon_name ("go-next-symbolic") { pixel_size = 12 };
-                    box.append (arrow);
                     card.append (detail);
                     var button = new Gtk.Button () { child = card, has_frame = false, hexpand = true };
                     button.add_css_class ("energy-circuit");
