@@ -167,9 +167,14 @@ def validate_temperature_history(value):
     return value
 
 
+DENSITIES = ("comfortable", "compact")
+DASHBOARD_STYLES = ("elementary", "original")
+
+
 def load_ui_state(path):
     """Remembered window size, sidebar and last page. Anything malformed falls back to defaults."""
-    state = {"width": 1240, "height": 800, "sidebar": True, "page": "/"}
+    state = {"width": 1240, "height": 800, "sidebar": True, "page": "/",
+             "density": "comfortable", "dashboard_style": "elementary"}
     try:
         saved = read_json(path) or {}
     except (OSError, ValueError):
@@ -180,6 +185,11 @@ def load_ui_state(path):
             state[key] = value
     if isinstance(saved.get("sidebar"), bool):
         state["sidebar"] = saved["sidebar"]
+    # Visual preferences: closed sets only, so a hand-edited file can never inject style text.
+    if saved.get("density") in DENSITIES:
+        state["density"] = saved["density"]
+    if saved.get("dashboard_style") in DASHBOARD_STYLES:
+        state["dashboard_style"] = saved["dashboard_style"]
     page = saved.get("page")
     # Only a collector path: never a scheme, host, credentials or protocol-relative URL.
     if isinstance(page, str) and page.startswith("/") and not page.startswith("//") and len(page) <= 200 \

@@ -67,6 +67,17 @@ def parse_accent(value, fallback=(0x36, 0x89, 0xe6)):
         return fallback
 
 
+# Dense mode: CodexBar-style tight rows and small, quiet type; same colours, less air.
+COMPACT = (
+    'body { font-size: 12.5px; line-height: 1.4; } .page { padding: 12px 16px 28px; } .page h1 { font-size: 1.45rem; } '
+    '.section { margin-top: 18px; } .section-head { margin-bottom: 8px; padding-bottom: 4px; } .section-head h2 { font-size: 1.05rem; } '
+    '.card { padding: 10px 12px; border-radius: 8px; } .card-label { font-size: 0.62rem; margin-bottom: 2px; } '
+    '.card-value { font-size: 1.3rem; } .card-meta { font-size: 0.7rem; margin-top: 2px; } '
+    '.data-table th { padding: 3px 8px; font-size: 0.64rem; } .data-table td { padding: 3px 8px; } '
+    '.grid-2, .grid-3, .grid-4 { gap: 8px; } .now-panel { padding: 12px 14px; margin-top: 10px; } .panel-wrap { padding: 12px; margin-top: 10px; } '
+    '.breaker { padding: 0.3rem 0.55rem; } .sys-link { padding: 0.3rem 0.55rem; } .page-jump-nav a { padding: 0.2rem 0.55rem; }'
+)
+
 WHITE, BLACK = (255, 255, 255), (0, 0, 0)
 LIGHT = {'bg': (245, 245, 245), 'surface': (255, 255, 255), 'surface2': (250, 250, 250), 'border': (200, 200, 200),
          'text': (51, 51, 51), 'text-light': (102, 102, 102)}
@@ -95,7 +106,10 @@ def palette(dark, accent):
     return out
 
 
-def build_css(dark, accent=None):
+def build_css(dark, accent=None, density='comfortable', style='elementary'):
+    if style == 'original':
+        # The collector's own olive design, with only the page's top bar hidden (the native sidebar replaces it).
+        return 'nav.topnav { display: none !important; }\n'
     accent = parse_accent(accent) if accent is not None else (0x36, 0x89, 0xe6)
     p = palette(dark, accent)
     ramp = dict(p['ramp'])
@@ -213,6 +227,7 @@ a:not([class]) {{ color: var(--accent-text); }}
 :focus-visible {{ outline: 2px solid {ring}; outline-offset: 2px; }}
 {rules(extra)}
 ::selection {{ background: color-mix(in srgb, {_hex(accent)} 40%, transparent); }}
+{rules(COMPACT) if density == 'compact' else ''}
 /* No motion for people who ask for none; stronger hairlines when the system asks for more contrast. */
 @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{ animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }} }}
 @media (prefers-contrast: more) {{ :root {{ --border: {'#c8c8c8' if dark else '#6a6a6a'} !important; --text-light: {'#e0e0e0' if dark else '#444'} !important; }} }}

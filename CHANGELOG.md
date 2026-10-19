@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preferences (Ctrl+, or the menu) for the elementary OS client: **Density** (Comfortable or Compact, a CodexBar-style dense layout for the dashboard, native windows, sidebar and the panel dropdown) and **Dashboard style** (elementary OS native, or the collector's original olive design). Applied as you choose and remembered in `ui.json`. The dropdown also loads the installed `theme.css`, so style changes no longer need a panel reinstall.
 - Dashboard type and rhythm in the elementary OS client: 14 px body, 24 px page padding, tighter page and section titles, quieter uppercase card labels, tabular figures in card values and tables, 12 px grid gaps. Client-side style sheet only.
 - Keyboard Shortcuts window for the elementary OS client (Ctrl+? or the menu) listing every page and general shortcut.
 - Sidebar footer in the elementary OS client: live power (and cost per hour) at the foot of the source list with a live/offline dot; stale or unknown power shows "Offline" with the last recorded time, never the cached watts.

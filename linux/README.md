@@ -57,7 +57,7 @@ palette of their own: `linux/theme.css` is built on the stylesheet's named colou
 `@accent_color`, `@borders`, `@warning_color`, `@error_color`), so light/dark mode and the user's
 accent colour apply automatically with no theme detection. Type is the system font with tabular
 figures. The dropdown's Power/Temperatures switch is a linked toggle pair like Quick Settings;
-Ctrl+1..9 open the sidebar pages in order (Dashboard, Reports, Trends, Collector Log, Temperatures, Home 3D, House · Lab, Radon, Aqara), Ctrl+K filters pages by name and F1 opens About; the window remembers its size, sidebar and last page in `~/.config/energy-monitor/ui.json`; windows use header-bar Cancel/Connect buttons, Escape/Enter, Ctrl+R/Ctrl+Q and sectioned menus.
+Ctrl+1..9 open the sidebar pages in order (Dashboard, Reports, Trends, Collector Log, Temperatures, Home 3D, House · Lab, Radon, Aqara), Ctrl+K filters pages by name and F1 opens About; **Preferences** (Ctrl+,) chooses Density (Comfortable/Compact) and the dashboard's visual style (elementary OS or the collector's original design); the window remembers its size, sidebar and last page in `~/.config/energy-monitor/ui.json`; windows use header-bar Cancel/Connect buttons, Escape/Enter, Ctrl+R/Ctrl+Q and sectioned menus.
 Charts have neutral gridlines, system-font axes and gap-preserving runs. Temperature bands use the
 elementary palette (Blueberry, Banana, Orange, Strawberry) as borders and translucent fills only.
 Styles are scoped to this client; they do not recolor other panel indicators. The embedded web
