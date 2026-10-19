@@ -62,6 +62,7 @@ NAVIGATION = (
     ("Kasa", "/kasa", "preferences-system-network-symbolic"),
     ("Guide", "/guide", "help-contents-symbolic"),
     ("Settings", "/settings", "preferences-system-symbolic"),
+    ("Collector Log", "/log", "text-x-log-symbolic"),
 )
 
 
