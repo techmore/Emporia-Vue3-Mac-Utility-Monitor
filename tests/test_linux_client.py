@@ -331,3 +331,14 @@ class VisualPreferenceTests(unittest.TestCase):
         self.assertIn('compact ? "compact" : "roomy"', vala)  # a density change must defeat the unchanged-data shortcut
         self.assertIn('.energy-compact', (root / 'theme.css').read_text())
         self.assertIn('preferences_dialog', (root / 'energy_monitor.py').read_text())
+
+
+class SeriesStatsTests(unittest.TestCase):
+    def test_stats_ignore_gaps_and_report_coverage(self):
+        stats = core.series_stats([0.1, None, 0.3, 0.2, float('nan')])
+        self.assertEqual((stats['recorded'], stats['buckets']), (3, 5))
+        self.assertEqual((stats['peak'], stats['peak_index'], stats['low'], stats['low_index']), (0.3, 2, 0.1, 0))
+        self.assertAlmostEqual(stats['mean'], 0.2)
+        self.assertIsNone(core.series_stats([None, None]))
+        self.assertIsNone(core.series_stats([]))
+        self.assertEqual(core.series_stats([0, 0])['mean'], 0)  # a recorded zero is a reading
