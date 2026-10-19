@@ -136,6 +136,8 @@ class TemperatureTrendCacheTests(unittest.TestCase):
                 css = web_theme.build_css(dark, accent)
                 self.assertIn('.now-panel', css)
                 self.assertIn('prefers-reduced-motion', css)
+                self.assertIn('font-variant-numeric: tabular-nums !important', css)
+                self.assertIn('.page { padding: 24px 24px 48px !important', css)
         self.assertEqual(web_theme.parse_accent('garbage'), (0x36, 0x89, 0xe6))
 
 
