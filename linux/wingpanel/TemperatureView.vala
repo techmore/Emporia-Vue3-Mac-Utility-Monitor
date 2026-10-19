@@ -114,8 +114,8 @@ public class TemperatureView : Gtk.Box {
         var legend = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F · Grey = no recent reading\nSelect a sensor, room or warning for its recorded history.") {
             xalign = 0, wrap = true
         };
-        legend.add_css_class (Granite.CssClass.DIM);
-        legend.add_css_class (Granite.CssClass.SMALL);
+        legend.add_css_class ("dim-label");
+        legend.add_css_class ("caption");
         append (legend);
     }
 
@@ -493,7 +493,8 @@ public class TemperatureView : Gtk.Box {
                 string name = reading.level_name != "" ? reading.level_name : reading.placed ? "Other" : "Not on the house plan";
                 if (name != group) {
                     group = name;
-                    var header = new Granite.HeaderLabel (name) { margin_top = 4 };
+                    var header = new Gtk.Label (name) { xalign = 0, margin_top = 4 };
+                    header.add_css_class ("heading");
                     sensor_list.append (header);
                 }
             }
