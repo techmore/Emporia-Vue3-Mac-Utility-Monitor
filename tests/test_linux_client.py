@@ -253,3 +253,16 @@ class DropdownWidthTests(unittest.TestCase):
         vala = (Path(__file__).parents[1] / 'linux/wingpanel/Indicator.vala').read_text()
         self.assertIn('MENU_WIDTH = 520', vala)
         self.assertNotIn('showing_temperatures ? int.min (660', vala)
+
+
+class PanelLayoutTests(unittest.TestCase):
+    def test_panel_view_is_the_physical_layout(self):
+        root = Path(__file__).parents[1] / 'linux'
+        vala = (root / 'wingpanel/Indicator.vala').read_text()
+        css = (root / 'theme.css').read_text()
+        self.assertIn('slot % 2 == 1', vala)            # odd slots on the left, even on the right
+        self.assertIn('"%d–%d".printf (row * 2 + 1, row * 2 + 2)', vala)  # bus labels 1–2, 3–4 …
+        self.assertIn('span = 2', vala)                 # a double-pole breaker spans two rows
+        self.assertIn('circuits_panel', (root / 'wingpanel/TemperatureView.vala').read_text())
+        for name in ('energy-panel', 'energy-bus', 'energy-breaker', 'energy-handle'):
+            self.assertIn(name, css)

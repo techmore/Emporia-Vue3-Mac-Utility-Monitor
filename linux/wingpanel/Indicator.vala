@@ -176,6 +176,113 @@ public class EnergyIndicator : Wingpanel.Indicator {
         return box;
     }
 
+    private Gtk.Widget breaker_cell (Json.Object? circuit, int slot, bool left, bool live, int span, Gtk.SizeGroup handles) {
+        const int ROW = 46;
+        int height = ROW * span + 4 * (span - 1);
+        string state = circuit != null ? string_member (circuit, "slot_state", "empty") : "empty";
+        string channel = circuit != null ? string_member (circuit, "channel_name") : "";
+        string display = circuit != null ? string_member (circuit, "display_name", channel) : "";
+        var info = new Gtk.Box (Gtk.Orientation.VERTICAL, 1) { hexpand = true, valign = Gtk.Align.CENTER };
+        var name_label = new Gtk.Label (state == "empty" ? "Empty" : display) {
+            xalign = left ? 1 : 0, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 14
+        };
+        info.append (name_label);
+        string detail = "";
+        int poles = 1;
+        if (circuit != null) {
+            poles = circuit.has_member ("poles") && !circuit.get_member ("poles").is_null () ? (int) circuit.get_int_member ("poles") : 1;
+            if (state == "monitored") detail = live ? metric (circuit, "watts", "%.0f W") : "—";
+            else if (state == "unmonitored") detail = "Unmonitored";
+            if (circuit.has_member ("amps") && !circuit.get_member ("amps").is_null ())
+                detail += (detail != "" ? " · " : "") + "%dP %d A".printf (poles, (int) circuit.get_int_member ("amps"));
+            else if (poles == 2) detail += (detail != "" ? " · " : "") + "2P";
+        }
+        var detail_label = new Gtk.Label (detail) { xalign = left ? 1 : 0, ellipsize = Pango.EllipsizeMode.END };
+        detail_label.add_css_class (Granite.CssClass.SMALL);
+        detail_label.add_css_class (Granite.CssClass.NUMERIC);
+        if (state != "monitored") { name_label.add_css_class (Granite.CssClass.DIM); }
+        detail_label.add_css_class (Granite.CssClass.DIM);
+        info.append (detail_label);
+        // The toggle handle sits on the bus side, like the real breaker's: accent when carrying load, amber/red when loaded, grey when idle or offline.
+        var handle = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { width_request = 10, height_request = span == 2 ? 36 : 18, valign = Gtk.Align.CENTER };
+        handle.add_css_class ("energy-handle");
+        handles.add_widget (handle);
+        if (state != "monitored" || !live) handle.add_css_class ("energy-handle-off");
+        else if (circuit != null) {
+            string load_state = string_member (circuit, "load_state");
+            if (load_state == "warn" || load_state == "danger") handle.add_css_class ("energy-handle-" + load_state);
+        }
+        var content = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) { margin_start = 8, margin_end = 8 };
+        if (left) { content.append (info); content.append (handle); } else { content.append (handle); content.append (info); }
+        var button = new Gtk.Button () { child = content, has_frame = false, height_request = height, hexpand = true, sensitive = state == "monitored" };
+        button.add_css_class ("energy-breaker");
+        if (state != "monitored") button.add_css_class ("energy-breaker-idle");
+        if (circuit != null && live) {
+            string usage_state = string_member (circuit, "usage_state");
+            if (usage_state == "heat" || usage_state == "high") button.add_css_class ("energy-" + usage_state);
+        }
+        string spoken = state == "monitored"
+            ? "Slot %d, %s, %s. View recorded history".printf (slot, display, live ? metric (circuit, "watts", "%.0f watts") : "no live reading")
+            : (state == "unmonitored" ? "Slot %d, %s, unmonitored".printf (slot, display) : "Slot %d, empty".printf (slot));
+        button.update_property (Gtk.AccessibleProperty.LABEL, spoken, -1);
+        if (state == "monitored") {
+            button.tooltip_text = "Slot %d · %s".printf (slot, display);
+            button.clicked.connect (() => { launch ({"--history", channel}); });
+        }
+        return button;
+    }
+
+    // A panel as it hangs on the wall: odd slots left, even slots right, a centre bus labelled 1–2, 3–4 …;
+    // a double-pole breaker takes two rows on its side.
+    private Gtk.Widget build_panel (Json.Array slots, bool live, Json.Object root) {
+        int total = root.has_member ("panel_slots") ? (int) root.get_int_member ("panel_slots") : 0;
+        for (uint i = 0; i < uint.min (slots.get_length (), 96); i++) {
+            int slot = (int) slots.get_object_element (i).get_int_member ("slot");
+            if (slot > 0 && slot <= 96) total = int.max (total, slot);
+        }
+        total = int.min (int.max (total, 2), 96);
+        if (total % 2 == 1) total++;
+        Json.Object?[] by_slot = new Json.Object?[total + 3];
+        for (uint i = 0; i < uint.min (slots.get_length (), 96); i++) {
+            var circuit = slots.get_object_element (i);
+            int slot = (int) circuit.get_int_member ("slot");
+            if (slot > 0 && slot <= total) by_slot[slot] = circuit;
+        }
+        bool[] covered = new bool[total + 3];
+        var handles = new Gtk.SizeGroup (Gtk.SizeGroupMode.HORIZONTAL);
+        var sides = new Gtk.SizeGroup (Gtk.SizeGroupMode.HORIZONTAL);
+        var left_column = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) { hexpand = true };
+        var right_column = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) { hexpand = true };
+        var bus = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) { width_request = 44 };
+        sides.add_widget (left_column);
+        sides.add_widget (right_column);
+        for (int slot = 1; slot <= total; slot++) {
+            var circuit = by_slot[slot];
+            bool is_left = slot % 2 == 1;
+            if (covered[slot]) continue;
+            int span = 1;
+            if (circuit != null && circuit.has_member ("poles") && !circuit.get_member ("poles").is_null ()
+                    && circuit.get_int_member ("poles") == 2 && slot + 2 <= total) {
+                var below = by_slot[slot + 2];
+                if (below == null || string_member (below, "slot_state", "empty") == "empty") { span = 2; covered[slot + 2] = true; }
+            }
+            (is_left ? left_column : right_column).append (breaker_cell (circuit, slot, is_left, live, span, handles));
+        }
+        for (int row = 0; row < total / 2; row++) {
+            var label = new Gtk.Label ("%d–%d".printf (row * 2 + 1, row * 2 + 2)) { height_request = 46, justify = Gtk.Justification.CENTER };
+            label.add_css_class ("energy-bus-label");
+            label.add_css_class (Granite.CssClass.NUMERIC);
+            bus.append (label);
+        }
+        bus.add_css_class ("energy-bus");
+        var panel = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0);
+        panel.add_css_class ("energy-panel");
+        panel.append (left_column);
+        panel.append (bus);
+        panel.append (right_column);
+        return panel;
+    }
+
     private void update () {
         bool showing_temperatures = current_view == 1;
         int screen_height = 900, screen_width = 1200;
@@ -274,8 +381,26 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     }
                     items[j + 1] = key;
                 }
-                var section = new Granite.HeaderLabel ("Circuits") { margin_top = 12 };
-                readings.append (section);
+                var section = new Granite.HeaderLabel ("Circuits") { hexpand = true };
+                var layout_switch = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) { homogeneous = true, valign = Gtk.Align.CENTER };
+                layout_switch.add_css_class ("linked");
+                layout_switch.add_css_class ("energy-switcher");
+                var panel_toggle = new Gtk.ToggleButton.with_label ("Panel") { active = prefs.circuits_panel, tooltip_text = "Show circuits as the physical breaker panel" };
+                var list_toggle = new Gtk.ToggleButton.with_label ("List") { active = !prefs.circuits_panel, group = panel_toggle, tooltip_text = "Show circuits as a list, busiest first" };
+                layout_switch.append (panel_toggle);
+                layout_switch.append (list_toggle);
+                panel_toggle.toggled.connect (() => {
+                    if (prefs.circuits_panel == panel_toggle.active) return;
+                    prefs.circuits_panel = panel_toggle.active; prefs.save (); previous = ""; update ();
+                });
+                var section_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) { margin_top = 12 };
+                section_row.append (section);
+                section_row.append (layout_switch);
+                readings.append (section_row);
+                if (prefs.circuits_panel) {
+                    readings.append (build_panel (slots, live, root));
+                    return;
+                }
                 var list = new Gtk.ListBox () { selection_mode = Gtk.SelectionMode.NONE, activate_on_single_click = true };
                 list.add_css_class ("boxed-list");
                 list.add_css_class ("energy-circuits");

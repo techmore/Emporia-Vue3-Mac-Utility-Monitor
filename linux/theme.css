@@ -141,3 +141,24 @@
 .energy-menu .energy-circuits progressbar.energy-warn > trough > progress { background-color: @warning_color; }
 .energy-menu .energy-circuits progressbar.energy-danger > trough > progress { background-color: @error_color; }
 .energy-menu .energy-card { padding: 9px; }
+
+/* ---- physical breaker panel ---------------------------------------------------------------- */
+.energy-menu .energy-panel { background: alpha(@fg_color, 0.04); border: 1px solid alpha(@fg_color, 0.12); border-radius: 9px; padding: 6px; }
+.energy-menu .energy-bus { background: alpha(@fg_color, 0.1); border-radius: 4px; margin: 0 6px; }
+.energy-menu .energy-bus-label { font-size: 0.82em; font-weight: 600; opacity: 0.75; }
+.energy-menu button.energy-breaker {
+    background: alpha(@fg_color, 0.07);
+    border: 1px solid alpha(@fg_color, 0.16);
+    border-radius: 4px;
+    padding: 0;
+    box-shadow: none;
+}
+.energy-menu button.energy-breaker:hover { background: alpha(@accent_color, 0.14); border-color: alpha(@accent_color, 0.5); }
+.energy-menu button.energy-breaker:focus-visible { outline: 2px solid @accent_color; outline-offset: 1px; }
+.energy-menu button.energy-breaker-idle { background: transparent; border-style: dashed; opacity: 0.7; }
+.energy-menu button.energy-breaker.energy-high { border-color: @warning_color; }
+.energy-menu button.energy-breaker.energy-heat { border-color: @error_color; }
+.energy-menu .energy-handle { background: @accent_color; border-radius: 3px; }
+.energy-menu .energy-handle-warn { background: @warning_color; }
+.energy-menu .energy-handle-danger { background: @error_color; }
+.energy-menu .energy-handle-off { background: alpha(@fg_color, 0.28); }
