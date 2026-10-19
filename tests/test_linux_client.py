@@ -118,9 +118,24 @@ class TemperatureTrendCacheTests(unittest.TestCase):
         light, dark = web_theme.build_css(False, '#3689e6'), web_theme.build_css(True, '#3689e6')
         self.assertIn('color-scheme: light', light)
         self.assertIn('color-scheme: dark', dark)
-        self.assertIn('--olive-500:#3689e6 !important', light)
+        self.assertIn('--accent:', light)
         self.assertIn('nav.topnav { display: none !important; }', light)
-        self.assertNotIn('--olive-500:#3689e6', web_theme.build_css(False, '#ed5353'))
+        self.assertNotEqual(light, web_theme.build_css(False, '#ed5353'))
+
+    def test_web_theme_text_reaches_aa_for_every_accent(self):
+        accents = ['#ed5353', '#ffa154', '#f9c440', '#9bdb4d', '#28bca3', '#3689e6', '#a56de2',
+                   '#de3e80', '#715344', '#667885', '#cba88a']
+        for dark in (False, True):
+            for accent in accents:
+                p = web_theme.palette(dark, web_theme.parse_accent(accent))
+                surfaces = [p['bg'], p['surface'], p['surface2']]
+                for name in ('accent-text', 'green', 'red', 'amber'):
+                    for surface in surfaces:
+                        self.assertGreaterEqual(web_theme.contrast(p[name], surface), 4.5, (dark, accent, name))
+                self.assertGreaterEqual(web_theme.contrast(p['button'], web_theme.WHITE), 4.5, (accent, 'button'))
+                css = web_theme.build_css(dark, accent)
+                self.assertIn('.now-panel', css)
+                self.assertIn('prefers-reduced-motion', css)
         self.assertEqual(web_theme.parse_accent('garbage'), (0x36, 0x89, 0xe6))
 
 
