@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import time
 from urllib.parse import urlencode
 
-from gi.repository import Gtk
+from gi.repository import Gtk, Pango, PangoCairo
 
 from client_core import (temperature_history_cache_key, load_temperature_window_cache,
                          private_json, temperature_band,
@@ -29,10 +29,12 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.connect('close-request', self.close)
         self.add_css_class('energy-monitor')
         self.set_titlebar(Gtk.HeaderBar())
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
-                      margin_top=14, margin_bottom=14, margin_start=16, margin_end=16)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
         self.set_child(box)
-        box.append(Gtk.Label(label='Current recorded temperatures', xalign=0))
+        heading = Gtk.Label(label='Current recorded temperatures', xalign=0)
+        heading.add_css_class('energy-heading')
+        box.append(heading)
         self.current = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         scroll = Gtk.ScrolledWindow(child=self.current, max_content_height=170,
                                     propagate_natural_height=True,
@@ -47,35 +49,45 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         toolbar.append(self.period)
         box.append(toolbar)
         self.status = Gtk.Label(label='Loading recorded history…', xalign=0, wrap=True)
-        self.status.add_css_class('energy-muted')
+        self.status.add_css_class('dim-label')
         box.append(self.status)
         self.chart = Gtk.DrawingArea(content_width=600, content_height=220, hexpand=True, vexpand=True)
         self.chart.add_css_class('energy-card')
+        self.chart.add_css_class('energy-chart')
         self.chart.set_draw_func(self.draw)
         controller = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
         controller.connect('scroll', self.scroll_history)
         self.chart.add_controller(controller)
         box.append(self.chart)
-        box.append(Gtk.Label(label='Look back · scroll the chart or move the time slider', xalign=0))
+        look_back = Gtk.Label(label='Look back · scroll the chart or move the time slider', xalign=0)
+        look_back.add_css_class('dim-label')
+        look_back.add_css_class('caption')
+        box.append(look_back)
         self.cursor = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 1)
         self.cursor.set_draw_value(False)
         self.cursor.set_sensitive(False)
         self.cursor.connect('value-changed', lambda *_: self.render())
         box.append(self.cursor)
         self.readout = Gtk.Label(xalign=0, wrap=True)
-        self.readout.add_css_class('energy-value')
+        self.readout.add_css_class('numeric')
         box.append(self.readout)
         buttons = Gtk.Box(spacing=8)
-        for title, action in [('← Older', lambda *_: self.shift(-1)),
-                              ('Newer →', lambda *_: self.shift(1)),
-                              ('Now', lambda *_: self.now()),
-                              ('Temperature floor plan', lambda *_: app.open_path('/home-3d?level=all&metric=temperature_f#home3d-floor-plan'))]:
+        navigation = Gtk.Box(spacing=0)
+        navigation.add_css_class('linked')
+        for title, action in [('Older', lambda *_: self.shift(-1)),
+                              ('Newer', lambda *_: self.shift(1)),
+                              ('Now', lambda *_: self.now())]:
             button = Gtk.Button(label=title)
             button.connect('clicked', action)
-            buttons.append(button)
+            navigation.append(button)
+        buttons.append(navigation)
+        plan = Gtk.Button(label='Temperature Floor Plan', hexpand=True, halign=Gtk.Align.END)
+        plan.connect('clicked', lambda *_: app.open_path('/home-3d?level=all&metric=temperature_f#home3d-floor-plan'))
+        buttons.append(plan)
         box.append(buttons)
         note = Gtk.Label(label='Blue below 70°F · Yellow 70–75°F · Amber above 75–below 78°F · Red 78°F and up\nRecorded collector-observation means. Missing buckets stay unknown; cached snapshots may repeat measurements.', xalign=0, wrap=True)
-        note.add_css_class('energy-muted')
+        note.add_css_class('dim-label')
+        note.add_css_class('caption')
         box.append(note)
         self.sensor.connect('notify::selected', lambda *_: self.render())
         self.period.connect('notify::selected', lambda *_: self.fetch())
@@ -113,7 +125,9 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         for sensor in sensors:
             value = sensor.get('metrics', {}).get('temperature_f')
             text = f'{value:.1f} °F' if isinstance(value, (int, float)) else 'Unknown'
-            row = Gtk.Button(label=f"{sensor['name']} · {text} · {sensor.get('room_name') or 'Unplaced'}" + (' · last recorded' if sensor.get('stale') else ''))
+            row = Gtk.Button(label=f"{sensor['name']} · {text} · {sensor.get('room_name') or 'Unplaced'}" + (' · last recorded' if sensor.get('stale') else ''),
+                             halign=Gtk.Align.FILL)
+            row.get_child().set_halign(Gtk.Align.START)
             band = None if sensor.get('stale') else temperature_band(value)
             if band:
                 row.add_css_class('temperature-' + band)
@@ -224,27 +238,59 @@ class TemperatureWindow(Gtk.ApplicationWindow):
             return
         low, high = min(known) - 1, max(known) + 1
         color = area.get_color()
-        cr.set_source_rgba(color.red, color.green, color.blue, .85)
-        cr.set_line_width(2)
-        connected = False
+        left, right, top, bottom = 46, 10, 12, 10
+        plot_w, plot_h = width - left - right, height - top - bottom
+        if plot_w <= 0 or plot_h <= 0:
+            return
+        cr.set_line_width(1)
+        layout = area.create_pango_layout('')
+        layout.set_font_description(Pango.FontDescription.from_string('Sans 9'))
+        for fraction in (0, 0.5, 1):
+            y = round(top + plot_h * fraction) + 0.5
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.25 if fraction < 1 else 0.5)
+            cr.move_to(left, y)
+            cr.line_to(left + plot_w, y)
+            cr.stroke()
+            layout.set_text(f'{high - (high - low) * fraction:.0f}°F', -1)
+            _, extent = layout.get_pixel_extents()
+            cr.set_source_rgba(0.5, 0.5, 0.5, 1)
+            cr.move_to(left - extent.width - 6, y - extent.height / 2)
+            PangoCairo.show_layout(cr, layout)
+
+        def point(i, value):
+            return left + i * plot_w / max(1, len(values) - 1), top + plot_h - (value - low) * plot_h / (high - low)
+
+        # Missing buckets break the line: unrecorded is unknown, never interpolated.
+        runs, run = [], []
         for i, value in enumerate(values):
             if value is None:
-                cr.stroke()
-                connected = False
-                continue
-            x = 42 + i * (width - 54) / max(1, len(values) - 1)
-            y = height - 24 - (value - low) * (height - 42) / (high - low)
-            if connected:
-                cr.line_to(x, y)
+                if run:
+                    runs.append(run)
+                run = []
             else:
-                cr.move_to(x, y)
-            cr.arc(x, y, 1.5, 0, 6.283185)
-            cr.move_to(x, y)
-            connected = True
-        cr.stroke()
-        cr.set_font_size(11)
-        cr.move_to(2, 20);cr.show_text(f'{high:.0f}°F')
-        cr.move_to(2, height - 24);cr.show_text(f'{low:.0f}°F')
+                run.append(point(i, value))
+        if run:
+            runs.append(run)
+        cr.set_line_width(2)
+        cr.set_line_join(1)
+        for run in runs:
+            cr.set_source_rgba(color.red, color.green, color.blue, 0.9)
+            cr.move_to(*run[0])
+            for x, y in run[1:]:
+                cr.line_to(x, y)
+            cr.stroke()
+            if len(run) == 1:
+                cr.arc(run[0][0], run[0][1], 2.5, 0, 6.283185)
+                cr.fill()
         index = min(int(self.cursor.get_value()), len(values) - 1)
-        x = 42 + index * (width - 54) / max(1, len(values) - 1)
-        cr.set_line_width(1);cr.move_to(x, 10);cr.line_to(x, height - 20);cr.stroke()
+        x = left + index * plot_w / max(1, len(values) - 1)
+        cr.set_source_rgba(color.red, color.green, color.blue, 0.5)
+        cr.set_line_width(1)
+        cr.move_to(round(x) + 0.5, top)
+        cr.line_to(round(x) + 0.5, top + plot_h)
+        cr.stroke()
+        if values[index] is not None:
+            px, py = point(index, values[index])
+            cr.set_source_rgba(color.red, color.green, color.blue, 1)
+            cr.arc(px, py, 4, 0, 6.283185)
+            cr.fill()

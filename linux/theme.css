@@ -1,0 +1,94 @@
+/* SPDX-License-Identifier: MIT
+ *
+ * Energy Monitor, native elementary OS styling.
+ *
+ * This file deliberately defines almost no colours of its own. It uses the named colours of the
+ * installed elementary stylesheet (@fg_color, @base_color, @borders, @accent_color, @warning_color,
+ * @error_color, @success_color), so light/dark mode and the user's accent colour apply
+ * automatically and no theme detection is needed. The only literal colours are the temperature
+ * bands, taken from the elementary palette (Blueberry, Banana, Orange, Strawberry 500) and only
+ * ever used as borders and translucent fills, never as text, so they work on both themes.
+ * Typography is the system font (Inter in elementary OS) with tabular figures, not a custom serif.
+ *
+ * Styles are scoped to .energy-monitor so other panel indicators are not recoloured.
+ */
+
+/* ---- type ---------------------------------------------------------------------------------- */
+.energy-monitor .energy-title, .energy-monitor .energy-heading { font-weight: 700; }
+.energy-monitor .energy-muted { opacity: 0.7; font-size: 0.9em; }
+.energy-monitor .energy-caption { opacity: 0.7; font-size: 0.82em; font-weight: 600; letter-spacing: 0.04em; }
+.energy-monitor .energy-timestamp { font-size: 0.82em; }
+.energy-monitor .energy-section { opacity: 0.7; font-size: 0.82em; font-weight: 700; letter-spacing: 0.06em; }
+.energy-monitor .energy-value { font-size: 1.3em; font-weight: 700; font-feature-settings: "tnum"; }
+.energy-monitor .energy-circuit-value { font-weight: 600; font-feature-settings: "tnum"; }
+.energy-monitor .energy-history-title { font-size: 1.9em; font-weight: 700; }
+.energy-monitor .energy-empty-slot { padding: 6px; }
+
+/* ---- surfaces ------------------------------------------------------------------------------ */
+.energy-monitor .energy-card {
+    background-color: alpha(@fg_color, 0.045);
+    border: 1px solid alpha(@fg_color, 0.1);
+    border-radius: 6px;
+    padding: 6px 8px;
+}
+/* GtkDrawingArea's CSS node is plain "widget"; Blueberry reads well on both light and dark. */
+.energy-monitor .energy-chart { color: #3689e6; padding: 0; }
+
+.energy-monitor .energy-hero {
+    background-color: alpha(@accent_color, 0.14);
+    border: 1px solid alpha(@accent_color, 0.35);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+.energy-monitor .energy-hero .energy-value { font-size: 2em; letter-spacing: -0.02em; }
+
+/* ---- circuit buttons ----------------------------------------------------------------------- */
+.energy-monitor button.energy-circuit {
+    background: alpha(@fg_color, 0.045);
+    border: 1px solid alpha(@fg_color, 0.1);
+    border-radius: 6px;
+    padding: 4px 8px;
+    box-shadow: none;
+}
+.energy-monitor button.energy-circuit:hover { background: alpha(@accent_color, 0.14); border-color: alpha(@accent_color, 0.5); }
+.energy-monitor button.energy-circuit:active { background: alpha(@accent_color, 0.22); }
+.energy-monitor button.energy-circuit:focus-visible { outline: 2px solid @accent_color; outline-offset: 1px; }
+.energy-monitor .energy-warn, .energy-monitor .energy-high { border-color: @warning_color; }
+.energy-monitor .energy-danger, .energy-monitor .energy-heat { border-color: @error_color; }
+.energy-monitor .energy-peak { color: @warning_color; }
+
+.energy-monitor progressbar.energy-load-bar { margin-top: 2px; }
+.energy-monitor progressbar.energy-load-bar > trough { min-height: 3px; background-color: alpha(@fg_color, 0.1); border: none; }
+.energy-monitor progressbar.energy-load-bar > trough > progress { min-height: 3px; background-color: mix(@accent_color, @fg_color, 0.3); border-radius: 2px; }
+.energy-monitor button.energy-warn progressbar.energy-load-bar > trough > progress { background-color: @warning_color; }
+.energy-monitor button.energy-danger progressbar.energy-load-bar > trough > progress { background-color: @error_color; }
+
+/* ---- view switcher (linked toggle buttons, as in elementary's Quick Settings) -------------- */
+.energy-monitor .energy-switcher { margin: 2px 0 4px 0; }
+.energy-monitor .energy-switcher button { min-height: 0; padding: 3px 10px; }
+.energy-monitor .energy-switcher button:checked { background: alpha(@accent_color, 0.2); color: @fg_color; font-weight: 600; }
+
+/* ---- temperatures -------------------------------------------------------------------------- */
+.energy-monitor .temperature-cold { border-left: 4px solid #3689e6; }
+.energy-monitor .temperature-comfortable { border-left: 4px solid #f9c440; }
+.energy-monitor .temperature-warm { border-left: 4px solid #ffa154; }
+.energy-monitor .temperature-hot { border-left: 4px solid #ed5353; }
+
+
+.energy-monitor .temperature-overview { padding: 8px 10px; }
+.energy-monitor .temperature-average { font-size: 2.2em; letter-spacing: -0.02em; }
+.energy-monitor .temperature-row { padding: 6px 8px; }
+.energy-monitor button.temperature-sensor { padding: 0; border-radius: 6px; }
+.energy-monitor button.temperature-sensor .energy-value { font-size: 1.2em; }
+.energy-monitor .temperature-stale .energy-card { border-style: dashed; }
+.energy-monitor .temperature-stale-value { opacity: 0.55; }
+.energy-monitor .temperature-expander > title { font-weight: 600; }
+
+.energy-monitor .temperature-attention {
+    background-color: alpha(@warning_color, 0.16);
+    border: 1px solid alpha(@warning_color, 0.5);
+    border-radius: 6px;
+    padding: 3px 4px;
+}
+.energy-monitor button.temperature-alert { padding: 3px 6px; min-height: 0; }
+.energy-monitor .temperature-fast { color: mix(@warning_color, @fg_color, 0.4); font-weight: 700; }

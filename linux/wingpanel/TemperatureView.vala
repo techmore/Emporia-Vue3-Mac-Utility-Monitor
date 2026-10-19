@@ -114,7 +114,8 @@ public class TemperatureView : Gtk.Box {
         var legend = new Gtk.Label ("Blue <70 · Yellow 70–75 · Amber 75–78 · Red ≥78 °F · Grey = no recent reading\nSelect a sensor, room or warning for its recorded history.") {
             xalign = 0, wrap = true
         };
-        legend.add_css_class ("energy-muted");
+        legend.add_css_class ("dim-label");
+        legend.add_css_class ("caption");
         append (legend);
     }
 
@@ -147,10 +148,10 @@ public class TemperatureView : Gtk.Box {
     }
 
     private static void band_colour (Cairo.Context cr, double value, double alpha) {
-        if (value < COLD) cr.set_source_rgba (0.40, 0.66, 0.94, alpha);
-        else if (value <= WARM) cr.set_source_rgba (0.91, 0.77, 0.26, alpha);
-        else if (value < HOT) cr.set_source_rgba (0.85, 0.56, 0.22, alpha);
-        else cr.set_source_rgba (0.91, 0.36, 0.30, alpha);
+        if (value < COLD) cr.set_source_rgba (0.212, 0.537, 0.902, alpha);
+        else if (value <= WARM) cr.set_source_rgba (0.976, 0.769, 0.251, alpha);
+        else if (value < HOT) cr.set_source_rgba (1.0, 0.631, 0.329, alpha);
+        else cr.set_source_rgba (0.929, 0.325, 0.325, alpha);
     }
 
     public static string ago (int64 seconds) {
@@ -492,8 +493,8 @@ public class TemperatureView : Gtk.Box {
                 string name = reading.level_name != "" ? reading.level_name : reading.placed ? "Other" : "Not on the house plan";
                 if (name != group) {
                     group = name;
-                    var header = new Gtk.Label (name.up ()) { xalign = 0, margin_top = 4 };
-                    header.add_css_class ("energy-section");
+                    var header = new Gtk.Label (name) { xalign = 0, margin_top = 4 };
+                    header.add_css_class ("heading");
                     sensor_list.append (header);
                 }
             }
@@ -589,7 +590,7 @@ public class TemperatureView : Gtk.Box {
             double top = 3, plot = height - 6;
             double band_top = spark_y (double.min (WARM, maximum), top, plot, minimum, maximum), band_bottom = spark_y (double.max (COLD, minimum), top, plot, minimum, maximum);
             if (band_bottom > band_top) {
-                cr.set_source_rgba (0.91, 0.77, 0.26, 0.16);
+                cr.set_source_rgba (0.976, 0.769, 0.251, 0.16);
                 cr.rectangle (0, band_top, width, band_bottom - band_top); cr.fill ();
             }
             cr.set_line_width (1.8);

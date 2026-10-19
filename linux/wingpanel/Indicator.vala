@@ -9,7 +9,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private uint timer;
     private string previous = "";
     private Gtk.CssProvider css;
-    private Gtk.DropDown view_picker;
+    private Gtk.ToggleButton[] view_buttons = {};
+    private int current_view = 0;
     private HousePreview house_preview;
     private TemperatureView temperature_view;
     private EnergyPrefs prefs;
@@ -31,26 +32,41 @@ public class EnergyIndicator : Wingpanel.Indicator {
         css = new Gtk.CssProvider ();
         Gtk.StyleContext.add_provider_for_display (Gdk.Display.get_default (), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
         load_theme ();
-        Gtk.Settings.get_default ().notify["gtk-application-prefer-dark-theme"].connect (() => { load_theme (); });
-        Gtk.Settings.get_default ().notify["gtk-theme-name"].connect (() => { load_theme (); });
         panel_title = new Gtk.Label ("Energy Monitor") { xalign = 0, hexpand = true };
         panel_title.add_css_class ("energy-title");
-        status = new Gtk.Label ("Waiting for collector connection") {
+                status = new Gtk.Label ("Waiting for collector connection") {
             xalign = 1, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 30
         };
-        status.add_css_class ("energy-muted");
+        status.add_css_class (Granite.CssClass.DIM);
         status.add_css_class ("energy-timestamp");
         var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
         header.append (panel_title);
         header.append (status);
         menu.append (header);
         prefs = new EnergyPrefs ();
-        view_picker = new Gtk.DropDown.from_strings ({"Power", "Temperatures"}) { selected = prefs.view };
-        view_picker.notify["selected"].connect (() => {
-            prefs.view = (int) view_picker.selected; prefs.save ();
-            previous = ""; update ();
-        });
-        menu.append (view_picker);
+        current_view = prefs.view;
+        // A linked pair of toggle buttons is elementary's segmented control (see Quick Settings).
+        var switcher = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) { homogeneous = true };
+        switcher.add_css_class ("linked");
+        switcher.add_css_class ("energy-switcher");
+        string[] view_names = {"Power", "Temperatures"};
+        for (int i = 0; i < view_names.length; i++) {
+            var toggle = new Gtk.ToggleButton.with_label (view_names[i]);
+            if (i > 0) toggle.group = view_buttons[0];
+            view_buttons += toggle;
+            switcher.append (toggle);
+        }
+        view_buttons[current_view].active = true;
+        for (int i = 0; i < view_buttons.length; i++) {
+            int index = i;
+            var toggle = view_buttons[i];
+            toggle.toggled.connect (() => {
+                if (!toggle.active || current_view == index) return;
+                current_view = index; prefs.view = index; prefs.save ();
+                previous = ""; update ();
+            });
+        }
+        menu.append (switcher);
         house_preview = new HousePreview ();
         house_preview.sensor_selected.connect ((source, identity) => { launch ({"--temperature", source, identity}); });
         temperature_view = new TemperatureView (house_preview, prefs);
@@ -62,28 +78,28 @@ public class EnergyIndicator : Wingpanel.Indicator {
         };
         menu.append (scroll);
         menu.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
-        add_action ("Dashboard", {});
-        add_action ("Temperature history…", {"--temperatures"});
+        add_action ("Dashboard", {}, null, "go-home-symbolic");
+        add_action ("Temperature history…", {"--temperatures"}, null, "document-properties-symbolic");
         var extra = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
         var more = new Gtk.Expander ("More…") { child = extra };
         menu.append (more);
-        add_action ("Barn · First floor", {"--floor", "first"}, extra);
-        add_action ("Barn · Upstairs", {"--floor", "upstairs"}, extra);
-        add_action ("Barn · Attic", {"--floor", "attic"}, extra);
-        add_action ("Temperature floor plan", {"--temperature-plan"}, extra);
-        add_action ("Collector Settings…", {"--settings"}, extra);
-        add_action ("Collector Connection…", {"--connection"}, extra);
-        add_action ("Refresh", {"--refresh"}, extra);
-        add_action ("Quit", {"--quit"});
+        add_action ("Barn · First floor", {"--floor", "first"}, extra, "go-home-symbolic");
+        add_action ("Barn · Upstairs", {"--floor", "upstairs"}, extra, "go-up-symbolic");
+        add_action ("Barn · Attic", {"--floor", "attic"}, extra, "go-top-symbolic");
+        add_action ("Temperature floor plan", {"--temperature-plan"}, extra, "find-location-symbolic");
+        add_action ("Collector Settings…", {"--settings"}, extra, "preferences-system-symbolic");
+        add_action ("Collector Connection…", {"--connection"}, extra, "network-server-symbolic");
+        add_action ("Refresh", {"--refresh"}, extra, "view-refresh-symbolic");
+        menu.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
+        add_action ("Quit Energy Monitor", {"--quit"}, null, "application-exit-symbolic");
         update ();
         timer = Timeout.add_seconds (3, () => { update (); return Source.CONTINUE; });
         display_box.destroy.connect (() => { if (timer != 0) Source.remove (timer); });
     }
 
     private void load_theme () {
-        var settings = Gtk.Settings.get_default ();
-        bool dark = settings.gtk_application_prefer_dark_theme || settings.gtk_theme_name.down ().contains ("dark");
-        css.load_from_resource (dark ? "/org/techmore/energy/theme-dark.css" : "/org/techmore/energy/theme-light.css");
+        // One stylesheet built on the elementary named colours: light, dark and accent follow the system.
+        css.load_from_resource ("/org/techmore/energy/theme.css");
     }
 
     private void launch (string[] options) {
@@ -93,8 +109,13 @@ public class EnergyIndicator : Wingpanel.Indicator {
         catch (Error e) { status.label = "Could not open Energy Monitor"; warning ("%s", e.message); }
     }
 
-    private void add_action (string label, string[] options, Gtk.Box? target = null) {
-        var button = new Wingpanel.PopoverMenuItem () { text = label };
+    private void add_action (string label, string[] options, Gtk.Box? target = null, string icon = "") {
+        var button = new Wingpanel.PopoverMenuItem ();
+        // Icon + label row, the layout of elementary's own Quick Settings entries.
+        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+        row.append (new Gtk.Image.from_icon_name (icon != "" ? icon : "window-new-symbolic") { pixel_size = 16 });
+        row.append (new Gtk.Label (label) { xalign = 0, hexpand = true });
+        button.child = row;
         button.clicked.connect (() => { launch (options); });
         (target ?? menu).append (button);
     }
@@ -127,7 +148,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
     }
 
     private void update () {
-        bool showing_temperatures = view_picker.selected == 1;
+        bool showing_temperatures = current_view == 1;
         int screen_height = 900, screen_width = 1200;
         var monitor = Gdk.Display.get_default ().get_monitors ().get_item (0) as Gdk.Monitor;
         if (monitor != null) { var bounds = monitor.get_geometry (); screen_height = bounds.height; screen_width = bounds.width; }
@@ -171,11 +192,12 @@ public class EnergyIndicator : Wingpanel.Indicator {
             }
             var hero = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10) { hexpand = true };
             hero.add_css_class ("energy-hero");
+            hero.append (new Gtk.Image.from_icon_name ("weather-storm-symbolic") { pixel_size = 32, valign = Gtk.Align.CENTER });
             var number = new Gtk.Label (live ? metric (root, "current_watts", "%.0f W") : "—") { xalign = 0 };
             number.add_css_class ("energy-value");
             hero.append (number);
             var side = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { valign = Gtk.Align.CENTER, hexpand = true };
-            var hero_caption = new Gtk.Label ("MINUTE-AVERAGE POWER") { xalign = 0 };
+            var hero_caption = new Gtk.Label ("Minute-average power") { xalign = 0 };
             hero_caption.add_css_class ("energy-caption");
             side.append (hero_caption);
             var cost = new Gtk.Label (live ? metric (root, "cost_per_hour", "$%.3f / hour") : "Live readings unavailable") { xalign = 0 };
@@ -184,18 +206,17 @@ public class EnergyIndicator : Wingpanel.Indicator {
             hero.append (side);
             readings.append (hero);
             var grid = new Gtk.Grid () { column_spacing = 6, row_spacing = 6, column_homogeneous = true };
-            grid.attach (metric_card ("RECORDED · 24 HOURS", metric (root, "recorded_kwh", "%.2f kWh")), 0, 0);
-            grid.attach (metric_card ("COST · 24 HOURS", metric (root, "cost_24h", "$%.2f")), 1, 0);
+            grid.attach (metric_card ("Recorded · 24 hours", metric (root, "recorded_kwh", "%.2f kWh")), 0, 0);
+            grid.attach (metric_card ("Cost · 24 hours", metric (root, "cost_24h", "$%.2f")), 1, 0);
             string month_detail = "";
             if (root.has_member ("month_days_recorded") && !root.get_member ("month_days_recorded").is_null ()) {
                 int month_days = (int) root.get_int_member ("month_days_recorded");
                 month_detail = "%d day%s recorded".printf (month_days, month_days == 1 ? "" : "s");
             }
-            grid.attach (metric_card ("RECORDED MONTH COST", metric (root, "month_cost", "$%.2f"), month_detail), 0, 1, 2);
+            grid.attach (metric_card ("Recorded month cost", metric (root, "month_cost", "$%.2f"), month_detail), 0, 1, 2);
             readings.append (grid);
             if (root.has_member ("breaker_slots")) {
-                var section = new Gtk.Label ("CIRCUITS") { xalign = 0, margin_top = 5, margin_bottom = 1 };
-                section.add_css_class ("energy-section");
+                var section = new Granite.HeaderLabel ("Circuits") { margin_top = 6 };
                 readings.append (section);
                 var slots = root.get_array_member ("breaker_slots");
                 var panel = new Gtk.Grid () { column_homogeneous = true, column_spacing = 5, row_spacing = 2 };

@@ -29,7 +29,7 @@ public class HousePreview : Gtk.Box {
     public HousePreview () {
         Object (orientation: Gtk.Orientation.VERTICAL, spacing: 4);
         title = new Gtk.Label ("House preview") { xalign = 0, ellipsize = Pango.EllipsizeMode.END };
-        title.add_css_class ("energy-section");
+        title.add_css_class ("dim-label");
         append (title);
         floors = new Gtk.DropDown.from_strings ({});
         floors.notify["selected"].connect (() => {
@@ -171,10 +171,10 @@ public class HousePreview : Gtk.Box {
     // Explicit ranges match the web floor plan and native temperature cards.
     private void hue (Cairo.Context cr, double? value, double alpha) {
         if (value == null) cr.set_source_rgba (0.53, 0.56, 0.53, alpha * 0.45);
-        else if (value < 70) cr.set_source_rgba (0.40, 0.66, 0.94, alpha);
-        else if (value <= 75) cr.set_source_rgba (0.91, 0.77, 0.26, alpha);
-        else if (value < 78) cr.set_source_rgba (0.85, 0.56, 0.22, alpha);
-        else cr.set_source_rgba (0.91, 0.36, 0.30, alpha);
+        else if (value < 70) cr.set_source_rgba (0.212, 0.537, 0.902, alpha);
+        else if (value <= 75) cr.set_source_rgba (0.976, 0.769, 0.251, alpha);
+        else if (value < 78) cr.set_source_rgba (1.0, 0.631, 0.329, alpha);
+        else cr.set_source_rgba (0.929, 0.325, 0.325, alpha);
     }
 
     private void label (Cairo.Context cr, string value, double x, double y, double width, double size, Gdk.RGBA ink) {

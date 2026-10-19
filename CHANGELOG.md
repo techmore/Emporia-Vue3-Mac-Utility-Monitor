@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Make the elementary OS client native in look and feel: one stylesheet on the system's named colours (follows light/dark and accent), system type, a Quick Settings-style Power/Temperatures switch, header-bar dialogs with keyboard shortcuts, sectioned app menu, redrawn history and temperature charts, elementary-palette temperature bands. The embedded web dashboard is unchanged.
+
 ## 2.3.65 - 2026-10-18
 
 - Show a single floor at full strength in the 3D views: the Floors slider still thins upper floors in Whole home, but a floor chosen on its own keeps opaque floors and full room temperature hues.
