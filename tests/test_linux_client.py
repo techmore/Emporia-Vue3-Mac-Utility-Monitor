@@ -254,7 +254,8 @@ class ChartMathTests(unittest.TestCase):
 class DropdownWidthTests(unittest.TestCase):
     def test_dropdown_width_does_not_depend_on_the_view(self):
         vala = (Path(__file__).parents[1] / 'linux/wingpanel/Indicator.vala').read_text()
-        self.assertIn('MENU_WIDTH = 520', vala)
+        self.assertIn('MENU_WIDTH = 440', vala)
+        self.assertIn('MENU_WIDTH_COMPACT = 340', vala)
         self.assertNotIn('showing_temperatures ? int.min (660', vala)
 
 
