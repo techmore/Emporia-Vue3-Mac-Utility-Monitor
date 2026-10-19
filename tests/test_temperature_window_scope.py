@@ -58,7 +58,7 @@ class TemperatureWindowScopeTests(unittest.TestCase):
             pending=False, status=SimpleNamespace(set_label=self.messages.append),
             sensor=SimpleNamespace(set_model=lambda model: None),
             readout=SimpleNamespace(set_label=lambda text: None),
-            chart=SimpleNamespace(queue_draw=lambda: None), render=lambda: None)
+            chart=SimpleNamespace(queue_draw=lambda: None, set_series=lambda *a: None, set_selected=lambda *a: None), chart_key=None, render=lambda: None)
         def install(payload, cached=False):
             self.window.payload = payload
             self.installed.append((payload, cached))
