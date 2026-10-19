@@ -155,3 +155,16 @@ class NativeNavigationTests(unittest.TestCase):
         destinations = set(re.findall(r'href="(/[^"{]*)"', header))
         paths = {path for _, items in navigation for _, path, _ in items}
         self.assertLessEqual(destinations, paths)
+
+
+class DropdownStyleTests(unittest.TestCase):
+    def test_every_dropdown_css_class_is_styled_and_state_is_not_colour_only(self):
+        root = Path(__file__).parents[1]
+        vala = (root / 'linux/wingpanel/Indicator.vala').read_text()
+        css = (root / 'linux/theme.css').read_text()
+        for name in ('energy-menu-title', 'energy-notice', 'energy-hero-stale'):
+            self.assertIn(name, vala)
+            self.assertIn(name, css)
+        # The live dot gets an accessible label and a visible text notice when readings are stale.
+        self.assertIn('AccessibleProperty.LABEL, live ? "Collector live"', vala)
+        self.assertIn('notice.visible = !live', vala)
