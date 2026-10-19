@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, timezone
 import time
 from urllib.parse import urlencode
 
-from gi.repository import Gtk, Pango, PangoCairo
+from gi.repository import Gtk, Pango
+
+from chart import Chart
 
 from client_core import (temperature_history_cache_key, load_temperature_window_cache,
                          private_json, temperature_band,
@@ -53,19 +55,12 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.status = Gtk.Label(label='Loading recorded history…', xalign=0, wrap=True)
         self.status.add_css_class('dim-label')
         box.append(self.status)
-        self.chart = Gtk.DrawingArea(content_width=600, content_height=220, hexpand=True, vexpand=True)
-        self.chart.add_css_class('energy-card')
-        self.chart.add_css_class('energy-chart')
-        self.chart.set_draw_func(self.draw)
+        self.chart = Chart(fmt=lambda v: f'{v:.0f}°F', zero_based=False)
+        self.chart.on_pick = lambda index: self.cursor.set_value(index)
+        self.chart_key = None
         controller = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
         controller.connect('scroll', self.scroll_history)
         self.chart.add_controller(controller)
-        hover = Gtk.EventControllerMotion()
-        hover.connect('motion', self.hover_chart)
-        self.chart.add_controller(hover)
-        click = Gtk.GestureClick()
-        click.connect('pressed', lambda g, n, x, y: self.hover_chart(None, x, y))
-        self.chart.add_controller(click)
         box.append(self.chart)
         look_back = Gtk.Label(label='Look back · scroll the chart or move the time slider', xalign=0)
         look_back.add_css_class('dim-label')
@@ -122,7 +117,8 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.last_fetch = 0
         self.sensor.set_model(Gtk.StringList.new(['Loading sensors…']))
         self.readout.set_label('')
-        self.chart.queue_draw()
+        self.chart.set_series([])
+        self.chart_key = None
         self.status.set_label('Collector changed · loading its recorded history…')
 
     def update_current(self, sensors):
@@ -183,7 +179,8 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         elif self.payload and getattr(self, 'payload_endpoint', None) != endpoint:
             self.payload = None
             self.readout.set_label('No cached history for the selected range.')
-            self.chart.queue_draw()
+            self.chart.set_series([])
+            self.chart_key = None
         self.pending = True
         self.last_fetch = time.monotonic()
         self.status.set_label('Loading recorded temperature history…')
@@ -233,17 +230,12 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         stamp = datetime.fromisoformat(self.payload['times'][index]).astimezone()
         text = f'{value:.1f} °F' if value is not None else 'Missing · no recorded observation'
         self.readout.set_label(f"{series['name']} · {stamp:%b %d, %Y %H:%M %Z}\n{text} · {self.payload['seconds'] // 60}-minute observation mean" + (' · cached' if self.cached else ''))
-        self.chart.queue_draw()
-
-    def hover_chart(self, _, x, y):
-        # Pointing at the chart moves the readout to the nearest recorded bucket (46 px label gutter, 12 px right margin).
-        if not self.payload or not self.cursor.get_sensitive():
-            return
-        count = len(self.payload['times'])
-        width = self.chart.get_width() - 66 - 12
-        if count < 2 or width <= 0:
-            return
-        self.cursor.set_value(min(count - 1, max(0, round((x - 66) * (count - 1) / width))))
+        key = (id(self.payload), self.sensor.get_selected())
+        if key != self.chart_key:
+            self.chart_key = key
+            self.chart.set_series(series['values'], [
+                datetime.fromisoformat(t).astimezone().strftime('%b %d %H:%M') for t in self.payload['times']])
+        self.chart.set_selected(index)
 
     def scroll_history(self, _, dx, dy):
         self.cursor.set_value(self.cursor.get_value() + (-1 if dy > 0 else 1))
@@ -261,69 +253,3 @@ class TemperatureWindow(Gtk.ApplicationWindow):
     def now(self):
         self.end = None
         self.fetch()
-
-    def draw(self, area, cr, width, height):
-        if not self.payload or self.sensor.get_selected() >= len(self.payload['series']):
-            return
-        values = self.payload['series'][self.sensor.get_selected()]['values']
-        known = [value for value in values if value is not None]
-        if not known:
-            return
-        low, high = min(known) - 1, max(known) + 1
-        color = area.get_color()
-        left, right, top, bottom = 66, 12, 12, 10
-        plot_w, plot_h = width - left - right, height - top - bottom
-        if plot_w <= 0 or plot_h <= 0:
-            return
-        cr.set_line_width(1)
-        layout = area.create_pango_layout('')
-        layout.set_font_description(Pango.FontDescription.from_string('Sans 9'))
-        for fraction in (0, 0.5, 1):
-            y = round(top + plot_h * fraction) + 0.5
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.25 if fraction < 1 else 0.5)
-            cr.move_to(left, y)
-            cr.line_to(left + plot_w, y)
-            cr.stroke()
-            layout.set_text(f'{high - (high - low) * fraction:.0f}°F', -1)
-            _, extent = layout.get_pixel_extents()
-            cr.set_source_rgba(0.5, 0.5, 0.5, 1)
-            cr.move_to(left - extent.width - 6, y - extent.height / 2)
-            PangoCairo.show_layout(cr, layout)
-
-        def point(i, value):
-            return left + i * plot_w / max(1, len(values) - 1), top + plot_h - (value - low) * plot_h / (high - low)
-
-        # Missing buckets break the line: unrecorded is unknown, never interpolated.
-        runs, run = [], []
-        for i, value in enumerate(values):
-            if value is None:
-                if run:
-                    runs.append(run)
-                run = []
-            else:
-                run.append(point(i, value))
-        if run:
-            runs.append(run)
-        cr.set_line_width(2)
-        cr.set_line_join(1)
-        for run in runs:
-            cr.set_source_rgba(color.red, color.green, color.blue, 0.9)
-            cr.move_to(*run[0])
-            for x, y in run[1:]:
-                cr.line_to(x, y)
-            cr.stroke()
-            if len(run) == 1:
-                cr.arc(run[0][0], run[0][1], 2.5, 0, 6.283185)
-                cr.fill()
-        index = min(int(self.cursor.get_value()), len(values) - 1)
-        x = left + index * plot_w / max(1, len(values) - 1)
-        cr.set_source_rgba(color.red, color.green, color.blue, 0.5)
-        cr.set_line_width(1)
-        cr.move_to(round(x) + 0.5, top)
-        cr.line_to(round(x) + 0.5, top + plot_h)
-        cr.stroke()
-        if values[index] is not None:
-            px, py = point(index, values[index])
-            cr.set_source_rgba(color.red, color.green, color.blue, 1)
-            cr.arc(px, py, 4, 0, 6.283185)
-            cr.fill()

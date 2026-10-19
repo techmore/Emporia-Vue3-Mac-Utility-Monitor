@@ -219,3 +219,46 @@ class OutageNotifier:
             self.last_offline = now
             return "offline"
         return None
+
+
+def nice_ticks(low, high, count=4):
+    """Round axis ticks covering [low, high]; returns (ticks, axis_low, axis_high). Never divides by zero."""
+    if not (math.isfinite(low) and math.isfinite(high)):
+        raise ValueError("Axis bounds must be finite")
+    if high < low:
+        low, high = high, low
+    span = high - low
+    if span == 0:
+        span = abs(high) * 0.1 or 1.0
+        low, high = low - span / 2, high + span / 2
+        span = high - low
+    raw = span / max(1, count)
+    magnitude = 10 ** math.floor(math.log10(raw))
+    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
+    start = math.floor(low / step) * step
+    end = math.ceil(high / step) * step
+    ticks = [round(start + i * step, 10) for i in range(int(round((end - start) / step)) + 1)]
+    return ticks, ticks[0], ticks[-1]
+
+
+def value_runs(values):
+    """Split a series into runs of recorded values: [[(index, value), ...], ...]. None, NaN, negatives are gaps."""
+    runs, run = [], []
+    for index, value in enumerate(values):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            run.append((index, value))
+        elif run:
+            runs.append(run)
+            run = []
+    if run:
+        runs.append(run)
+    return runs
+
+
+def index_at(x, left, plot_width, count):
+    """Nearest data index for a pointer x; None if there is nothing to point at."""
+    if count < 1 or plot_width <= 0:
+        return None
+    if count == 1:
+        return 0
+    return min(count - 1, max(0, round((x - left) * (count - 1) / plot_width)))

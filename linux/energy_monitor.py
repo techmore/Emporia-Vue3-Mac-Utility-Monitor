@@ -20,6 +20,7 @@ from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key,
                          read_json, validate_origin, validate_summary, validate_temperature_history,
                          load_temperature_trend_cache, load_ui_state, OutageNotifier)
 
+from chart import Chart
 from native_auth import load_credentials, session_cookie
 from web_theme import build_css as web_css
 
@@ -29,26 +30,6 @@ DATA = Path(GLib.get_user_data_dir()) / "energy-monitor"
 UI_STATE = CONFIG.with_name("ui.json")
 NARROW_WIDTH = 760  # below this the sidebar collapses by itself
 SWITCHER_PAGES = None  # filled lazily from NAVIGATION
-
-
-def draw_axis(area, cr, color, left, top, plot_w, plot_h, labels):
-    """Hairline grid plus top/bottom axis labels in the widget's own font, using the foreground colour."""
-    cr.set_line_width(1)
-    for fraction in (0, 0.5, 1):
-        y = round(top + plot_h * fraction) + 0.5
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.25 if fraction else 0.5)
-        cr.move_to(left, y)
-        cr.line_to(left + plot_w, y)
-        cr.stroke()
-    layout = area.create_pango_layout("")
-    font = Pango.FontDescription.from_string("Sans 9")
-    layout.set_font_description(font)
-    for text, y in zip(labels, (top, top + plot_h)):
-        layout.set_text(text, -1)
-        _, extent = layout.get_pixel_extents()
-        cr.set_source_rgba(0.5, 0.5, 0.5, 1)
-        cr.move_to(left - extent.width - 6, y - extent.height / 2)
-        PangoCairo.show_layout(cr, layout)
 
 
 # (label, collector path, symbolic icon); path None opens the native temperature window.
@@ -775,7 +756,7 @@ class EnergyMonitor(Gtk.Application):
         period.set_valign(Gtk.Align.CENTER)
         header.pack_start(period)
         totals = Gtk.Label(xalign=0, wrap=True)
-        chart = Gtk.DrawingArea(content_width=620, content_height=240, hexpand=True, vexpand=True)
+        chart = Chart(fmt=lambda v: "%.2f kWh" % v, zero_based=True, content_width=620, content_height=240)
         buttons = Gtk.Box(spacing=6, halign=Gtk.Align.END)
         refresh = Gtk.Button(label="Refresh")
         full = Gtk.Button(label="Open Full Circuit Page")
@@ -797,7 +778,6 @@ class EnergyMonitor(Gtk.Application):
         self.history_windows[channel] = (window, data, status, period, totals, chart)
         window.connect("close-request", lambda *_: self.history_windows.pop(channel, None) and False)
         period.connect("notify::selected", lambda *_: self.render_history(channel))
-        chart.set_draw_func(lambda area, cr, width, height: self.draw_history(channel, cr, width, height))
         try:
             data["record"] = read_json(self.history_file(channel))
         except (OSError, ValueError):
@@ -853,7 +833,7 @@ class EnergyMonitor(Gtk.Application):
         if not record or record.get("origin") != self.origin:
             status.set_label("No recorded history cached for this circuit. Connect to the collector and refresh.")
             totals.set_label("Missing history is not zero usage.")
-            chart.queue_draw()
+            chart.set_series([])
             return
         date = time.strftime("%Y-%m-%d %H:%M", time.localtime(record["fetched_at"]))
         status.set_label(("Cached history · " if state["cached"] else "Downloaded history · ") + date)
@@ -872,66 +852,10 @@ class EnergyMonitor(Gtk.Application):
         if readings is not None:
             parts.append("%d readings · gaps are unrecorded periods" % readings)
         totals.set_label(" · ".join(parts))
-        chart.queue_draw()
-
-    def draw_history(self, channel, cr, width, height):
-        if channel not in self.history_windows:
-            return
-        _, state, _, period, _, _ = self.history_windows[channel]
-        record = state.get("record")
-        if not record or record.get("origin") != self.origin:
-            return
-        days = [1, 7, 30][period.get_selected()]
-        selected = next((item for item in record["data"]["windows"] if item.get("days") == days), {})
         series = selected.get("series", [])
-        points = [item.get("total_kwh") for item in series]
-        values = [value for value in points if isinstance(value, (int, float)) and value >= 0]
-        if len(points) < 2 or not values:
-            return
-        area = self.history_windows[channel][5]
-        color = area.get_color()
-        maximum = max(max(values), 0.001)
-        left, right, top, bottom = 66, 12, 12, 10
-        plot_w, plot_h = width - left - right, height - top - bottom
-        if plot_w <= 0 or plot_h <= 0:
-            return
-        draw_axis(area, cr, color, left, top, plot_w, plot_h, ["%.2f kWh" % maximum, "0"])
-
-        def point(index, value):
-            return left + index * plot_w / (len(points) - 1), top + plot_h - value * plot_h / maximum
-
-        cr.set_source_rgba(color.red, color.green, color.blue, 0.85)
-        cr.set_line_width(2)
-        cr.set_line_join(1)
-        run = []
-        runs = []
-        for index, value in enumerate(points):
-            if not isinstance(value, (int, float)) or value < 0:
-                if run:
-                    runs.append(run)
-                run = []
-                continue
-            run.append(point(index, value))
-        if run:
-            runs.append(run)
-        for run in runs:
-            # Translucent fill under each recorded run; gaps stay empty because gaps are not zero usage.
-            if len(run) > 1:
-                cr.move_to(run[0][0], top + plot_h)
-                for x, y in run:
-                    cr.line_to(x, y)
-                cr.line_to(run[-1][0], top + plot_h)
-                cr.close_path()
-                cr.set_source_rgba(color.red, color.green, color.blue, 0.14)
-                cr.fill()
-            cr.set_source_rgba(color.red, color.green, color.blue, 0.9)
-            cr.move_to(*run[0])
-            for x, y in run[1:]:
-                cr.line_to(x, y)
-            cr.stroke()
-            if len(run) == 1:
-                cr.arc(run[0][0], run[0][1], 2.5, 0, 6.283185)
-                cr.fill()
+        chart.set_series([item.get("total_kwh") if isinstance(item.get("total_kwh"), (int, float))
+                          and item.get("total_kwh") >= 0 else None for item in series],
+                         [str(item.get("period", "")) for item in series])
 
     def connection_dialog(self):
         window = Gtk.Window(title="Collector Connection", transient_for=self.window, modal=True,
