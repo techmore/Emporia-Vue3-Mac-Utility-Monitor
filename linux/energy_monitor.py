@@ -21,6 +21,7 @@ from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key,
                          load_temperature_trend_cache)
 
 from native_auth import load_credentials, session_cookie
+from web_theme import build_css as web_css
 
 STATE = Path(GLib.get_user_state_dir()) / "energy-monitor"
 CONFIG = Path(GLib.get_user_config_dir()) / "energy-monitor/client.json"
@@ -45,6 +46,23 @@ def draw_axis(area, cr, color, left, top, plot_w, plot_h, labels):
         cr.set_source_rgba(0.5, 0.5, 0.5, 1)
         cr.move_to(left - extent.width - 6, y - extent.height / 2)
         PangoCairo.show_layout(cr, layout)
+
+
+# (label, collector path, symbolic icon); path None opens the native temperature window.
+NAVIGATION = (
+    ("Dashboard", "/", "go-home-symbolic"),
+    ("Reports", "/reports", "document-properties-symbolic"),
+    ("Trends", "/trends", "view-list-symbolic"),
+    ("Temperatures", None, "weather-clear-symbolic"),
+    ("Home 3D", "/home-3d", "find-location-symbolic"),
+    ("House · Lab", "/house", "applications-science-symbolic"),
+    ("Radon", "/radon", "dialog-information-symbolic"),
+    ("Aqara", "/aqara", "network-wireless-symbolic"),
+    ("HVAC", "/mitsubishi", "weather-clear-night-symbolic"),
+    ("Kasa", "/kasa", "preferences-system-network-symbolic"),
+    ("Guide", "/guide", "help-contents-symbolic"),
+    ("Settings", "/settings", "preferences-system-symbolic"),
+)
 
 
 class EnergyMonitor(Gtk.Application):
@@ -105,6 +123,26 @@ class EnergyMonitor(Gtk.Application):
     def load_theme(self):
         # One stylesheet built on the elementary named colours: light, dark and accent follow the system.
         self.css.load_from_path(str(Path(__file__).with_name("theme.css")))
+        settings = Gtk.Settings.get_default()
+        if not getattr(self, "theme_hooked", False):
+            self.theme_hooked = True
+            for key in ("gtk-application-prefer-dark-theme", "gtk-theme-name"):
+                settings.connect("notify::" + key, lambda *_: GLib.idle_add(self.apply_web_theme))
+        self.apply_web_theme()
+
+    def apply_web_theme(self):
+        """Re-skin the embedded dashboard with the system's light/dark palette and accent colour."""
+        if not self.web or not self.window:
+            return False
+        colour = self.window.get_color()
+        dark = (0.299 * colour.red + 0.587 * colour.green + 0.114 * colour.blue) > 0.5
+        found, accent = self.window.get_style_context().lookup_color("accent_color")
+        manager = self.web.get_user_content_manager()
+        manager.remove_all_style_sheets()
+        manager.add_style_sheet(WebKit.UserStyleSheet.new(
+            web_css(dark, accent if found else None), WebKit.UserContentInjectedFrames.ALL_FRAMES,
+            WebKit.UserStyleLevel.USER, None, None))
+        return False
 
     def do_activate(self):
         self.window.present()
@@ -151,7 +189,7 @@ class EnergyMonitor(Gtk.Application):
 
     def build_window(self):
         self.window = Gtk.ApplicationWindow(application=self, title="Energy Monitor",
-                                            default_width=1120, default_height=780)
+                                            default_width=1240, default_height=800)
         self.window.connect("close-request", self.hide_window)
         header = Gtk.HeaderBar()
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
@@ -174,12 +212,10 @@ class EnergyMonitor(Gtk.Application):
         self.window.set_titlebar(header)
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.status = Gtk.Label(label="Connecting to the energy collector…", xalign=0,
-                                margin_start=12, margin_end=12, margin_top=6, margin_bottom=6,
+                                margin_start=12, margin_end=12, margin_top=4, margin_bottom=4,
                                 ellipsize=Pango.EllipsizeMode.END)
         self.status.add_css_class("dim-label")
         self.status.add_css_class("caption")
-        content.append(self.status)
-        content.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
         session = WebKit.NetworkSession.new(str(DATA / "web-data"), str(DATA / "web-cache"))
         cookies = session.get_cookie_manager()
@@ -202,7 +238,59 @@ class EnergyMonitor(Gtk.Application):
         self.web.connect("create", self.popup)
         session.connect("download-started", self.download)
         content.append(self.web)
-        self.window.set_child(content)
+        content.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        content.append(self.status)
+        # Source-list sidebar, as in elementary's own apps; it replaces the web page's top bar.
+        self.nav = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.nav.add_css_class("navigation-sidebar")
+        for label, path, icon in NAVIGATION:
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(spacing=9, margin_top=3, margin_bottom=3, margin_start=3, margin_end=3)
+            box.append(Gtk.Image.new_from_icon_name(icon))
+            box.append(Gtk.Label(label=label, xalign=0, hexpand=True))
+            row.set_child(box)
+            row.nav_path = path
+            self.nav.append(row)
+        self.nav.connect("row-activated", self.nav_activated)
+        side = Gtk.ScrolledWindow(child=self.nav, hscrollbar_policy=Gtk.PolicyType.NEVER, width_request=190)
+        self.sidebar = Gtk.Revealer(child=Gtk.Box(), transition_type=Gtk.RevealerTransitionType.SLIDE_RIGHT,
+                                    reveal_child=True)
+        pane = Gtk.Box()
+        pane.append(side)
+        pane.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        self.sidebar.set_child(pane)
+        toggle = Gtk.ToggleButton(icon_name="sidebar-show-symbolic", active=True,
+                                  tooltip_text="Show sidebar (F9)")
+        toggle.bind_property("active", self.sidebar, "reveal-child")
+        header.pack_start(toggle)
+        self.sidebar_toggle = toggle
+        self.set_accels_for_action("win.sidebar", ["F9"])
+        action = Gio.SimpleAction.new("sidebar", None)
+        action.connect("activate", lambda *_: toggle.set_active(not toggle.get_active()))
+        self.window.add_action(action)
+        shell = Gtk.Box()
+        shell.append(self.sidebar)
+        content.set_hexpand(True)
+        shell.append(content)
+        self.window.set_child(shell)
+        self.apply_web_theme()
+        self.web.connect("notify::uri", lambda *_: self.sync_navigation())
+        self.window.connect("map", lambda *_: GLib.idle_add(self.apply_web_theme))
+
+    def nav_activated(self, box, row):
+        if row.nav_path is None:
+            self.open_temperatures()
+        else:
+            self.open_path(row.nav_path)
+
+    def sync_navigation(self):
+        path = urlsplit(self.web.get_uri() or "").path or "/"
+        for index, (_, target, _) in enumerate(NAVIGATION):
+            if target and (path == target or (target != "/" and path.startswith(target + "/"))):
+                self.nav.select_row(self.nav.get_row_at_index(index))
+                return
+        if path.startswith("/circuit"):
+            self.nav.select_row(self.nav.get_row_at_index(0))
 
     def hide_window(self, *_):
         self.window.set_visible(False)

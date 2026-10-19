@@ -61,7 +61,11 @@ windows use header-bar Cancel/Connect buttons, Escape/Enter, Ctrl+R/Ctrl+Q and s
 Charts have neutral gridlines, system-font axes and gap-preserving runs. Temperature bands use the
 elementary palette (Blueberry, Banana, Orange, Strawberry) as borders and translucent fills only.
 Styles are scoped to this client; they do not recolor other panel indicators. The embedded web
-dashboard still uses its own olive palette, shared with the Mac app.
+dashboard is re-skinned inside the native client only (`linux/web_theme.py`, a WebKit user style
+sheet): the system light/dark palette and accent colour replace the olive variables, the system font
+replaces the web fonts, and the page's top bar is hidden in favour of a native source-list sidebar
+(F9 toggles it) whose selection follows the page. A browser opening the collector still sees the
+olive/stone design shared with the Mac app.
 
 For a private collector, install a persistent SSH forward after verifying that
 `ssh USER@HOST` works with a trusted host key and noninteractive authentication:
