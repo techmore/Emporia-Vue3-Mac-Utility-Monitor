@@ -165,7 +165,7 @@ defaults until the collector is upgraded. The updated summary projection include
 saved wall heights, camera, furniture, and window dimensions.
 
 **Floor plan** retains the native schematic with wrapped 12-pixel callouts and a full
-room list. The Temperature menu expands to 660 pixels wide and the scene scales to the
+room list. The dropdown keeps one 520-pixel width in both views (no jump when switching) and the scene scales to the
 screen height. Secondary actions are under **More…**. The floor and camera choices
 survive new readings when the layout is unchanged. Room hues use
 only recent mapped observations (blue below 70°F, yellow 70–75°F, amber above 75°F and

@@ -246,3 +246,10 @@ class ChartMathTests(unittest.TestCase):
         for name in ('energy_monitor.py', 'temperatures.py'):
             self.assertIn('Chart(', (root / name).read_text())
         self.assertIn('chart.py', (root / 'install.sh').read_text())
+
+
+class DropdownWidthTests(unittest.TestCase):
+    def test_dropdown_width_does_not_depend_on_the_view(self):
+        vala = (Path(__file__).parents[1] / 'linux/wingpanel/Indicator.vala').read_text()
+        self.assertIn('MENU_WIDTH = 520', vala)
+        self.assertNotIn('showing_temperatures ? int.min (660', vala)

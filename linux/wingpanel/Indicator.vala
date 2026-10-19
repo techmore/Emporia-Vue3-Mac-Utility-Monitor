@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 public class EnergyIndicator : Wingpanel.Indicator {
+    private const int MENU_WIDTH = 520;
     private Gtk.Box display_box;
     private Gtk.Label power;
     private Gtk.Box menu;
@@ -30,7 +31,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         display_box.tooltip_text = "Energy Monitor";
         menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 6) {
             margin_top = 6, margin_bottom = 6, margin_start = 6, margin_end = 6,
-            width_request = 390
+            width_request = MENU_WIDTH
         };
         menu.add_css_class ("energy-monitor");
         menu.add_css_class ("energy-menu");
@@ -180,7 +181,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
         int screen_height = 900, screen_width = 1200;
         var monitor = Gdk.Display.get_default ().get_monitors ().get_item (0) as Gdk.Monitor;
         if (monitor != null) { var bounds = monitor.get_geometry (); screen_height = bounds.height; screen_width = bounds.width; }
-        menu.width_request = showing_temperatures ? int.min (660, screen_width - 32) : 390;
+        // One width for both views so switching never moves or resizes the popover.
+        menu.width_request = int.min (MENU_WIDTH, screen_width - 32);
         house_preview.set_view_height (int.min (440, int.max (300, screen_height * 38 / 100)));
         scroll.max_content_height = showing_temperatures ? int.max (360, screen_height - 240) : 440;
         try {
