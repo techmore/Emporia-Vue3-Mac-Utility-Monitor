@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The Wingpanel house preview no longer demands 350 px, which was forcing the compact 340 px dropdown wider; a test now rejects any fixed minimum over 300 px in the panel code.
 - Production hardening for the Linux client: the installer reports (instead of aborting on) a refused panel install, a test fails the build if the app imports a module the installer does not copy, and the README documents Preferences, the dropdown views, notifications and the install behaviour.
 - Compact density makes the dropdown's circuits single-line: in the panel view each breaker is 26 px with name and watts on one line (no rating line), and list rows drop the rating and load bar.
 - Narrower Wingpanel dropdown: 440 px (was 520), and 340 px in Compact density; still one width for both views.
