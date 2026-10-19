@@ -1,4 +1,6 @@
 """Linux client cache invariants; no desktop, collector, credentials or live data required."""
+import ast
+import re
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -120,3 +122,20 @@ class TemperatureTrendCacheTests(unittest.TestCase):
         self.assertIn('nav.topnav { display: none !important; }', light)
         self.assertNotIn('--olive-500:#3689e6', web_theme.build_css(False, '#ed5353'))
         self.assertEqual(web_theme.parse_accent('garbage'), (0x36, 0x89, 0xe6))
+
+
+class NativeNavigationTests(unittest.TestCase):
+    def test_sidebar_preserves_internal_header_destinations(self):
+        root = Path(__file__).parents[1]
+        tree = ast.parse((root / 'linux/energy_monitor.py').read_text())
+        navigation = next(ast.literal_eval(node.value) for node in tree.body
+                          if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == 'NAVIGATION'
+                                  for target in node.targets))
+        web_tree = ast.parse((root / 'web.py').read_text())
+        header = next(ast.literal_eval(node.value) for node in web_tree.body
+                      if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == 'NAV_HTML'
+                              for target in node.targets))
+        destinations = set(re.findall(r'href="(/[^"{]*)"', header))
+        self.assertLessEqual(destinations, {path for _, path, _ in navigation})
