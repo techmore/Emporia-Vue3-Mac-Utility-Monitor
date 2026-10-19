@@ -381,3 +381,16 @@ class DropdownMinimumWidthTests(unittest.TestCase):
         for path in (Path(__file__).parents[1] / 'linux/wingpanel').glob('*.vala'):
             for match in re.finditer(r'content_width\s*=\s*(\d+)', path.read_text()):
                 self.assertLessEqual(int(match.group(1)), 300, path.name + ' would force the 340 px popover wider')
+
+
+class DensityToggleTests(unittest.TestCase):
+    def test_dropdown_writes_density_and_app_watches_it(self):
+        root = Path(__file__).parents[1] / 'linux'
+        vala = (root / 'wingpanel/Indicator.vala').read_text()
+        self.assertIn('Compact layout', vala)
+        self.assertIn('set_string_member ("density"', vala)
+        self.assertIn('FileUtils.chmod (path, 0600)', vala)
+        self.assertIn('syncing_switch', vala)  # the switch following the file must not write it back
+        app = (root / 'energy_monitor.py').read_text()
+        self.assertIn('monitor_file', app)
+        self.assertIn('reload_ui_state', app)

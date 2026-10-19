@@ -179,7 +179,7 @@ summary cache and needs no separate connection.
 
 - **Preferences** (Ctrl+, or the app menu): *Density* — Comfortable or Compact (single-line circuits, tighter rows
   and type, a 340 px dropdown instead of 440 px) — and *Dashboard style* — elementary OS (follows your theme and
-  accent) or the collector's original olive design. Choices apply immediately and are stored in
+  accent) or the collector's original olive design. The dropdown's **More… → Compact layout** switch changes the same setting (the app follows it live). Choices apply immediately and are stored in
   `~/.config/energy-monitor/ui.json`; delete that file to return to the defaults.
 - The dropdown's **Circuits** can be shown as the physical breaker panel (odd slots left, even right, a centre bus
   labelled 1–2, 3–4 …; double-pole breakers span two rows) or as a busiest-first list; the choice is remembered
