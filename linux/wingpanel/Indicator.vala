@@ -6,6 +6,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private Gtk.Box readings;
     private Gtk.Label status;
     private Gtk.Image live_dot;
+    private Gtk.Box notice;
+    private Gtk.Label notice_text;
     private Gtk.Image panel_icon;
     private Gtk.Label panel_title;
     private uint timer;
@@ -26,8 +28,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
         power = new Gtk.Label ("");
         display_box.append (power);
         display_box.tooltip_text = "Energy Monitor";
-        menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 3) {
-            margin_top = 3, margin_bottom = 3, margin_start = 6, margin_end = 6,
+        menu = new Gtk.Box (Gtk.Orientation.VERTICAL, 6) {
+            margin_top = 6, margin_bottom = 6, margin_start = 6, margin_end = 6,
             width_request = 390
         };
         menu.add_css_class ("energy-monitor");
@@ -35,20 +37,31 @@ public class EnergyIndicator : Wingpanel.Indicator {
         css = new Gtk.CssProvider ();
         Gtk.StyleContext.add_provider_for_display (Gdk.Display.get_default (), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
         load_theme ();
-        panel_title = new Gtk.Label ("Energy Monitor") { xalign = 0, hexpand = true };
+        panel_title = new Gtk.Label ("Energy Monitor") { xalign = 0, hexpand = true, ellipsize = Pango.EllipsizeMode.END };
         panel_title.add_css_class ("energy-title");
-                status = new Gtk.Label ("Waiting for collector connection") {
-            xalign = 1, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 30
+        panel_title.add_css_class ("energy-menu-title");
+        status = new Gtk.Label ("Waiting for collector connection") {
+            xalign = 0, ellipsize = Pango.EllipsizeMode.END, max_width_chars = 44, hexpand = true
         };
         status.add_css_class (Granite.CssClass.DIM);
         status.add_css_class ("energy-timestamp");
-        var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
-        header.append (panel_title);
-        live_dot = new Gtk.Image.from_icon_name ("media-record-symbolic") { pixel_size = 10 };
+        live_dot = new Gtk.Image.from_icon_name ("media-record-symbolic") { pixel_size = 10, valign = Gtk.Align.CENTER };
         live_dot.add_css_class ("energy-dot");
-        header.append (live_dot);
-        header.append (status);
+        live_dot.update_property (Gtk.AccessibleProperty.LABEL, "Collector status", -1);
+        // Title over a status line, the way Quick Settings headers read; the dot never carries state alone.
+        var subtitle = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+        subtitle.append (live_dot);
+        subtitle.append (status);
+        var header = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { margin_start = 6, margin_end = 6, margin_top = 3 };
+        header.append (panel_title);
+        header.append (subtitle);
         menu.append (header);
+        notice_text = new Gtk.Label ("") { xalign = 0, wrap = true, hexpand = true };
+        notice = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) { visible = false };
+        notice.add_css_class ("energy-notice");
+        notice.append (new Gtk.Image.from_icon_name ("dialog-warning-symbolic") { pixel_size = 16, valign = Gtk.Align.START });
+        notice.append (notice_text);
+        menu.append (notice);
         prefs = new EnergyPrefs ();
         current_view = prefs.view;
         // A linked pair of toggle buttons is elementary's segmented control (see Quick Settings).
@@ -77,7 +90,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
         house_preview.sensor_selected.connect ((source, identity) => { launch ({"--temperature", source, identity}); });
         temperature_view = new TemperatureView (house_preview, prefs);
         temperature_view.sensor_selected.connect ((source, identity) => { launch ({"--temperature", source, identity}); });
-        readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 4);
+        readings = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
         scroll = new Gtk.ScrolledWindow () {
             child = readings, hscrollbar_policy = Gtk.PolicyType.NEVER,
             max_content_height = 440, propagate_natural_height = true
@@ -111,6 +124,10 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private void set_live (bool live) {
         if (live) { live_dot.remove_css_class ("energy-offline"); panel_icon.remove_css_class ("dim-label"); }
         else { live_dot.add_css_class ("energy-offline"); panel_icon.add_css_class ("dim-label"); }
+        live_dot.update_property (Gtk.AccessibleProperty.LABEL, live ? "Collector live" : "Collector offline or stale", -1);
+        display_box.tooltip_text = live ? "Energy Monitor · live" : "Energy Monitor · readings are stale";
+        notice.visible = !live;
+        notice_text.label = "Live readings are unavailable. Showing the last recorded values; they are not current.";
     }
 
     private void launch (string[] options) {
@@ -205,11 +222,12 @@ public class EnergyIndicator : Wingpanel.Indicator {
             var hero = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10) { hexpand = true };
             hero.add_css_class ("energy-hero");
             hero.append (new Gtk.Image.from_icon_name ("weather-storm-symbolic") { pixel_size = 32, valign = Gtk.Align.CENTER });
+            hero.add_css_class (live ? "energy-hero-live" : "energy-hero-stale");
             var number = new Gtk.Label (live ? metric (root, "current_watts", "%.0f W") : "—") { xalign = 0 };
             number.add_css_class ("energy-value");
             hero.append (number);
             var side = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { valign = Gtk.Align.CENTER, hexpand = true };
-            var hero_caption = new Gtk.Label ("Minute-average power") { xalign = 0 };
+            var hero_caption = new Gtk.Label ("Power · minute average") { xalign = 0 };
             hero_caption.add_css_class ("energy-caption");
             side.append (hero_caption);
             var cost = new Gtk.Label (live ? metric (root, "cost_per_hour", "$%.3f / hour") : "Live readings unavailable") { xalign = 0 };
@@ -228,10 +246,10 @@ public class EnergyIndicator : Wingpanel.Indicator {
             grid.attach (metric_card ("Recorded month cost", metric (root, "month_cost", "$%.2f"), month_detail), 0, 1, 2);
             readings.append (grid);
             if (root.has_member ("breaker_slots")) {
-                var section = new Granite.HeaderLabel ("Circuits") { margin_top = 6 };
+                var section = new Granite.HeaderLabel ("Circuits") { margin_top = 12 };
                 readings.append (section);
                 var slots = root.get_array_member ("breaker_slots");
-                var panel = new Gtk.Grid () { column_homogeneous = true, column_spacing = 5, row_spacing = 2 };
+                var panel = new Gtk.Grid () { column_homogeneous = true, column_spacing = 6, row_spacing = 3 };
                 readings.append (panel);
                 // Slot coordinates preserve physical odd-left/even-right positions,
                 // including gaps: never pack only monitored circuits sequentially.
@@ -275,6 +293,7 @@ public class EnergyIndicator : Wingpanel.Indicator {
                         var star = new Gtk.Image.from_icon_name ("starred-symbolic") { pixel_size = 10 };
                         star.add_css_class ("energy-peak");
                         star.tooltip_text = "Top usage";
+                        star.update_property (Gtk.AccessibleProperty.LABEL, "Top usage", -1);
                         box.append (star);
                     }
                     card.append (box);
@@ -294,6 +313,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
                     var button = new Gtk.Button () { child = card, has_frame = false, hexpand = true };
                     button.add_css_class ("energy-circuit");
                     button.tooltip_text = "View recorded history for " + string_member (circuit, "display_name", channel);
+                    button.update_property (Gtk.AccessibleProperty.LABEL, "%s, %s. View recorded history".printf (
+                        string_member (circuit, "display_name", channel), live ? metric (circuit, "watts", "%.0f watts") : "no live reading"), -1);
                     string load_state = string_member (circuit, "load_state");
                     if (load_state == "warn" || load_state == "danger") button.add_css_class ("energy-" + load_state);
                     string usage_state = string_member (circuit, "usage_state");

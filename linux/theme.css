@@ -40,7 +40,10 @@
     border-radius: 6px;
     padding: 8px 10px;
 }
-.energy-monitor .energy-hero .energy-value { font-size: 2em; letter-spacing: -0.02em; }
+.energy-monitor .energy-hero .energy-value { font-size: 2.2em; letter-spacing: -0.02em; }
+.energy-monitor .energy-hero { padding: 12px; }
+.energy-monitor .energy-hero-stale { background-color: alpha(@fg_color, 0.045); border-color: alpha(@fg_color, 0.14); border-style: dashed; }
+.energy-monitor .energy-hero-stale .energy-value { opacity: 0.55; }
 
 /* ---- circuit buttons ----------------------------------------------------------------------- */
 .energy-monitor button.energy-circuit {
@@ -114,3 +117,18 @@
 .energy-monitor .temperature-swatch-warm { background: #ffa154; }
 .energy-monitor .temperature-swatch-hot { background: #ed5353; }
 .energy-monitor .temperature-swatch-none { background: alpha(@fg_color, 0.25); }
+
+/* ---- dropdown polish ----------------------------------------------------------------------- */
+.energy-menu .energy-menu-title { font-size: 1.15em; letter-spacing: -0.01em; }
+.energy-menu .energy-notice {
+    background-color: alpha(@warning_color, 0.14);
+    border: 1px solid alpha(@warning_color, 0.45);
+    border-radius: 6px;
+    padding: 6px 9px;
+}
+.energy-menu .energy-notice image { color: mix(@warning_color, @fg_color, 0.35); }
+.energy-menu .energy-card .energy-caption { text-transform: uppercase; }
+.energy-menu button.energy-circuit { min-height: 36px; padding: 6px 9px; }
+.energy-menu .energy-switcher { margin: 0 6px 3px 6px; }
+.energy-menu expander title { padding: 3px 6px; font-weight: 600; }
+.energy-menu separator { margin: 3px 0; }
