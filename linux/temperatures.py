@@ -35,8 +35,10 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         heading = Gtk.Label(label='Current recorded temperatures', xalign=0)
         heading.add_css_class('energy-heading')
         box.append(heading)
-        self.current = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        scroll = Gtk.ScrolledWindow(child=self.current, max_content_height=170,
+        self.current = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.current.add_css_class('boxed-list')
+        self.current.connect('row-activated', lambda _, row: self.choose(*row.sensor_key))
+        scroll = Gtk.ScrolledWindow(child=self.current, max_content_height=190,
                                     propagate_natural_height=True,
                                     hscrollbar_policy=Gtk.PolicyType.NEVER)
         box.append(scroll)
@@ -58,6 +60,12 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         controller = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
         controller.connect('scroll', self.scroll_history)
         self.chart.add_controller(controller)
+        hover = Gtk.EventControllerMotion()
+        hover.connect('motion', self.hover_chart)
+        self.chart.add_controller(hover)
+        click = Gtk.GestureClick()
+        click.connect('pressed', lambda g, n, x, y: self.hover_chart(None, x, y))
+        self.chart.add_controller(click)
         box.append(self.chart)
         look_back = Gtk.Label(label='Look back · scroll the chart or move the time slider', xalign=0)
         look_back.add_css_class('dim-label')
@@ -124,14 +132,29 @@ class TemperatureWindow(Gtk.ApplicationWindow):
             self.current.remove(self.current.get_first_child())
         for sensor in sensors:
             value = sensor.get('metrics', {}).get('temperature_f')
-            text = f'{value:.1f} °F' if isinstance(value, (int, float)) else 'Unknown'
-            row = Gtk.Button(label=f"{sensor['name']} · {text} · {sensor.get('room_name') or 'Unplaced'}" + (' · last recorded' if sensor.get('stale') else ''),
-                             halign=Gtk.Align.FILL)
-            row.get_child().set_halign(Gtk.Align.START)
-            band = None if sensor.get('stale') else temperature_band(value)
-            if band:
-                row.add_css_class('temperature-' + band)
-            row.connect('clicked', lambda _, source=sensor['source'], identity=sensor['sensor_id']: self.choose(source, identity))
+            stale = bool(sensor.get('stale'))
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(spacing=10, margin_top=6, margin_bottom=6, margin_start=8, margin_end=10)
+            band = None if stale else temperature_band(value)
+            swatch = Gtk.Box(width_request=4)
+            swatch.add_css_class('energy-swatch')
+            swatch.add_css_class('temperature-swatch-' + (band or 'none'))
+            names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+            title = Gtk.Label(label=sensor['name'], xalign=0, ellipsize=Pango.EllipsizeMode.END)
+            where = Gtk.Label(label=(sensor.get('room_name') or 'Unplaced') + (' · last recorded' if stale else ''),
+                              xalign=0, ellipsize=Pango.EllipsizeMode.END)
+            where.add_css_class('dim-label')
+            where.add_css_class('caption')
+            names.append(title)
+            names.append(where)
+            reading = Gtk.Label(label=f'{value:.1f} °F' if isinstance(value, (int, float)) else 'Unknown')
+            reading.add_css_class('energy-value')
+            if stale:
+                reading.add_css_class('temperature-stale-value')
+            for child in (swatch, names, reading):
+                box.append(child)
+            row.set_child(box)
+            row.sensor_key = (sensor['source'], sensor['sensor_id'])
             self.current.append(row)
         if not self.payload and not self.pending and time.monotonic() - self.last_fetch > 10:
             self.fetch()
@@ -212,6 +235,16 @@ class TemperatureWindow(Gtk.ApplicationWindow):
         self.readout.set_label(f"{series['name']} · {stamp:%b %d, %Y %H:%M %Z}\n{text} · {self.payload['seconds'] // 60}-minute observation mean" + (' · cached' if self.cached else ''))
         self.chart.queue_draw()
 
+    def hover_chart(self, _, x, y):
+        # Pointing at the chart moves the readout to the nearest recorded bucket (46 px label gutter, 12 px right margin).
+        if not self.payload or not self.cursor.get_sensitive():
+            return
+        count = len(self.payload['times'])
+        width = self.chart.get_width() - 66 - 12
+        if count < 2 or width <= 0:
+            return
+        self.cursor.set_value(min(count - 1, max(0, round((x - 66) * (count - 1) / width))))
+
     def scroll_history(self, _, dx, dy):
         self.cursor.set_value(self.cursor.get_value() + (-1 if dy > 0 else 1))
         return True
@@ -238,7 +271,7 @@ class TemperatureWindow(Gtk.ApplicationWindow):
             return
         low, high = min(known) - 1, max(known) + 1
         color = area.get_color()
-        left, right, top, bottom = 46, 10, 12, 10
+        left, right, top, bottom = 66, 12, 12, 10
         plot_w, plot_h = width - left - right, height - top - bottom
         if plot_w <= 0 or plot_h <= 0:
             return

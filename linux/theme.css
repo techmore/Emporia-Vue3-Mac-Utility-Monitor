@@ -106,3 +106,11 @@
 /* live indicator dot in the dropdown header: green when readings are recent, grey when cached */
 .energy-monitor .energy-dot { color: @success_color; }
 .energy-monitor .energy-dot.energy-offline { color: alpha(@fg_color, 0.4); }
+
+/* sensor list swatches (temperature window) */
+.energy-monitor .energy-swatch { border-radius: 2px; }
+.energy-monitor .temperature-swatch-cold { background: #3689e6; }
+.energy-monitor .temperature-swatch-comfortable { background: #f9c440; }
+.energy-monitor .temperature-swatch-warm { background: #ffa154; }
+.energy-monitor .temperature-swatch-hot { background: #ed5353; }
+.energy-monitor .temperature-swatch-none { background: alpha(@fg_color, 0.25); }
