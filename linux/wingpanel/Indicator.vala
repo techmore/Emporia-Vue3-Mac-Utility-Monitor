@@ -9,6 +9,8 @@ public class EnergyIndicator : Wingpanel.Indicator {
     private Gtk.Label status;
     private Gtk.Image live_dot;
     private bool compact = false;
+    private Gtk.Switch? compact_switch = null;
+    private bool syncing_switch = false;
     private Gtk.Box notice;
     private Gtk.Label notice_text;
     private Gtk.Image panel_icon;
@@ -103,6 +105,17 @@ public class EnergyIndicator : Wingpanel.Indicator {
         add_action ("Dashboard", {}, null, "go-home-symbolic");
         add_action ("Temperature history…", {"--temperatures"}, null, "document-properties-symbolic");
         var extra = new Gtk.Box (Gtk.Orientation.VERTICAL, 3);
+        // Visible, one-click density switch (also in the app's Preferences); the app picks the change up live.
+        var density_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) { margin_start = 6, margin_end = 6, margin_top = 3, margin_bottom = 3 };
+        density_row.append (new Gtk.Image.from_icon_name ("view-list-symbolic") { pixel_size = 16 });
+        density_row.append (new Gtk.Label ("Compact layout") { xalign = 0, hexpand = true });
+        compact_switch = new Gtk.Switch () { valign = Gtk.Align.CENTER, active = compact, tooltip_text = "Denser rows and a narrower dropdown" };
+        compact_switch.update_property (Gtk.AccessibleProperty.LABEL, "Compact layout", -1);
+        compact_switch.notify["active"].connect (() => {
+            if (!syncing_switch) write_density (compact_switch.active);
+        });
+        density_row.append (compact_switch);
+        extra.append (density_row);
         var more = new Gtk.Expander ("More…") { child = extra };
         menu.append (more);
         add_action ("Barn · First floor", {"--floor", "first"}, extra, "go-home-symbolic");
@@ -127,6 +140,30 @@ public class EnergyIndicator : Wingpanel.Indicator {
         else css.load_from_resource ("/org/techmore/energy/theme.css");
     }
 
+    private void write_density (bool on) {
+        var path = Path.build_filename (Environment.get_user_config_dir (), "energy-monitor", "ui.json");
+        var parser = new Json.Parser ();
+        var object = new Json.Object ();
+        try {
+            string text;
+            FileUtils.get_contents (path, out text);
+            parser.load_from_data (text);
+            object = parser.get_root ().get_object ();
+        } catch (Error e) { /* No file yet: start a fresh one. */ }
+        object.set_string_member ("density", on ? "compact" : "comfortable");
+        var root = new Json.Node (Json.NodeType.OBJECT);
+        root.set_object (object);
+        var generator = new Json.Generator ();
+        generator.root = root;
+        try {
+            DirUtils.create_with_parents (Path.get_dirname (path), 0700);
+            FileUtils.set_contents (path, generator.to_data (null));
+            FileUtils.chmod (path, 0600);
+        } catch (Error e) { warning ("Energy dropdown density: %s", e.message); return; }
+        previous = "";
+        update ();
+    }
+
     // Density is chosen in the app's Preferences (ui.json); the dropdown only follows it.
     private void refresh_density () {
         bool wanted = false;
@@ -139,6 +176,11 @@ public class EnergyIndicator : Wingpanel.Indicator {
             wanted = saved.has_member ("density") && saved.get_string_member ("density") == "compact";
         } catch (Error e) { wanted = false; }
         compact = wanted;
+        if (compact_switch != null && compact_switch.active != wanted) {
+            syncing_switch = true;
+            compact_switch.active = wanted;
+            syncing_switch = false;
+        }
         if (compact) menu.add_css_class ("energy-compact"); else menu.remove_css_class ("energy-compact");
     }
 
