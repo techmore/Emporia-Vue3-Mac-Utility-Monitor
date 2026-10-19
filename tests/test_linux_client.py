@@ -408,3 +408,11 @@ class ElementaryIntegrationTests(unittest.TestCase):
             self.assertIn(needle, install)
         meta = (root / 'linux/org.techmore.EnergyMonitor.metainfo.xml').read_text()
         self.assertIn('<id>org.techmore.EnergyMonitor</id>', meta)
+
+
+class WebThemeTableTests(unittest.TestCase):
+    def test_bare_tables_are_styled_but_heatmaps_keep_their_plate(self):
+        css = web_theme.build_css(True, '#3689e6')
+        self.assertIn('table:not([class]) td', css)
+        self.assertIn('table:not([class]) th', css)
+        self.assertNotIn('table:not([class]) .power-heatmap', css)
