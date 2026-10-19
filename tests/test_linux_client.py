@@ -266,3 +266,16 @@ class PanelLayoutTests(unittest.TestCase):
         self.assertIn('circuits_panel', (root / 'wingpanel/TemperatureView.vala').read_text())
         for name in ('energy-panel', 'energy-bus', 'energy-breaker', 'energy-handle'):
             self.assertIn(name, css)
+
+
+class SidebarFooterTests(unittest.TestCase):
+    def test_footer_shows_live_power_only_when_live(self):
+        self.assertEqual(core.sidebar_footer({'online': True, 'current_watts': 412.4, 'cost_per_hour': .0453}),
+                         ('412 W', 'Live now · $0.05/h', True))
+        self.assertEqual(core.sidebar_footer({'online': True, 'current_watts': 0})[0], '0 W')
+        for state in ({'online': False, 'current_watts': 412}, {'online': True, 'current_watts': None},
+                      {'online': True, 'current_watts': float('nan')}, {'online': True, 'current_watts': True}, {}):
+            headline, caption, live = core.sidebar_footer(state)
+            self.assertEqual((headline, live), ('Offline', False))
+        self.assertEqual(core.sidebar_footer({'last_reading': '2026-10-19 03:59:00'})[1], 'Last recorded 03:59')
+        self.assertEqual(core.sidebar_footer({})[1], 'No recorded reading')

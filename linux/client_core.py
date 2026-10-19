@@ -262,3 +262,14 @@ def index_at(x, left, plot_width, count):
     if count == 1:
         return 0
     return min(count - 1, max(0, round((x - left) * (count - 1) / plot_width)))
+
+
+def sidebar_footer(state):
+    """(headline, caption, live) for the sidebar's glanceable power readout; never shows stale power as live."""
+    watts = state.get("current_watts")
+    if state.get("online") is True and isinstance(watts, (int, float)) and not isinstance(watts, bool) and math.isfinite(watts):
+        cost = state.get("cost_per_hour")
+        caption = "Live now" + (" · $%.2f/h" % cost if isinstance(cost, (int, float)) and math.isfinite(cost) else "")
+        return "%.0f W" % watts, caption, True
+    last = state.get("last_reading")
+    return "Offline", ("Last recorded " + str(last)[-8:-3] if last else "No recorded reading"), False

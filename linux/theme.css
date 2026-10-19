@@ -162,3 +162,8 @@
 .energy-menu .energy-handle-warn { background: @warning_color; }
 .energy-menu .energy-handle-danger { background: @error_color; }
 .energy-menu .energy-handle-off { background: alpha(@fg_color, 0.28); }
+
+/* sidebar footer: live power at a glance */
+.energy-sidebar-footer .energy-footer-power { font-size: 1.25em; font-weight: 700; font-feature-settings: "tnum"; }
+.energy-sidebar-footer .energy-dot { color: @success_color; }
+.energy-sidebar-footer .energy-dot.energy-offline { color: alpha(@fg_color, 0.4); }
