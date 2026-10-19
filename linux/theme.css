@@ -41,8 +41,8 @@
     padding: 8px 10px;
 }
 .energy-monitor .energy-hero .energy-value { font-size: 2.2em; letter-spacing: -0.02em; }
-.energy-monitor .energy-hero { padding: 12px; }
-.energy-monitor .energy-hero-stale { background-color: alpha(@fg_color, 0.045); border-color: alpha(@fg_color, 0.14); border-style: dashed; }
+.energy-monitor .energy-hero { padding: 6px 0; background: none; border: none; }
+.energy-monitor .energy-hero-stale { background: none; }
 .energy-monitor .energy-hero-stale .energy-value { opacity: 0.55; }
 
 /* ---- circuit buttons ----------------------------------------------------------------------- */
@@ -132,3 +132,12 @@
 .energy-menu .energy-switcher { margin: 0 6px 3px 6px; }
 .energy-menu expander title { padding: 3px 6px; font-weight: 600; }
 .energy-menu separator { margin: 3px 0; }
+
+.energy-menu .energy-circuits row { padding: 0; min-height: 40px; }
+.energy-menu .energy-circuits row:hover { background: alpha(@fg_color, 0.06); }
+.energy-menu .energy-circuits row:focus-visible { outline: 2px solid @accent_color; outline-offset: -2px; }
+.energy-menu .energy-circuits row.energy-high, .energy-menu .energy-circuits row.energy-heat { box-shadow: inset 3px 0 @warning_color; }
+.energy-menu .energy-circuits row.energy-heat { box-shadow: inset 3px 0 @error_color; }
+.energy-menu .energy-circuits progressbar.energy-warn > trough > progress { background-color: @warning_color; }
+.energy-menu .energy-circuits progressbar.energy-danger > trough > progress { background-color: @error_color; }
+.energy-menu .energy-card { padding: 9px; }

@@ -168,3 +168,5 @@ class DropdownStyleTests(unittest.TestCase):
         # The live dot gets an accessible label and a visible text notice when readings are stale.
         self.assertIn('AccessibleProperty.LABEL, live ? "Collector live"', vala)
         self.assertIn('notice.visible = !live', vala)
+        self.assertIn('boxed-list', vala)
+        self.assertNotIn('row.activate ()', vala)  # would recurse through row-activated
