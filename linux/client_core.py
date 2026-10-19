@@ -283,3 +283,15 @@ def sidebar_footer(state):
         return "%.0f W" % watts, caption, True
     last = state.get("last_reading")
     return "Offline", ("Last recorded " + str(last)[-8:-3] if last else "No recorded reading"), False
+
+
+def series_stats(values):
+    """Peak, low, mean and coverage of the recorded buckets; gaps are excluded, never counted as zero."""
+    runs = value_runs(values)
+    recorded = [(i, v) for run in runs for i, v in run if v >= 0]
+    if not recorded:
+        return None
+    peak = max(recorded, key=lambda item: item[1])
+    low = min(recorded, key=lambda item: item[1])
+    return {"recorded": len(recorded), "buckets": len(values), "peak": peak[1], "peak_index": peak[0],
+            "low": low[1], "low_index": low[0], "mean": sum(v for _, v in recorded) / len(recorded)}

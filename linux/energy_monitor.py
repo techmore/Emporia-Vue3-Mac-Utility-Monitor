@@ -18,7 +18,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo, WebKit, Soup
 
 from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key, display_state, private_json,
                          read_json, validate_origin, validate_summary, validate_temperature_history,
-                         load_temperature_trend_cache, load_ui_state, OutageNotifier, sidebar_footer)
+                         load_temperature_trend_cache, load_ui_state, OutageNotifier, sidebar_footer, series_stats)
 
 from chart import Chart
 from native_auth import load_credentials, session_cookie
@@ -960,8 +960,17 @@ class EnergyMonitor(Gtk.Application):
         readings = selected.get("readings")
         if readings is not None:
             parts.append("%d readings · gaps are unrecorded periods" % readings)
-        totals.set_label(" · ".join(parts))
         series = selected.get("series", [])
+        stats = series_stats([item.get("total_kwh") for item in series])
+        stamp = lambda index: str(series[index].get("period", "")) if index < len(series) else ""
+        if stats:
+            parts_two = ["Peak %.2f kWh (%s)" % (stats["peak"], stamp(stats["peak_index"])),
+                         "Lowest %.2f (%s)" % (stats["low"], stamp(stats["low_index"])),
+                         "Average %.2f" % stats["mean"],
+                         "%d of %d buckets recorded" % (stats["recorded"], stats["buckets"])]
+            totals.set_label(" · ".join(parts) + "\n" + " · ".join(parts_two))
+        else:
+            totals.set_label(" · ".join(parts))
         chart.set_series([item.get("total_kwh") if isinstance(item.get("total_kwh"), (int, float))
                           and item.get("total_kwh") >= 0 else None for item in series],
                          [str(item.get("period", "")) for item in series])
