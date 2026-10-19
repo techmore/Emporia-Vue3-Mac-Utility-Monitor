@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keyboard Shortcuts window for the elementary OS client (Ctrl+? or the menu) listing every page and general shortcut.
 - Sidebar footer in the elementary OS client: live power (and cost per hour) at the foot of the source list with a live/offline dot; stale or unknown power shows "Offline" with the last recorded time, never the cached watts.
 - Wingpanel dropdown: circuits can be shown as the physical breaker panel (default) or as the busiest-first list, remembered per user. The panel puts odd slots on the left and even slots on the right with a centre bus labelled 1–2, 3–4 and so on top to bottom; each breaker shows its name, watts and pole/amp rating with a toggle handle on the bus side (accent when carrying load, amber/red when loaded, grey when idle or offline); a double-pole breaker spans two rows when the slot below it is empty; empty and unmonitored slots are dashed and inert.
 - Wingpanel dropdown keeps a single 520 px width in the Power and Temperatures views, so switching no longer resizes or shifts the popover.

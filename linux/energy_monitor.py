@@ -29,7 +29,25 @@ CONFIG = Path(GLib.get_user_config_dir()) / "energy-monitor/client.json"
 DATA = Path(GLib.get_user_data_dir()) / "energy-monitor"
 UI_STATE = CONFIG.with_name("ui.json")
 NARROW_WIDTH = 760  # below this the sidebar collapses by itself
-SWITCHER_PAGES = None  # filled lazily from NAVIGATION
+
+
+def shortcuts_xml(entries):
+    """GtkShortcutsWindow definition: every accelerator the app registers, grouped for the help window."""
+    from xml.sax.saxutils import escape
+    def group(title, rows):
+        body = "".join('<child><object class="GtkShortcutsShortcut"><property name="accelerator">%s</property>'
+                       '<property name="title">%s</property></object></child>' % (escape(a), escape(t)) for a, t in rows)
+        return ('<child><object class="GtkShortcutsGroup"><property name="title">%s</property>%s</object></child>'
+                % (escape(title), body))
+    pages = [("<Control>%d" % (i + 1), "Open " + label) for i, (label, _) in enumerate(entries[:9])]
+    return ('<interface><object class="GtkShortcutsWindow" id="shortcuts"><property name="modal">1</property>'
+            '<child><object class="GtkShortcutsSection"><property name="section-name">shortcuts</property>'
+            '<property name="max-height">14</property>' +
+            group("Pages", pages) +
+            group("General", [("<Control>k", "Go to page…"), ("F9", "Show or hide the sidebar"),
+                              ("<Control>r F5", "Refresh"), ("F1", "About Energy Monitor"),
+                              ("<Control>question", "Keyboard shortcuts"), ("<Control>q", "Quit")]) +
+            '</object></child></object></interface>')
 
 
 # (label, collector path, symbolic icon); path None opens the native temperature window.
@@ -98,6 +116,7 @@ class EnergyMonitor(Gtk.Application):
                                ("refresh", lambda *_: self.refresh()),
                                ("switcher", lambda *_: self.quick_switcher()),
                                ("about", lambda *_: self.about_dialog()),
+                               ("shortcuts", lambda *_: self.shortcuts_dialog()),
                                ("quit", lambda *_: self.quit())) + tuple(
                 (f"page{i + 1}", (lambda target: lambda *_: self.open_nav(target))(entry))
                 for i, entry in enumerate(self.nav_entries()[:9])):
@@ -105,7 +124,8 @@ class EnergyMonitor(Gtk.Application):
             action.connect("activate", callback)
             self.add_action(action)
         for action, keys in (("app.refresh", ["<Control>r", "F5"]), ("app.quit", ["<Control>q"]),
-                             ("app.switcher", ["<Control>k"]), ("app.about", ["F1"])) + tuple(
+                             ("app.switcher", ["<Control>k"]), ("app.about", ["F1"]),
+                             ("app.shortcuts", ["<Control>question", "<Control>slash"])) + tuple(
                 (f"app.page{i}", [f"<Control>{i}"]) for i in range(1, 10)):
             self.set_accels_for_action(action, keys)
         self.build_window()
@@ -202,7 +222,7 @@ class EnergyMonitor(Gtk.Application):
                          ("Barn · Attic", "barn-attic")),
                         (("Collector Settings", "settings"), ("Collector Connection…", "connection")),
                         (("Quick Switcher…", "switcher"), ("Refresh", "refresh")),
-                        (("About Energy Monitor", "about"), ("Quit", "quit"))):
+                        (("Keyboard Shortcuts", "shortcuts"), ("About Energy Monitor", "about"), ("Quit", "quit"))):
             part = Gio.Menu()
             for label, action in section:
                 part.append(label, "app." + action)
@@ -435,6 +455,11 @@ class EnergyMonitor(Gtk.Application):
         refilter()
         window.present()
         entry.grab_focus()
+
+    def shortcuts_dialog(self):
+        window = Gtk.Builder.new_from_string(shortcuts_xml(self.nav_entries()), -1).get_object("shortcuts")
+        window.set_transient_for(self.window)
+        window.present()
 
     def about_dialog(self):
         about = Gtk.AboutDialog(transient_for=self.window, modal=True, program_name="Energy Monitor",
