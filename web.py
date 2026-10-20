@@ -134,6 +134,15 @@ def invalidate_after_write(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    if request.scheme == "https":
+        # Only reached through a configured HTTPS proxy origin. Host-only: the parent
+        # domain serves other sites, so includeSubDomains would overreach.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    if request.path.startswith("/api/"):
+        # Private household data must not be kept by shared caches or the proxy.
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -4187,7 +4196,8 @@ def api_weather():
         api_weather._cache = {"ts": _time.time(), "data": result}
         return jsonify(result)
     except Exception as e:
-        return jsonify({"days": [], "current_temp": None, "error": str(e)})
+        app.logger.warning("Weather forecast unavailable: %s: %s", type(e).__name__, e)
+        return jsonify({"days": [], "current_temp": None, "error": "Weather forecast unavailable"})
 
 
 @app.route("/api/sync/readings")
@@ -4226,6 +4236,28 @@ def api_sync_readings():
 @app.route("/api/version")
 def api_version():
     return jsonify({"version": VERSION})
+
+
+@app.route("/api/health")
+def api_health():
+    """Liveness/readiness for process supervisors: the server answers and the DB opens.
+
+    Poller freshness is reported, not enforced, so a cloud outage never restarts the
+    dashboard; callers decide whether stale collection is an alert.
+    """
+    try:
+        conn = energy._connect()
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        app.logger.exception("Health check could not open the database")
+        return jsonify({"ok": False, "version": VERSION, "database": "unavailable"}), 503
+    status = _poller_status_snapshot()
+    return jsonify({"ok": True, "version": VERSION, "database": "ok",
+                    "poller": {"running": status["poller_running"],
+                               "heartbeat_age_secs": status["age_secs"]}})
 
 
 @app.route("/api/events")
@@ -4285,8 +4317,9 @@ def api_poller_reconnect():
         with open(energy.RECONNECT_FLAG_FILE, "w") as _f:
             _json.dump({"requested_at": __import__("datetime").datetime.now().isoformat()}, _f)
         return jsonify({"ok": True, "message": "Reconnect flag set — poller will re-authenticate on next cycle (up to 60s)"})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Could not write the poller reconnect flag")
+        return jsonify({"ok": False, "error": "Could not signal the poller; check the server log"}), 500
 
 
 @app.route("/api/summary")
@@ -5820,6 +5853,54 @@ def panel_photo_asset(name):
     return response
 
 
+def _server_threads() -> int:
+    """Worker threads; each open dashboard tab holds one for its /api/events stream."""
+    raw = os.environ.get("WEB_THREADS", "32").strip()
+    try:
+        threads = int(raw)
+    except ValueError:
+        raise ValueError("WEB_THREADS must be a whole number") from None
+    if not 4 <= threads <= 256:
+        raise ValueError("WEB_THREADS must be between 4 and 256")
+    return threads
+
+
+def serve(host: str, port: int) -> None:
+    """Serve with waitress, a production WSGI server; Werkzeug's server is dev-only.
+
+    ENERGY_DEV_SERVER=1 keeps the old Werkzeug server for local debugging.
+    """
+    if host != FLASK_HOST:
+        raise ValueError("The dashboard must stay bound to loopback")
+    threads = _server_threads()
+    if os.environ.get("ENERGY_DEV_SERVER") == "1":
+        app.logger.warning("Using the Werkzeug development server (ENERGY_DEV_SERVER=1)")
+        app.run(debug=False, host=host, port=port, threaded=True)
+        return
+    try:
+        from waitress import serve as waitress_serve
+    except ImportError:
+        # Keep the dashboard up after a code-only upgrade, but make the gap loud.
+        app.logger.error("waitress is not installed; falling back to the Werkzeug development "
+                         "server. Run: venv/bin/pip install -r requirements.lock")
+        app.run(debug=False, host=host, port=port, threaded=True)
+        return
+
+    app.logger.info("Serving with waitress on http://%s:%s (%s threads)", host, port, threads)
+    waitress_serve(
+        app,
+        host=host,
+        port=port,
+        threads=threads,
+        # Server-sent events are tiny; flush each chunk instead of buffering 18 KB.
+        send_bytes=1,
+        # A stuck client cannot hold a socket forever; SSE writes every 5 s.
+        channel_timeout=120,
+        connection_limit=threads * 4,
+        ident="",
+    )
+
+
 if __name__ == "__main__":
     app.logger.info("Energy Monitor — http://%s:%s", FLASK_HOST, FLASK_PORT)
     app.logger.info("Rate: $%.4f/kWh  Budget: $%.0f/mo", RATE, MONTHLY_BUDGET)
@@ -5836,4 +5917,4 @@ if __name__ == "__main__":
             app.logger.info("[startup] prewarmed dashboard cache")
         except Exception:
             app.logger.exception("[startup] dashboard prewarm failed")
-    app.run(debug=False, host=FLASK_HOST, port=FLASK_PORT)
+    serve(FLASK_HOST, FLASK_PORT)

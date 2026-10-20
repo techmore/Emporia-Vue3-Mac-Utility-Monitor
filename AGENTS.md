@@ -42,18 +42,20 @@ priorities live in `docs/AUDIT.md` and `docs/ROADMAP.md`.
 ### Python
 
 ```bash
-# Install dependencies into the existing virtualenv
-venv/bin/pip install -r requirements.txt
+# Install locked dependencies into the existing virtualenv
+venv/bin/pip install -r requirements.lock
 
-# Syntax-check both Python files (no test suite yet)
+# Syntax-check the main modules, then run the full unit suite
 venv/bin/python3 -m py_compile energy.py web.py
+venv/bin/python3 -m unittest discover -s tests
 
 # Run the poller (continuous, unbuffered output)
 PYTHONUNBUFFERED=1 venv/bin/python3 -u energy.py
 
-# Run the Flask dashboard
+# Run the dashboard (served by waitress, a production WSGI server)
 venv/bin/python3 web.py
-# → http://localhost:5051
+# → http://localhost:5051  ·  liveness: /api/health
+# ENERGY_DEV_SERVER=1 uses Werkzeug's development server for local debugging only
 
 # One-shot poll (useful for debugging without running continuous loop)
 venv/bin/python3 energy.py poll
@@ -116,7 +118,7 @@ venv/bin/ruff check energy.py web.py
 venv/bin/ruff check --fix energy.py web.py    # auto-fix safe issues
 ```
 
-No `pyproject.toml` or `ruff.toml` config file exists; Ruff runs with defaults.
+Ruff configuration lives in `pyproject.toml`.
 
 ---
 
@@ -134,6 +136,8 @@ All have sensible defaults; none are required to run locally with an existing `k
 | `MONTHLY_BUDGET`   | `150`       | Monthly cost budget in dollars (web.py only) |
 | `EMPORIA_EMAIL`    | —           | Only needed on first login (no `keys.json`)  |
 | `EMPORIA_PASSWORD` | —           | Only needed on first login (no `keys.json`)  |
+| `WEB_THREADS`      | `32`        | Dashboard worker threads (4–256); each open tab's live stream holds one |
+| `ENERGY_DEV_SERVER`| —           | `1` serves with Werkzeug's dev server instead of waitress (debugging only) |
 
 `RATE` in `web.py` is always derived from `energy.RATE_CENTS / 100` — never hardcode it
 separately in web.py.
@@ -222,7 +226,8 @@ separately in web.py.
 
 1. `energy.py` and `web.py` communicate **only through `energy.db`** (SQLite file).
 2. `RATE` in `web.py` is always `energy.RATE_CENTS / 100` — never a separate literal.
-3. `web.py` runs on **`127.0.0.1:5051`** only (not `0.0.0.0`).
+3. `web.py` runs on **`127.0.0.1:5051`** only (not `0.0.0.0`), served by waitress via `web.serve()`;
+   never use `app.run()` in a deployed service.
 4. The `instantaneous_watts` column was removed — do not re-add it.
 5. `ensure_table()` is the single source of truth for the schema.
 6. The poller must be launched with `-u` (unbuffered) or `PYTHONUNBUFFERED=1` so

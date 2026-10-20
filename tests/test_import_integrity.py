@@ -93,7 +93,8 @@ class ImportIntegrityTests(unittest.TestCase):
     def test_actual_startup_preserves_imported_energy_and_cost(self):
         energy.import_emporia_csv(str(self.upload(3)))
         before = self.state()['readings']
-        with patch.object(Flask, 'run'), patch.object(energy.requests, 'get', side_effect=RuntimeError('No external network in fixture')):
+        with patch.object(Flask, 'run'), patch('waitress.serve'), \
+                patch.object(energy.requests, 'get', side_effect=RuntimeError('No external network in fixture')):
             runpy.run_path(web.__file__, run_name='__main__')
         self.assertEqual(self.state()['readings'], before)
 
