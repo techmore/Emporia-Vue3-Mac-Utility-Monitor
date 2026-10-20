@@ -2,10 +2,11 @@
 """Elementary OS desktop client for the existing, independently running collector."""
 import json
 import os
-from pathlib import Path
+import subprocess
 import sys
-import time
 import threading
+import time
+from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 import gi
@@ -14,32 +15,49 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("WebKit", "6.0")
 gi.require_version("Soup", "3.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo, WebKit, Soup
-
-from client_core import (DEFAULT_ORIGIN, TEMPERATURE_TREND_CACHE_KEY, cache_key, display_state, private_json,
-                         read_json, validate_origin, validate_summary, validate_temperature_history,
-                         load_temperature_trend_cache, load_ui_state, OutageNotifier, sidebar_footer, series_stats)
-
-from chart import Chart
-from native_auth import load_credentials, session_cookie
-from web_theme import build_css as web_css
+from chart import Chart  # noqa: E402
+from client_core import (  # noqa: E402
+    DEFAULT_ORIGIN,
+    SERVICE_UNIT,
+    TEMPERATURE_TREND_CACHE_KEY,
+    OutageNotifier,
+    cache_key,
+    display_state,
+    load_temperature_trend_cache,
+    load_ui_state,
+    portal_accent,
+    private_json,
+    quit_stops_service,
+    read_json,
+    series_stats,
+    sidebar_footer,
+    validate_origin,
+    validate_summary,
+    validate_temperature_history,
+)
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango, Soup, WebKit  # noqa: E402
+from native_auth import load_credentials, session_cookie  # noqa: E402
+from web_theme import build_css as web_css  # noqa: E402
 
 STATE = Path(GLib.get_user_state_dir()) / "energy-monitor"
 CONFIG = Path(GLib.get_user_config_dir()) / "energy-monitor/client.json"
 DATA = Path(GLib.get_user_data_dir()) / "energy-monitor"
 UI_STATE = CONFIG.with_name("ui.json")
 NARROW_WIDTH = 760  # below this the sidebar collapses by itself
+# The desktop Settings portal: the same source elementary's own apps read the accent colour from.
+PORTAL_NAME, PORTAL_PATH, PORTAL_SETTINGS = ("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                                             "org.freedesktop.portal.Settings")
+PORTAL_TIMEOUT_MS = 1000  # a portal that is still starting must never hold up the window
 
 
 def shortcuts_xml(entries):
     """GtkShortcutsWindow definition: every accelerator the app registers, grouped for the help window."""
     from xml.sax.saxutils import escape
     def group(title, rows):
-        body = "".join('<child><object class="GtkShortcutsShortcut"><property name="accelerator">%s</property>'
-                       '<property name="title">%s</property></object></child>' % (escape(a), escape(t)) for a, t in rows)
-        return ('<child><object class="GtkShortcutsGroup"><property name="title">%s</property>%s</object></child>'
-                % (escape(title), body))
-    pages = [("<Control>%d" % (i + 1), "Open " + label) for i, (label, _) in enumerate(entries[:9])]
+        body = "".join(f'<child><object class="GtkShortcutsShortcut"><property name="accelerator">{escape(a)}</property>'
+                       f'<property name="title">{escape(t)}</property></object></child>' for a, t in rows)
+        return (f'<child><object class="GtkShortcutsGroup"><property name="title">{escape(title)}</property>{body}</object></child>')
+    pages = [(f"<Control>{i + 1}", "Open " + label) for i, (label, _) in enumerate(entries[:9])]
     return ('<interface><object class="GtkShortcutsWindow" id="shortcuts"><property name="modal">1</property>'
             '<child><object class="GtkShortcutsSection"><property name="section-name">shortcuts</property>'
             '<property name="max-height">14</property>' +
@@ -93,6 +111,8 @@ class EnergyMonitor(Gtk.Application):
         self.temperature_request = 0
         self.trend_record = None
         self.last_trend_attempt = 0
+        self.accent = None  # '#rrggbb' from the Settings portal; None keeps web_theme's Blueberry default
+        self.portal = None
         self.origin = DEFAULT_ORIGIN
         try:
             self.origin = validate_origin((read_json(CONFIG) or {}).get("origin", DEFAULT_ORIGIN))
@@ -136,7 +156,7 @@ class EnergyMonitor(Gtk.Application):
                                ("about", lambda *_: self.about_dialog()),
                                ("shortcuts", lambda *_: self.shortcuts_dialog()),
                                ("preferences", lambda *_: self.preferences_dialog()),
-                               ("quit", lambda *_: self.quit())) + tuple(
+                               ("quit", lambda *_: self.quit_app())) + tuple(
                 (f"page{i + 1}", (lambda target: lambda *_: self.open_nav(target))(entry))
                 for i, entry in enumerate(self.nav_entries()[:9])):
             action = Gio.SimpleAction.new(name, None)
@@ -151,10 +171,72 @@ class EnergyMonitor(Gtk.Application):
         self.connect("window-added", lambda app, window: self.apply_density(window))
         self.build_window()
         self.watch_ui_state()
+        self.watch_portal_accent()
         self.restore_cache()
         if not self.authenticate_device():
             self.web.load_uri(self.origin + self.pending_path)
         GLib.timeout_add_seconds(30, self.refresh)
+
+    def quit_app(self):
+        """Quit for good. Under the user service a plain exit is restarted after 10 s (Restart=always), so the
+        service instance stops its own unit instead; any other instance just quits."""
+        if quit_stops_service(os.environ.get("INVOCATION_ID"), self.service_invocation_id()):
+            try:
+                subprocess.run(["systemctl", "--user", "--no-block", "stop", SERVICE_UNIT], check=False, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        self.quit()
+
+    @staticmethod
+    def service_invocation_id():
+        try:
+            return subprocess.run(["systemctl", "--user", "show", "-p", "InvocationID", "--value", SERVICE_UNIT],
+                                  capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    def watch_portal_accent(self):
+        """Read the accent colour from the Settings portal (org.freedesktop.appearance accent-color) and follow
+        SettingChanged. Asynchronous with a short timeout: a portal that is not up yet costs nothing, the
+        dashboard keeps Blueberry until it answers, and it is re-read when the portal appears."""
+        Gio.DBusProxy.new_for_bus(Gio.BusType.SESSION, Gio.DBusProxyFlags.DO_NOT_LOAD_PROPERTIES, None,
+                                  PORTAL_NAME, PORTAL_PATH, PORTAL_SETTINGS, None, self.portal_ready, None)
+
+    def portal_ready(self, source, result, _):
+        try:
+            self.portal = Gio.DBusProxy.new_for_bus_finish(result)
+        except GLib.Error:
+            return
+        self.portal.connect("g-signal", self.portal_signal)
+        self.portal.connect("notify::g-name-owner",
+                            lambda proxy, *_: proxy.get_name_owner() and self.read_portal_accent())
+        self.read_portal_accent()
+
+    def read_portal_accent(self, method="ReadOne"):
+        self.portal.call(method, GLib.Variant("(ss)", ("org.freedesktop.appearance", "accent-color")),
+                         Gio.DBusCallFlags.NONE, PORTAL_TIMEOUT_MS, None, self.portal_answered, method)
+
+    def portal_answered(self, proxy, result, method):
+        try:
+            value = proxy.call_finish(result).unpack()[0]
+        except GLib.Error:
+            if method == "ReadOne":
+                self.read_portal_accent("Read")  # version 1 of the portal (its reply is wrapped twice)
+            return
+        self.set_accent(value)
+
+    def portal_signal(self, proxy, sender, signal, parameters):
+        if signal != "SettingChanged":
+            return
+        namespace, key, value = parameters.unpack()
+        if (namespace, key) == ("org.freedesktop.appearance", "accent-color"):
+            self.set_accent(value)
+
+    def set_accent(self, value):
+        accent = portal_accent(value)
+        if accent != self.accent:
+            self.accent = accent
+            GLib.idle_add(self.apply_web_theme)
 
     def load_theme(self):
         # One stylesheet built on the elementary named colours: light, dark and accent follow the system.
@@ -172,7 +254,6 @@ class EnergyMonitor(Gtk.Application):
             return False
         colour = self.window.get_color()
         dark = (0.299 * colour.red + 0.587 * colour.green + 0.114 * colour.blue) > 0.5
-        found, accent = self.window.get_style_context().lookup_color("accent_color")
         # Paint the theme's page colour before the first frame so pages never flash white in dark mode.
         background = Gdk.RGBA()
         background.parse("#2b2b2b" if dark else "#f5f5f5")
@@ -180,7 +261,7 @@ class EnergyMonitor(Gtk.Application):
         manager = self.web.get_user_content_manager()
         manager.remove_all_style_sheets()
         manager.add_style_sheet(WebKit.UserStyleSheet.new(
-            web_css(dark, accent if found else None, self.ui['density'], self.ui['dashboard_style']),
+            web_css(dark, self.accent, self.ui['density'], self.ui['dashboard_style']),
             WebKit.UserContentInjectedFrames.ALL_FRAMES,
             WebKit.UserStyleLevel.USER, None, None))
         return False
@@ -213,7 +294,7 @@ class EnergyMonitor(Gtk.Application):
         elif "--refresh" in args:
             self.refresh()
         elif "--quit" in args:
-            self.quit()
+            self.quit_app()
         elif "--history" in args:
             index = args.index("--history")
             if index + 1 >= len(args):
@@ -850,14 +931,14 @@ class EnergyMonitor(Gtk.Application):
         for old in list(self.temperature_callbacks):
             if old != ticket:
                 self.temperature_callbacks.pop(old)
-        script = """(async () => {
-          try {
-            const r=await fetch(%s,{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(10000)});
+        script = f"""(async () => {{
+          try {{
+            const r=await fetch({json.dumps(endpoint)},{{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(10000)}});
             if(!r.ok)throw new Error('Unavailable');
             const text=await r.text();if(text.length>4194304)throw new Error('Oversized');
-            window.webkit.messageHandlers.temperatures.postMessage(JSON.stringify({ticket:%s,data:JSON.parse(text)}));
-          } catch(_){window.webkit.messageHandlers.temperatures.postMessage(JSON.stringify({ticket:%s,error:true}));}
-        })(); null;""" % (json.dumps(endpoint), ticket, ticket)
+            window.webkit.messageHandlers.temperatures.postMessage(JSON.stringify({{ticket:{ticket},data:JSON.parse(text)}}));
+          }} catch(_){{window.webkit.messageHandlers.temperatures.postMessage(JSON.stringify({{ticket:{ticket},error:true}}));}}
+        }})(); null;"""
         self.web.evaluate_javascript(script, -1, None, self.origin, None, None, None)
 
     def receive_temperatures(self, manager, value):
@@ -902,7 +983,7 @@ class EnergyMonitor(Gtk.Application):
         period.set_valign(Gtk.Align.CENTER)
         header.pack_start(period)
         totals = Gtk.Label(xalign=0, wrap=True)
-        chart = Chart(fmt=lambda v: "%.2f kWh" % v, zero_based=True, content_width=620, content_height=240)
+        chart = Chart(fmt=lambda v: f"{v:.2f} kWh", zero_based=True, content_width=620, content_height=240)
         buttons = Gtk.Box(spacing=6, halign=Gtk.Align.END)
         refresh = Gtk.Button(label="Refresh")
         full = Gtk.Button(label="Open Full Circuit Page")
@@ -938,15 +1019,15 @@ class EnergyMonitor(Gtk.Application):
         if (current.scheme, current.netloc) != (trusted.scheme, trusted.netloc):
             return
         endpoint = "/api/circuit-history/" + quote(channel, safe="")
-        script = """(async () => {
-          try {
-            const r = await fetch(%s, {credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(8000)});
+        script = f"""(async () => {{
+          try {{
+            const r = await fetch({json.dumps(endpoint)}, {{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(8000)}});
             if (!r.ok) throw new Error('Unavailable');
             const text = await r.text();
             if (text.length > 4194304) throw new Error('Oversized history');
-            window.webkit.messageHandlers.history.postMessage(JSON.stringify({channel:%s,data:JSON.parse(text)}));
-          } catch (_) { window.webkit.messageHandlers.history.postMessage(JSON.stringify({channel:%s,error:true})); }
-        })(); null;""" % (json.dumps(endpoint), json.dumps(channel), json.dumps(channel))
+            window.webkit.messageHandlers.history.postMessage(JSON.stringify({{channel:{json.dumps(channel)},data:JSON.parse(text)}}));
+          }} catch (_) {{ window.webkit.messageHandlers.history.postMessage(JSON.stringify({{channel:{json.dumps(channel)},error:true}})); }}
+        }})(); null;"""
         self.web.evaluate_javascript(script, -1, None, self.origin, None, None, None)
 
     def receive_history(self, manager, value):
@@ -993,18 +1074,19 @@ class EnergyMonitor(Gtk.Application):
             parts.append("no trend yet")
         else:
             arrow = "↑" if change > 0 else ("↓" if change < 0 else "→")
-            parts.append("%s %+.1f%% vs previous period" % (arrow, change))
+            parts.append(f"{arrow} {change:+.1f}% vs previous period")
         readings = selected.get("readings")
         if readings is not None:
-            parts.append("%d readings · gaps are unrecorded periods" % readings)
+            parts.append(f"{readings} readings · gaps are unrecorded periods")
         series = selected.get("series", [])
         stats = series_stats([item.get("total_kwh") for item in series])
-        stamp = lambda index: str(series[index].get("period", "")) if index < len(series) else ""
+        def stamp(index):
+            return str(series[index].get("period", "")) if index < len(series) else ""
         if stats:
-            parts_two = ["Peak %.2f kWh (%s)" % (stats["peak"], stamp(stats["peak_index"])),
-                         "Lowest %.2f (%s)" % (stats["low"], stamp(stats["low_index"])),
-                         "Average %.2f" % stats["mean"],
-                         "%d of %d buckets recorded" % (stats["recorded"], stats["buckets"])]
+            parts_two = ["Peak {:.2f} kWh ({})".format(stats["peak"], stamp(stats["peak_index"])),
+                         "Lowest {:.2f} ({})".format(stats["low"], stamp(stats["low_index"])),
+                         "Average {:.2f}".format(stats["mean"]),
+                         "{} of {} buckets recorded".format(stats["recorded"], stats["buckets"])]
             totals.set_label(" · ".join(parts) + "\n" + " · ".join(parts_two))
         else:
             totals.set_label(" · ".join(parts))

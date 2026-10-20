@@ -31,7 +31,7 @@ public class HousePreview : Gtk.Box {
         title = new Gtk.Label ("House preview") { xalign = 0, ellipsize = Pango.EllipsizeMode.END };
         title.add_css_class ("dim-label");
         append (title);
-        floors = new Gtk.DropDown.from_strings ({});
+        floors = new Gtk.DropDown (new Gtk.StringList (null), null);
         floors.notify["selected"].connect (() => {
             if (floors.selected < floor_ids.length) level = floor_ids[floors.selected];
             positioned = false;

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Install a persistent SSH forward for an already configured Linux client."""
 import argparse
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 
 
 def render_unit(target, local_port, remote_port):

@@ -1,15 +1,18 @@
 """Native recorded-temperature browser; all observations come from the collector."""
-from datetime import datetime, timedelta, timezone
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from gi.repository import Gtk, Pango
-
 from chart import Chart
-
-from client_core import (temperature_history_cache_key, load_temperature_window_cache,
-                         private_json, temperature_band,
-                         validate_temperature_history)
+from client_core import (
+    load_temperature_window_cache,
+    private_json,
+    sensor_choices,
+    temperature_band,
+    temperature_history_cache_key,
+    validate_temperature_history,
+)
+from gi.repository import Gtk, Pango
 
 
 class TemperatureWindow(Gtk.ApplicationWindow):
@@ -152,8 +155,21 @@ class TemperatureWindow(Gtk.ApplicationWindow):
             row.set_child(box)
             row.sensor_key = (sensor['source'], sensor['sensor_id'])
             self.current.append(row)
+        if not self.payload:
+            self.offer_current_sensors(sensors)
         if not self.payload and not self.pending and time.monotonic() - self.last_fetch > 10:
             self.fetch()
+
+    def offer_current_sensors(self, sensors):
+        """Until recorded history arrives (or while offline), the picker lists the same sensors as the list above
+        instead of staying at "Loading sensors…"; install() keeps whichever one is chosen."""
+        choices = sensor_choices(sensors)
+        if not choices or [key for key, _ in choices] == self.ids:
+            return
+        self.ids = [key for key, _ in choices]
+        self.sensor.set_model(Gtk.StringList.new([name for _, name in choices]))
+        if self.requested in self.ids:
+            self.sensor.set_selected(self.ids.index(self.requested))
 
     def fetch(self):
         if self.closed:

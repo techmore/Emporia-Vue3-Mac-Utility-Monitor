@@ -31,9 +31,13 @@ the device password to the other server.
 
 The installer enables `energy-monitor-client.service` under the graphical user
 session, replacing the old desktop autostart entry. After reboot and desktop
-login, systemd starts the app and restarts it after a crash. The network may come
-up later: authentication and loading retry automatically. The independent server
-collector continues without the laptop. Check with:
+login, systemd starts the app (after the desktop portals, so GTK does not wait on
+them) and restarts it after a crash. The network may come up later: authentication
+and loading retry automatically. The independent server collector continues
+without the laptop. **Quit** (Ctrl+Q or the app menu) stops the service when the
+app is its service instance, so it stays quit until the next login or
+`systemctl --user start energy-monitor-client.service`; the panel indicator has no
+Quit entry, like elementary's own indicators. Check with:
 
 ```sh
 systemctl --user status energy-monitor-client.service

@@ -6,9 +6,9 @@ No real collector is contacted and no user profile is modified.
 import http.server
 import json
 import os
-from pathlib import Path
 import tempfile
 import threading
+from pathlib import Path
 
 
 class Fixture(http.server.BaseHTTPRequestHandler):

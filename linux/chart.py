@@ -8,16 +8,15 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gtk, Pango, PangoCairo
-
-from client_core import index_at, nice_ticks, value_runs
+from client_core import index_at, nice_ticks, value_runs  # noqa: E402
+from gi.repository import Gtk, Pango, PangoCairo  # noqa: E402
 
 PAD_TOP, PAD_RIGHT, PAD_BOTTOM, PAD_X_AXIS = 12, 12, 10, 18
 TAU = 6.283185307
 
 
 class Chart(Gtk.DrawingArea):
-    def __init__(self, fmt=lambda v: "%g" % v, zero_based=False, **kwargs):
+    def __init__(self, fmt=lambda v: f"{v:g}", zero_based=False, **kwargs):
         kwargs.setdefault("content_width", 600)
         kwargs.setdefault("content_height", 220)
         kwargs.setdefault("hexpand", True)
@@ -46,8 +45,8 @@ class Chart(Gtk.DrawingArea):
         self.stamps = list(stamps) if stamps is not None else [""] * len(self.values)
         self.hover = None
         recorded = [v for v in self.values if isinstance(v, (int, float))]
-        summary = "Chart of %d recorded points%s" % (len(recorded), "; lowest %s, highest %s" % (
-            self.fmt(min(recorded)), self.fmt(max(recorded))) if recorded else "")
+        extremes = f"; lowest {self.fmt(min(recorded))}, highest {self.fmt(max(recorded))}" if recorded else ""
+        summary = f"Chart of {len(recorded)} recorded points{extremes}"
         self.set_tooltip_text(summary)
         try:
             self.update_property([Gtk.AccessibleProperty.LABEL], [summary])

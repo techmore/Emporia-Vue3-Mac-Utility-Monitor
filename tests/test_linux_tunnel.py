@@ -1,7 +1,7 @@
 """SSH service safety and recovery policy without touching a real service."""
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('tunnel', Path(__file__).parents[1] / 'linux/install_tunnel.py')
 tunnel = importlib.util.module_from_spec(spec)

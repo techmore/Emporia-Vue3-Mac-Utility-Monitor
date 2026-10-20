@@ -1,10 +1,10 @@
 """Linux client cache invariants; no desktop, collector, credentials or live data required."""
 import ast
-import re
 import importlib.util
-from pathlib import Path
+import re
 import tempfile
 import unittest
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('linux_client_core', Path(__file__).parents[1] / 'linux/client_core.py')
 core = importlib.util.module_from_spec(spec)
@@ -281,8 +281,21 @@ class SidebarFooterTests(unittest.TestCase):
                       {'online': True, 'current_watts': float('nan')}, {'online': True, 'current_watts': True}, {}):
             headline, caption, live = core.sidebar_footer(state)
             self.assertEqual((headline, live), ('Offline', False))
+        # The collector sends ISO 8601 with microseconds; the old [-8:-3] slice showed "1.880" for this.
+        self.assertEqual(core.sidebar_footer({'last_reading': '2026-10-20T06:21:11.880900'})[1], 'Last recorded 06:21')
         self.assertEqual(core.sidebar_footer({'last_reading': '2026-10-19 03:59:00'})[1], 'Last recorded 03:59')
+        self.assertEqual(core.sidebar_footer({'last_reading': 'yesterday'})[1], 'No recorded reading')
+        self.assertEqual(core.sidebar_footer({'last_reading': None})[1], 'No recorded reading')
         self.assertEqual(core.sidebar_footer({})[1], 'No recorded reading')
+
+    def test_reading_clock_honours_offsets_and_rejects_garbage(self):
+        self.assertEqual(core.reading_clock('2026-10-20T06:21:11.880900'), '06:21')
+        self.assertEqual(core.reading_clock(' 2026-10-19 03:59:00 '), '03:59')
+        aware = core.reading_clock('2026-10-20T10:21:11+00:00')
+        self.assertRegex(aware, r'^\d\d:\d\d$')
+        self.assertEqual(aware, __import__('datetime').datetime.fromisoformat('2026-10-20T10:21:11+00:00').astimezone().strftime('%H:%M'))
+        for value in ('', '1.880', 'not a time', 12, None, '2026-13-45T99:99:99'):
+            self.assertEqual(core.reading_clock(value), '')
 
 
 class ShortcutsWindowTests(unittest.TestCase):
@@ -367,7 +380,7 @@ class InstallCompletenessTests(unittest.TestCase):
                     imported.update(alias.name for alias in node.names if alias.name in modules)
         self.assertTrue({'client_core', 'chart', 'web_theme', 'native_auth', 'temperatures'} <= imported)
         for module in imported:
-            self.assertIn('linux/%s.py' % module, install, module + ' is imported but never installed')
+            self.assertIn(f'linux/{module}.py', install, module + ' is imported but never installed')
         self.assertIn('linux/theme.css', install)
 
     def test_panel_install_failure_is_reported_not_fatal(self):
@@ -416,3 +429,103 @@ class WebThemeTableTests(unittest.TestCase):
         self.assertIn('table:not([class]) td', css)
         self.assertIn('table:not([class]) th', css)
         self.assertNotIn('table:not([class]) .power-heatmap', css)
+
+
+class QuitBehaviourTests(unittest.TestCase):
+    def test_only_the_service_instance_stops_the_unit(self):
+        unit = 'a1b2c3d4e5f60718293a4b5c6d7e8f90'
+        self.assertTrue(core.quit_stops_service(unit, unit + '\n'))
+        self.assertFalse(core.quit_stops_service(None, unit))          # launched from a terminal or the dock
+        self.assertFalse(core.quit_stops_service('', unit))
+        self.assertFalse(core.quit_stops_service('0000', unit))        # started by some other systemd unit
+        self.assertFalse(core.quit_stops_service(unit, ''))            # the service is not running at all
+        self.assertEqual(core.SERVICE_UNIT, 'energy-monitor-client.service')
+
+    def test_quit_is_wired_through_the_service_and_the_indicator_has_no_quit(self):
+        root = Path(__file__).parents[1] / 'linux'
+        app = (root / 'energy_monitor.py').read_text()
+        for needle in ('def quit_app', 'os.environ.get("INVOCATION_ID")', '"systemctl", "--user", "--no-block", "stop", SERVICE_UNIT',
+                       '("quit", lambda *_: self.quit_app())'):
+            self.assertIn(needle, app)
+        self.assertNotIn('("quit", lambda *_: self.quit())', app)
+        vala = (root / 'wingpanel/Indicator.vala').read_text()
+        self.assertNotIn('Quit', vala)
+        self.assertNotIn('--quit', vala)
+        self.assertIn('Restart=always', (root / 'energy-monitor-client.service').read_text())
+
+
+class ServiceUnitTests(unittest.TestCase):
+    def test_client_service_orders_after_the_desktop_portals(self):
+        unit = (Path(__file__).parents[1] / 'linux/energy-monitor-client.service').read_text()
+        keys = {}
+        for line in unit.splitlines():
+            if '=' in line and not line.startswith(('#', '[')):
+                key, value = line.split('=', 1)
+                keys[key] = value.split()
+        for portal in ('xdg-desktop-portal.service', 'xdg-desktop-portal-gtk.service'):
+            self.assertIn(portal, keys['After'])
+            self.assertIn(portal, keys['Wants'])
+        self.assertIn('graphical-session.target', keys['After'])
+        self.assertEqual(keys['PartOf'], ['graphical-session.target'])
+        self.assertEqual(keys['WantedBy'], ['graphical-session.target'])
+        self.assertEqual(keys['Restart'], ['always'])
+        self.assertEqual(keys['UMask'], ['0077'])
+
+
+class PortalAccentTests(unittest.TestCase):
+    def test_portal_triples_become_hex_and_no_preference_is_none(self):
+        self.assertEqual(core.portal_accent((0.211765, 0.537255, 0.901961)), core.BLUEBERRY)  # elementary's default
+        self.assertEqual(core.portal_accent([1, 0, 0]), '#ff0000')
+        self.assertEqual(core.portal_accent((0, 0, 0)), '#000000')
+        for value in ((-1.0, -1.0, -1.0), (0.5, 0.5), (2, 0, 0), ('a', 'b', 'c'), None, 7, (float('nan'), 0, 0), (True, 0, 0)):
+            self.assertIsNone(core.portal_accent(value), value)
+        self.assertEqual(web_theme.build_css(False, core.portal_accent((0.211765, 0.537255, 0.901961))),
+                         web_theme.build_css(False, None))  # the fallback and the portal's Blueberry agree
+
+    def test_app_reads_the_settings_portal_instead_of_the_deprecated_lookup(self):
+        app = (Path(__file__).parents[1] / 'linux/energy_monitor.py').read_text()
+        self.assertNotIn('lookup_color', app)
+        for needle in ('"org.freedesktop.portal.Settings"', '"org.freedesktop.appearance", "accent-color"', '"ReadOne"',
+                       '"SettingChanged"', 'PORTAL_TIMEOUT_MS = 1000', 'Gio.DBusProxy.new_for_bus(', 'web_css(dark, self.accent'):
+            self.assertIn(needle, app)
+
+
+class OfflineSensorPickerTests(unittest.TestCase):
+    def test_cached_sensor_list_feeds_the_picker(self):
+        sensors = [{'source': 'aqara_local', 'sensor_id': 'a', 'name': 'Attic'},
+                   {'source': 'aqara_local', 'sensor_id': 'a', 'name': 'Attic again'},   # duplicate key
+                   {'source': 'aqara_local', 'sensor_id': '', 'name': 'Nameless id'},
+                   {'source': None, 'sensor_id': 'b', 'name': 'No source'},
+                   'garbage', {'source': 'ecosense', 'sensor_id': 'r', 'name': 'Radon'}]
+        self.assertEqual(core.sensor_choices(sensors), [(('aqara_local', 'a'), 'Attic'), (('ecosense', 'r'), 'Radon')])
+        self.assertEqual(core.sensor_choices(None), [])
+        source = (Path(__file__).parents[1] / 'linux/temperatures.py').read_text()
+        self.assertIn('def offer_current_sensors', source)
+        self.assertIn('sensor_choices(sensors)', source)
+
+
+class UnnamedCircuitTests(unittest.TestCase):
+    def test_unnamed_circuits_read_as_dimmed_slots_in_both_views(self):
+        root = Path(__file__).parents[1] / 'linux/wingpanel'
+        labels = (root / 'Labels.vala').read_text()
+        self.assertIn('"Slot %d".printf (slot)', labels)
+        self.assertIn('has_prefix ("Circuit_")', labels)
+        vala = (root / 'Indicator.vala').read_text()
+        self.assertEqual(vala.count('EnergyLabels.circuit_title ('), 2)  # breaker_cell and the list row
+        self.assertIn('if (state != "monitored" || unnamed) { name_label.add_css_class (Granite.CssClass.DIM); }', vala)
+        self.assertIn('if (EnergyLabels.is_unnamed (string_member (circuit, "display_name", channel))) name_label.add_css_class (Granite.CssClass.DIM);', vala)
+        meson = (root / 'meson.build').read_text()
+        self.assertIn("'Labels.vala'", meson)
+        self.assertIn("test('labels'", meson)
+        self.assertIn('EnergyLabels.circuit_title ("Circuit_14", 17) == "Slot 17"', (root / 'test_labels.vala').read_text())
+
+
+class DropdownStatusTests(unittest.TestCase):
+    def test_offline_status_formats_the_stamp_with_a_relative_age(self):
+        vala = (Path(__file__).parents[1] / 'linux/wingpanel/Indicator.vala').read_text()
+        self.assertNotIn('stamp.substring (separator + 1, 5)', vala)
+        self.assertIn('EnergyLabels.reading_clock (stamp)', vala)
+        self.assertIn('"Last reading " + clock', vala)
+        self.assertIn('+ age_text;', vala)  # the age must be able to refresh the line when summary.json has not changed
+        self.assertIn('reading_clock ("2026-10-20T06:21:11.880900") == "06:21"',
+                      (Path(__file__).parents[1] / 'linux/wingpanel/test_labels.vala').read_text())
