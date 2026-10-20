@@ -26,12 +26,26 @@ cat > "$HOME/.local/share/applications/org.techmore.EnergyMonitor.desktop" <<DES
 [Desktop Entry]
 Type=Application
 Name=Energy Monitor
+GenericName=Home Energy Monitor
 Comment=Energy, circuits, costs and home sensors from your existing collector
+Keywords=energy;power;electricity;circuits;cost;temperature;emporia;
 Exec="$HOME/.local/bin/energy-monitor"
 Icon=org.techmore.EnergyMonitor
 Categories=Utility;Monitor;
+StartupNotify=true
 StartupWMClass=org.techmore.EnergyMonitor
+X-GNOME-UsesNotifications=true
+Actions=Temperatures;Settings;
+
+[Desktop Action Temperatures]
+Name=Temperatures
+Exec="$HOME/.local/bin/energy-monitor" --temperatures
+
+[Desktop Action Settings]
+Name=Collector Connection…
+Exec="$HOME/.local/bin/energy-monitor" --connection
 DESKTOP
+install -Dm644 "$repo/linux/org.techmore.EnergyMonitor.metainfo.xml" "$HOME/.local/share/metainfo/org.techmore.EnergyMonitor.metainfo.xml"
 mkdir -p "$HOME/.config/systemd/user"
 install -m644 "$repo/linux/energy-monitor-client.service" "$HOME/.config/systemd/user/"
 if [[ -f "$HOME/.config/autostart/energy-monitor.desktop" ]]; then
@@ -44,6 +58,11 @@ if pkg-config --exists wingpanel-9; then
   trap 'rm -rf "$build"' EXIT
   meson setup "$build" "$repo/linux/wingpanel" --buildtype=release
   ninja -C "$build"
-  sudo install -m644 "$build/libenergy-monitor.so" "$(pkg-config --variable=indicatorsdir wingpanel-9)/libenergy-monitor.so"
+  if sudo -n true 2>/dev/null || [[ -t 0 ]]; then
+    sudo install -m644 "$build/libenergy-monitor.so" "$(pkg-config --variable=indicatorsdir wingpanel-9)/libenergy-monitor.so" \
+      || echo "Panel library NOT installed (administrator rights were refused). The app itself is up to date; re-run this script from a terminal to update the panel." >&2
+  else
+    echo "Panel library NOT installed (no administrator rights without a terminal). The app itself is up to date; re-run this script from a terminal to update the panel." >&2
+  fi
 fi
 echo 'Energy Monitor installed. Launch energy-monitor, then choose Collector Connection if needed.'

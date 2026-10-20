@@ -50,7 +50,7 @@ public class HousePreview : Gtk.Box {
             canvas.queue_draw ();
         });
         views.append (spatial); views.append (flat); append (views);
-        canvas = new Gtk.DrawingArea () { content_width = 350, content_height = 420, hexpand = true };
+        canvas = new Gtk.DrawingArea () { content_width = 240, content_height = 420, hexpand = true };
         canvas.set_draw_func ((area, cr, width, height) => { draw_plan (cr, width, height); });
         canvas.tooltip_text = "Saved house geometry · select a sensor dot for recorded history";
         var click = new Gtk.GestureClick ();
