@@ -351,3 +351,68 @@ class SingleLineCompactTests(unittest.TestCase):
         self.assertIn('int ROW = compact ? 26 : 46;', vala)
         self.assertIn('compact ? Gtk.Orientation.HORIZONTAL : Gtk.Orientation.VERTICAL', vala)
         self.assertIn('!compact && live && circuit.has_member ("load_percent")', vala)
+
+
+class InstallCompletenessTests(unittest.TestCase):
+    def test_every_local_module_the_app_imports_is_installed(self):
+        root = Path(__file__).parents[1] / 'linux'
+        modules = {path.stem for path in root.glob('*.py')}
+        install = (root / 'install.sh').read_text()
+        imported = set()
+        for name in ('energy_monitor.py', 'temperatures.py', 'chart.py', 'native_auth.py', 'web_theme.py'):
+            for node in ast.walk(ast.parse((root / name).read_text())):
+                if isinstance(node, ast.ImportFrom) and node.module in modules:
+                    imported.add(node.module)
+                elif isinstance(node, ast.Import):
+                    imported.update(alias.name for alias in node.names if alias.name in modules)
+        self.assertTrue({'client_core', 'chart', 'web_theme', 'native_auth', 'temperatures'} <= imported)
+        for module in imported:
+            self.assertIn('linux/%s.py' % module, install, module + ' is imported but never installed')
+        self.assertIn('linux/theme.css', install)
+
+    def test_panel_install_failure_is_reported_not_fatal(self):
+        install = (Path(__file__).parents[1] / 'linux/install.sh').read_text()
+        self.assertIn('Panel library NOT installed', install)
+
+
+class DropdownMinimumWidthTests(unittest.TestCase):
+    def test_no_fixed_minimum_width_exceeds_the_compact_popover(self):
+        import re
+        for path in (Path(__file__).parents[1] / 'linux/wingpanel').glob('*.vala'):
+            for match in re.finditer(r'content_width\s*=\s*(\d+)', path.read_text()):
+                self.assertLessEqual(int(match.group(1)), 300, path.name + ' would force the 340 px popover wider')
+
+
+class DensityToggleTests(unittest.TestCase):
+    def test_dropdown_writes_density_and_app_watches_it(self):
+        root = Path(__file__).parents[1] / 'linux'
+        vala = (root / 'wingpanel/Indicator.vala').read_text()
+        self.assertIn('Compact layout', vala)
+        self.assertIn('set_string_member ("density"', vala)
+        self.assertIn('FileUtils.chmod (path, 0600)', vala)
+        self.assertIn('syncing_switch', vala)  # the switch following the file must not write it back
+        app = (root / 'energy_monitor.py').read_text()
+        self.assertIn('monitor_file', app)
+        self.assertIn('reload_ui_state', app)
+
+
+class ElementaryIntegrationTests(unittest.TestCase):
+    def test_client_follows_system_colour_scheme_and_ships_desktop_metadata(self):
+        root = Path(__file__).parents[1]
+        app = (root / 'linux/energy_monitor.py').read_text()
+        self.assertIn('org.gnome.desktop.interface', app)
+        self.assertIn('lookup("org.gnome.desktop.interface", True)', app)  # a missing schema would abort the process
+        install = (root / 'linux/install.sh').read_text()
+        for needle in ('StartupNotify=true', 'X-GNOME-UsesNotifications=true', 'Actions=Temperatures;Settings;',
+                       'org.techmore.EnergyMonitor.metainfo.xml'):
+            self.assertIn(needle, install)
+        meta = (root / 'linux/org.techmore.EnergyMonitor.metainfo.xml').read_text()
+        self.assertIn('<id>org.techmore.EnergyMonitor</id>', meta)
+
+
+class WebThemeTableTests(unittest.TestCase):
+    def test_bare_tables_are_styled_but_heatmaps_keep_their_plate(self):
+        css = web_theme.build_css(True, '#3689e6')
+        self.assertIn('table:not([class]) td', css)
+        self.assertIn('table:not([class]) th', css)
+        self.assertNotIn('table:not([class]) .power-heatmap', css)
