@@ -99,8 +99,25 @@ class EnergyMonitor(Gtk.Application):
         except (ValueError, OSError):
             pass
 
+    def follow_system_colour_scheme(self):
+        """elementary's Granite apps copy the system light/dark choice onto GTK; a plain GTK app does not,
+        so without this the client stays light on a dark desktop. The schema is looked up first because
+        Gio.Settings aborts the process when a schema is missing."""
+        source = Gio.SettingsSchemaSource.get_default()
+        if not source or not source.lookup("org.gnome.desktop.interface", True):
+            return
+        self.interface_settings = Gio.Settings.new("org.gnome.desktop.interface")
+        gtk_settings = Gtk.Settings.get_default()
+
+        def sync(*_):
+            gtk_settings.set_property("gtk-application-prefer-dark-theme",
+                                      self.interface_settings.get_string("color-scheme") == "prefer-dark")
+        self.interface_settings.connect("changed::color-scheme", sync)
+        sync()
+
     def do_startup(self):
         Gtk.Application.do_startup(self)
+        self.follow_system_colour_scheme()
         self.css = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), self.css,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -133,6 +150,7 @@ class EnergyMonitor(Gtk.Application):
             self.set_accels_for_action(action, keys)
         self.connect("window-added", lambda app, window: self.apply_density(window))
         self.build_window()
+        self.watch_ui_state()
         self.restore_cache()
         if not self.authenticate_device():
             self.web.load_uri(self.origin + self.pending_path)
@@ -461,6 +479,25 @@ class EnergyMonitor(Gtk.Application):
         refilter()
         window.present()
         entry.grab_focus()
+
+    def watch_ui_state(self):
+        """The panel dropdown can change density; pick that up live instead of waiting for a restart."""
+        try:
+            self.ui_monitor = Gio.File.new_for_path(str(UI_STATE)).monitor_file(Gio.FileMonitorFlags.NONE, None)
+            self.ui_monitor.connect("changed", lambda *_: GLib.timeout_add(150, self.reload_ui_state))
+        except GLib.Error:
+            self.ui_monitor = None
+
+    def reload_ui_state(self):
+        saved = load_ui_state(UI_STATE)
+        changed = [key for key in ("density", "dashboard_style") if saved[key] != self.ui[key]]
+        if changed:
+            for key in changed:
+                self.ui[key] = saved[key]
+            self.apply_density()
+            self.apply_web_theme()
+            self.web.reload()
+        return GLib.SOURCE_REMOVE
 
     def apply_density(self, window=None):
         """Compact mode is one CSS class on every window (theme.css) plus the web style sheet's compact rules."""

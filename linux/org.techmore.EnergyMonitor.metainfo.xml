@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<component type="desktop-application">
+  <id>org.techmore.EnergyMonitor</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Energy Monitor</name>
+  <summary>Home energy, circuits, costs and sensors from your own collector</summary>
+  <description>
+    <p>Energy Monitor shows live power, recorded usage, circuit history and home temperatures from a collector you run yourself. It adds a top-bar indicator and follows the system light or dark style and accent colour.</p>
+    <p>It never starts its own poller: it connects over HTTPS to your existing collector with a device credential you enroll once.</p>
+  </description>
+  <launchable type="desktop-id">org.techmore.EnergyMonitor.desktop</launchable>
+  <url type="homepage">https://github.com/techmore/Emporia-Vue3-Mac-Utility-Monitor</url>
+  <categories><category>Utility</category></categories>
+  <developer id="org.techmore"><name>techmore</name></developer>
+  <content_rating type="oars-1.1"/>
+  <provides><binary>energy-monitor</binary></provides>
+  <requires><display_length compare="ge">360</display_length></requires>
+  <releases><release version="2.3.65" date="2026-10-18"/></releases>
+</component>

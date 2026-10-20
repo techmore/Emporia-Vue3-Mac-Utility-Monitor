@@ -173,3 +173,20 @@ below 78°F, red from 78°F); grey rooms have no recent mapped temperature. Sens
 open recorded history. Stairs and service hatches use the same saved floor coordinates
 as Home 3D. The preview receives its layout through the existing authenticated HTTPS
 summary cache and needs no separate connection.
+
+
+## Preferences and the panel dropdown
+
+- **Preferences** (Ctrl+, or the app menu): *Density* — Comfortable or Compact (single-line circuits, tighter rows
+  and type, a 340 px dropdown instead of 440 px) — and *Dashboard style* — elementary OS (follows your theme and
+  accent) or the collector's original olive design. The dropdown's **More… → Compact layout** switch changes the same setting (the app follows it live). Choices apply immediately and are stored in
+  `~/.config/energy-monitor/ui.json`; delete that file to return to the defaults.
+- The dropdown's **Circuits** can be shown as the physical breaker panel (odd slots left, even right, a centre bus
+  labelled 1–2, 3–4 …; double-pole breakers span two rows) or as a busiest-first list; the choice is remembered
+  in `~/.config/energy-monitor/wingpanel.ini`. Stale readings are never shown as live: the hero is dimmed with a
+  notice, and the sidebar footer reads "Offline".
+- `linux/install.sh` copies the app, stylesheet and panel library. The panel library needs administrator rights;
+  if they are unavailable the script says so and the app is still updated. Re-run it from a terminal to update the
+  panel. Style changes alone (`theme.css`) take effect without a panel reinstall.
+- Desktop notifications fire when the collector has been unreachable for 90 s (never during start-up, at most one
+  per 30 minutes) and when it returns.
