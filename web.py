@@ -3115,6 +3115,17 @@ IMPORT_HTML = """
       <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CSV file(s)</label>
       <input type="file" id="csv-files" name="files" multiple accept=".csv"
              style="display:block; margin-bottom:1rem; font-size:0.9rem;">
+      <label for="import-monitor" style="display:block; margin-bottom:0.5rem; font-weight:600;">Monitor</label>
+      <select id="import-monitor" style="display:block; margin-bottom:0.35rem; font-size:0.9rem;">
+        <option value="">Detect from the file name</option>
+        {% for m in monitors %}
+        <option value="{{ m.device_gid }}">{{ m.label ~ ' · ' if m.label }}{{ m.device_gid }}</option>
+        {% endfor %}
+      </select>
+      <p style="margin-bottom:1rem; color:var(--text-light); font-size:0.8rem;">
+        The file name's device prefix must match a monitor this collector has seen.
+        If it can't be matched to exactly one monitor, nothing is imported until you choose one here.
+      </p>
       <button type="submit" class="btn-primary" id="import-btn">Import</button>
     </form>
     <div id="import-results" style="margin-top:1.25rem;"></div>
@@ -3161,6 +3172,8 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
   for (const file of files) {
     const fd = new FormData();
     fd.append('file', file);
+    const chosen = document.getElementById('import-monitor').value;
+    if (chosen) fd.append('device_gid', chosen);
     try {
       const r = await fetch('/api/import-csv', { method: 'POST', body: fd });
       const d = await r.json();
@@ -5745,7 +5758,8 @@ def api_save_panel_display():
 @app.route("/import")
 def import_page():
     com = _common()
-    return _render(IMPORT_HTML, active_page="settings", **com)
+    return _render(IMPORT_HTML, active_page="settings",
+                   monitors=energy.get_registered_monitors(), **com)
 
 
 @app.route("/api/import-csv", methods=["POST"])
@@ -5761,8 +5775,18 @@ def api_import_csv():
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         f.save(tmp.name)
         tmp_path = tmp.name
+    selected = (request.form.get("device_gid") or "").strip() or None
     try:
-        result = energy.import_emporia_csv(tmp_path, original_filename=f.filename)
+        if selected is not None and selected not in {m["device_gid"] for m in energy.get_registered_monitors()}:
+            return jsonify({"imported": 0, "skipped": 0, "errors": 1,
+                            "message": "Selected monitor is not one this collector has seen; nothing was imported."}), 400
+        result = energy.import_emporia_csv(tmp_path, device_gid=selected, original_filename=f.filename)
+    except energy.device_identity.DeviceIdentityError as exc:
+        # Unknown/ambiguous/contradicting identity: nothing was written. Offer the
+        # candidate monitors so the operator can select one explicitly.
+        return jsonify({"imported": 0, "skipped": 0, "errors": 1, "message": str(exc),
+                        "identity_status": exc.status, "prefix": exc.prefix,
+                        "candidates": list(exc.candidates)}), 400
     except (ValueError, csv.Error) as exc:
         return jsonify({"imported": 0, "skipped": 0, "errors": 1, "message": str(exc)}), 400
     except Exception:
