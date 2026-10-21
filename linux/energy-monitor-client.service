@@ -1,7 +1,10 @@
 [Unit]
 Description=Energy Monitor desktop client
 PartOf=graphical-session.target
-After=graphical-session.target
+# GTK asks the desktop portals for the colour scheme, accent and screen-inhibit at start; if they are not
+# up yet each request waits out a D-Bus timeout, which held the window back about 75 s at login.
+After=graphical-session.target xdg-desktop-portal.service xdg-desktop-portal-gtk.service
+Wants=xdg-desktop-portal.service xdg-desktop-portal-gtk.service
 StartLimitIntervalSec=0
 
 [Service]

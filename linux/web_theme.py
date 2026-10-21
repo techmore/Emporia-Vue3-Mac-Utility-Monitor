@@ -16,11 +16,11 @@ import re
 
 
 def _hex(rgb):
-    return '#%02x%02x%02x' % tuple(max(0, min(255, round(c))) for c in rgb)
+    return '#{:02x}{:02x}{:02x}'.format(*tuple(max(0, min(255, round(c))) for c in rgb))
 
 
 def _mix(a, b, t):
-    return tuple(x + (y - x) * t for x, y in zip(a, b))
+    return tuple(x + (y - x) * t for x, y in zip(a, b, strict=False))
 
 
 def _channel(v):
@@ -119,7 +119,7 @@ def build_css(dark, accent=None, density='comfortable', style='elementary'):
     ramp[700] = _mix(p['button'], BLACK, .16)
     # 500/400 are the collector's mid-weight *text* steps (no-data notes, small labels) on cards.
     ramp[600] = ramp[500] = ramp[400] = p['accent-text']
-    olive = ''.join('--olive-%d:%s;' % (k, _hex(v)) for k, v in ramp.items())
+    olive = ''.join(f'--olive-{k}:{_hex(v)};' for k, v in ramp.items())
 
     # Author styles beat user style sheets unless the declaration is !important.
     def important(block):
@@ -129,7 +129,7 @@ def build_css(dark, accent=None, density='comfortable', style='elementary'):
         return re.sub(r'\{([^{}]*)\}', lambda m: '{' + important(m.group(1)) + '}', css)
 
     mode = DARK if dark else LIGHT
-    surface = ''.join('--%s:%s;' % (k, _hex(mode[k])) for k in ('bg', 'surface', 'surface2', 'border', 'text', 'text-light'))
+    surface = ''.join(f'--{k}:{_hex(mode[k])};' for k in ('bg', 'surface', 'surface2', 'border', 'text', 'text-light'))
     if dark:
         stone = ('--stone-50:#2b2b2b;--stone-100:#333;--stone-200:#3d3d3d;--stone-300:#4a4a4a;--stone-400:#a0a0a0;'
                  '--stone-500:#b4b4b4;--stone-600:#c8c8c8;--stone-700:#dedede;--stone-800:#fafafa;--stone-900:#fff;')
@@ -140,9 +140,9 @@ def build_css(dark, accent=None, density='comfortable', style='elementary'):
                  '--stone-500:#616161;--stone-600:#5a5a5a;--stone-700:#444;--stone-800:#333;--stone-900:#1f1f1f;')
         scheme, card_shadow = 'light', '0 0 0 1px rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.10)'
         accent_var = p['button']
-    status = '--green:%s;--red:%s;--amber:%s;' % tuple(_hex(p[k]) for k in ('green', 'red', 'amber'))
+    status = '--green:{};--red:{};--amber:{};'.format(*tuple(_hex(p[k]) for k in ('green', 'red', 'amber')))
     bands = '--temperature-cold:#3689e6;--temperature-comfortable:#f9c440;--temperature-warm:#ffa154;--temperature-hot:#ed5353;'
-    root = olive + surface + stone + status + bands + '--accent:%s;--accent-fg:%s;--accent-text:%s' % (
+    root = olive + surface + stone + status + bands + '--accent:{};--accent-fg:{};--accent-text:{}'.format(
         _hex(accent_var), _hex(on_colour(accent_var) if dark else p['on-button']), _hex(p['accent-text']))
 
     if dark:
@@ -163,26 +163,25 @@ def build_css(dark, accent=None, density='comfortable', style='elementary'):
     else:
         # Light theme: the dark panels become light cards. The ramp is mirrored locally so every
         # var(--olive-N) inside them (backgrounds, borders, labels) lands on a legible light/dark pair.
-        tint = lambda t: _mix(accent, WHITE, t)
+        def tint(t):
+            return _mix(accent, WHITE, t)
         label = ensure(accent, [WHITE, tint(.84)], 4.8)
         panel = {950: WHITE, 900: tint(.94), 800: tint(.9), 700: tint(.78), 600: tint(.6), 500: label,
                  400: label, 300: _mix(label, BLACK, .25), 200: _mix(label, BLACK, .45), 100: (51, 51, 51), 50: (31, 31, 31)}
         plate = '#2b3138'
         green, orange, yellow, red = (ensure(c, [WHITE, tint(.93)], 3.0) for c in
                                       ((0x4a, 0xde, 0x80), (0xf9, 0x73, 0x16), (0xfa, 0xcc, 0x15), (0xef, 0x44, 0x44)))
-        extra = """
-[style*="color:var(--olive-300)"], [style*="color: var(--olive-300)"], [style*="color:var(--olive-200)"], [style*="color: var(--olive-200)"] { color: var(--accent-text); }
-.breaker-safe .breaker-bar, .fill-normal { background: %s; }
-.fill-moderate { background: %s; }
-.breaker-safe.warn .breaker-bar, .fill-caution { background: %s; }
-.breaker-safe.danger .breaker-bar, .fill-danger { background: %s; }
-.load-normal { color: %s; } .load-moderate { color: %s; } .load-caution { color: %s; } .load-danger { color: %s; }
-.breaker-peak-badge { color: %s; }
-.breaker-load-text, .breaker-watts, .breaker-name { color: var(--olive-100); }
-""" % (_hex(green), _hex(yellow), _hex(orange), _hex(red),
-       _hex(ensure(green, tint(.93), 4.5)), _hex(ensure(yellow, tint(.93), 4.5)),
-       _hex(ensure(orange, tint(.93), 4.5)), _hex(ensure(red, tint(.93), 4.5)), _hex(ensure(yellow, tint(.93), 4.5)))
-    panel_vars = ''.join('--olive-%d:%s;' % (k, _hex(v)) for k, v in panel.items())
+        extra = f"""
+[style*="color:var(--olive-300)"], [style*="color: var(--olive-300)"], [style*="color:var(--olive-200)"], [style*="color: var(--olive-200)"] {{ color: var(--accent-text); }}
+.breaker-safe .breaker-bar, .fill-normal {{ background: {_hex(green)}; }}
+.fill-moderate {{ background: {_hex(yellow)}; }}
+.breaker-safe.warn .breaker-bar, .fill-caution {{ background: {_hex(orange)}; }}
+.breaker-safe.danger .breaker-bar, .fill-danger {{ background: {_hex(red)}; }}
+.load-normal {{ color: {_hex(ensure(green, tint(.93), 4.5))}; }} .load-moderate {{ color: {_hex(ensure(yellow, tint(.93), 4.5))}; }} .load-caution {{ color: {_hex(ensure(orange, tint(.93), 4.5))}; }} .load-danger {{ color: {_hex(ensure(red, tint(.93), 4.5))}; }}
+.breaker-peak-badge {{ color: {_hex(ensure(yellow, tint(.93), 4.5))}; }}
+.breaker-load-text, .breaker-watts, .breaker-name {{ color: var(--olive-100); }}
+"""
+    panel_vars = ''.join(f'--olive-{k}:{_hex(v)};' for k, v in panel.items())
     panel_selectors = '.now-panel, .panel-wrap, .banner-chart'
     ring = _hex(accent_var if dark else p['button'])
     return f"""

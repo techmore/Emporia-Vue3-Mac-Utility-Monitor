@@ -1,11 +1,13 @@
 import shutil
+import sys
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 
-@unittest.skipUnless(shutil.which("swift"), "Swift runtime required")
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("swift"),
+                     "macOS Swift toolchain required (the app sources import Darwin, CryptoKit and SQLite3)")
 class MenuDiskCacheTests(unittest.TestCase):
     def test_real_swift_cache_persistence_isolation_and_private_permissions(self):
         source = (Path(__file__).resolve().parents[1]

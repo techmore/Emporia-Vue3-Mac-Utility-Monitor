@@ -1,10 +1,10 @@
 """Exchange an origin-bound device credential for a short-lived gateway cookie."""
+import json
 from http.cookies import SimpleCookie
 from pathlib import Path
-import json
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
-from urllib.error import HTTPError
 
 
 class NoRedirect(HTTPRedirectHandler):

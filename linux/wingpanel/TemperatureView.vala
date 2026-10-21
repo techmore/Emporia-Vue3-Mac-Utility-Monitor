@@ -102,7 +102,9 @@ public class TemperatureView : Gtk.Box {
         var heading = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
         sensor_heading = new Gtk.Label ("Sensors") { xalign = 0, hexpand = true };
         heading.append (sensor_heading);
-        sort_picker = new Gtk.DropDown.from_strings ({"By floor", "Warmest first", "Coolest first", "Changing fastest"}) {
+        var sort_names = new Gtk.StringList (null);
+        foreach (var name in new string[] {"By floor", "Warmest first", "Coolest first", "Changing fastest"}) sort_names.append (name);
+        sort_picker = new Gtk.DropDown (sort_names, null) {
             selected = prefs.sort, tooltip_text = "Order the sensor list"
         };
         sort_picker.add_css_class ("flat");
@@ -398,7 +400,7 @@ public class TemperatureView : Gtk.Box {
             if (edge <= low || edge >= high) continue;
             var layout = area.create_pango_layout ("%.0f°".printf (edge));
             layout.set_font_description (font);
-            int tw, th; layout.get_pixel_size (out tw, out th);
+            int tw; layout.get_pixel_size (out tw, null);
             cr.move_to (left + span * (edge - low) / (high - low) - tw / 2.0, bar_y + bar_h + 1);
             Pango.cairo_show_layout (cr, layout);
         }

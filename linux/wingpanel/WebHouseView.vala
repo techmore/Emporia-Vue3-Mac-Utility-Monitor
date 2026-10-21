@@ -1,5 +1,11 @@
 /* SPDX-License-Identifier: MIT */
 // Offline WebKit host for the exact scene builder used by Home 3D.
+
+// WebKit accepts NULL for world_name (the page's main world); the shipped VAPI declares it non-null, so the
+// handlers are registered through this binding rather than by passing null to a non-null parameter.
+[CCode (cname = "webkit_user_content_manager_register_script_message_handler", cheader_filename = "webkit/webkit.h")]
+extern bool register_main_world_message_handler (WebKit.UserContentManager manager, string name, string? world_name);
+
 public class WebHouseView : Gtk.Box {
     private WebKit.WebView web;
     private Json.Object? state;
@@ -12,11 +18,11 @@ public class WebHouseView : Gtk.Box {
         web = (WebKit.WebView) GLib.Object.new (typeof (WebKit.WebView), "network-session", new WebKit.NetworkSession.ephemeral ());
         web.hexpand = true; web.vexpand = true;
         var manager = web.get_user_content_manager ();
-        manager.register_script_message_handler ("history", null);
+        register_main_world_message_handler (manager, "history", null);
         manager.script_message_received["history"].connect ((value) => {
             if (value.is_string ()) room_selected (value.to_string ());
         });
-        manager.register_script_message_handler ("sensor", null);
+        register_main_world_message_handler (manager, "sensor", null);
         manager.script_message_received["sensor"].connect ((value) => {
             if (!value.is_string () || state == null || !state.has_member ("temperature_sensors")) return;
             try {
@@ -39,8 +45,10 @@ public class WebHouseView : Gtk.Box {
         });
         append (web);
         try {
-            var bytes = GLib.resources_lookup_data ("/org/techmore/energy/native-house.js", ResourceLookupFlags.NONE);
-            string script = ((string) bytes.get_data ()).replace ("</script", "<\\/script");
+            // Read the bundled script as text; Bytes.get_data () is const in C but not in the VAPI, so casting it warns.
+            var stream = new DataInputStream (GLib.resources_open_stream ("/org/techmore/energy/native-house.js", ResourceLookupFlags.NONE));
+            size_t length;
+            string script = (stream.read_upto ("", 0, out length) ?? "").replace ("</script", "<\\/script");
             string html = """<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:">
 <style>

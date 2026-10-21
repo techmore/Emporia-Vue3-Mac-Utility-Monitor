@@ -12,6 +12,10 @@ from urllib.parse import urlsplit
 TEMPERATURE_TREND_CACHE_KEY = "native-temperature-trends-24h-v1"
 
 DEFAULT_ORIGIN = "https://energy.stoverparc.org"
+# The user service that install.sh enables; it has Restart=always, so quitting means stopping it.
+SERVICE_UNIT = "energy-monitor-client.service"
+# elementary's default accent, used until the Settings portal answers or when it reports no preference.
+BLUEBERRY = "#3689e6"
 
 
 def validate_origin(value):
@@ -149,7 +153,7 @@ def validate_temperature_history(value):
     if not all(isinstance(stamp, str) for stamp in times):
         raise ValueError('History times must be ISO strings')
     stamps = [datetime.fromisoformat(stamp) for stamp in times]
-    if any(stamp.tzinfo is None for stamp in stamps) or any(a >= b for a, b in zip(stamps, stamps[1:])):
+    if any(stamp.tzinfo is None for stamp in stamps) or any(a >= b for a, b in zip(stamps, stamps[1:], strict=False)):
         raise ValueError('History times must be ordered and timezone aware')
     for key in ('start', 'end'):
         if datetime.fromisoformat(value[key]).tzinfo is None:
@@ -274,15 +278,76 @@ def index_at(x, left, plot_width, count):
     return min(count - 1, max(0, round((x - left) * (count - 1) / plot_width)))
 
 
+def reading_clock(stamp):
+    """HH:MM of a collector reading stamp; '' when there is none or it cannot be parsed.
+
+    The collector sends ISO 8601 with microseconds ("2026-10-20T06:21:11.880900"); older summaries used a space
+    separator. Naive stamps are the collector's local clock (docs/UTC_MIGRATION.md); an explicit offset is honoured.
+    """
+    if not isinstance(stamp, str) or not stamp.strip():
+        return ""
+    try:
+        parsed = datetime.fromisoformat(stamp.strip())
+    except ValueError:
+        return ""
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone()
+    return parsed.strftime("%H:%M")
+
+
 def sidebar_footer(state):
     """(headline, caption, live) for the sidebar's glanceable power readout; never shows stale power as live."""
     watts = state.get("current_watts")
     if state.get("online") is True and isinstance(watts, (int, float)) and not isinstance(watts, bool) and math.isfinite(watts):
         cost = state.get("cost_per_hour")
-        caption = "Live now" + (" · $%.2f/h" % cost if isinstance(cost, (int, float)) and math.isfinite(cost) else "")
-        return "%.0f W" % watts, caption, True
-    last = state.get("last_reading")
-    return "Offline", ("Last recorded " + str(last)[-8:-3] if last else "No recorded reading"), False
+        caption = "Live now" + (f" · ${cost:.2f}/h" if isinstance(cost, (int, float)) and math.isfinite(cost) else "")
+        return f"{watts:.0f} W", caption, True
+    clock = reading_clock(state.get("last_reading"))
+    return "Offline", ("Last recorded " + clock if clock else "No recorded reading"), False
+
+
+def quit_stops_service(invocation_id, unit_invocation_id):
+    """True when this process is the one systemd started for SERVICE_UNIT.
+
+    systemd sets INVOCATION_ID for every service it starts, so the value is compared with the unit's own
+    InvocationID: a copy launched from a terminal or by another service quits normally, while the service
+    instance (Restart=always, RestartSec=10) has to stop its unit or it is back ten seconds later.
+    """
+    invocation = (invocation_id or "").strip()
+    return bool(invocation) and invocation == (unit_invocation_id or "").strip()
+
+
+def portal_accent(value):
+    """'#rrggbb' from the Settings portal's org.freedesktop.appearance accent-color, or None for no preference.
+
+    The portal sends (r, g, b) as doubles in 0..1; anything outside that range means "no accent set".
+    """
+    try:
+        red, green, blue = value
+    except (TypeError, ValueError):
+        return None
+    channels = []
+    for channel in (red, green, blue):
+        if type(channel) not in (int, float) or not math.isfinite(channel) or not 0 <= channel <= 1:
+            return None
+        channels.append(round(channel * 255))
+    return "#{:02x}{:02x}{:02x}".format(*channels)
+
+
+def sensor_choices(sensors):
+    """[((source, sensor_id), name), ...] for the temperature picker from the summary's current sensors.
+
+    Lets the picker fill from the cached list while offline; malformed or duplicate rows are skipped.
+    """
+    choices, seen = [], set()
+    for sensor in sensors or []:
+        if not isinstance(sensor, dict):
+            continue
+        key, name = (sensor.get("source"), sensor.get("sensor_id")), sensor.get("name")
+        if all(isinstance(v, str) and v for v in (*key, name)) and key not in seen:
+            seen.add(key)
+            choices.append((key, name))
+    return choices
 
 
 def series_stats(values):

@@ -7,12 +7,12 @@ stored on the server. No SSH connection is used by the running desktop client.
 """
 import argparse
 import json
-import re
 import os
-from pathlib import Path
+import re
 import secrets
 import shlex
 import subprocess
+from pathlib import Path
 
 parser = argparse.ArgumentParser(description="Enroll this desktop once; SSH is used only for administrator setup.")
 parser.add_argument('--ssh-target', required=True)

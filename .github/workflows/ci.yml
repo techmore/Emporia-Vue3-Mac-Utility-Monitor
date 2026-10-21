@@ -28,14 +28,70 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y valac libgtk-4-dev libwebkitgtk-6.0-dev libjson-glib-dev xvfb xauth
-          valac --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala tests/wingpanel_house_preview.vala -o /tmp/test-house-preview
+          # --target-glib=2.80 matches linux/wingpanel/meson.build (GLib 2.80 type registration; no volatile warnings from GLib's headers).
+          valac --target-glib=2.80 --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala tests/wingpanel_house_preview.vala -o /tmp/test-house-preview
           xvfb-run -a /tmp/test-house-preview
-          valac --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/TemperatureView.vala linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala linux/wingpanel/test_temperature_view.vala -o /tmp/test-temperature-view
+          valac --target-glib=2.80 --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/TemperatureView.vala linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala linux/wingpanel/test_temperature_view.vala -o /tmp/test-temperature-view
           /tmp/test-temperature-view
+          valac --target-glib=2.80 --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/Labels.vala linux/wingpanel/TemperatureView.vala linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala linux/wingpanel/test_labels.vala -o /tmp/test-labels
+          /tmp/test-labels
           glib-compile-resources linux/wingpanel/theme.gresource.xml --sourcedir=linux --sourcedir=static/house-control --generate-source --target=/tmp/native-house-resources.c
-          valac --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/WebHouseView.vala tests/wingpanel_web_house.vala /tmp/native-house-resources.c -o /tmp/test-web-house
+          valac --target-glib=2.80 --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/WebHouseView.vala tests/wingpanel_web_house.vala /tmp/native-house-resources.c -o /tmp/test-web-house
           # GitHub runners cannot create WebKit's bubblewrap namespaces; the fixture page is local and offline.
           WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a /tmp/test-web-house tests/fixtures/native-house.json
+
+  wingpanel-indicator:
+    # The real indicator needs the Wingpanel and Granite development packages, which only elementary's image carries.
+    runs-on: ubuntu-latest
+    container: ghcr.io/elementary/docker:next-unstable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the Wingpanel indicator with meson and run its tests
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends meson valac libwingpanel-dev libgranite-7-dev libwebkitgtk-6.0-dev libjson-glib-dev libgtk-4-dev
+          meson setup build linux/wingpanel --werror
+          ninja -C build
+          meson test -C build --print-errorlogs
+
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Lint the elementary client and its tests
+        run: |
+          python3 -m pip install ruff==0.17.1
+          ruff check linux/ tests/test_linux_client.py tests/test_linux_native_auth.py tests/test_linux_tunnel.py
+
+  linux-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install GTK 4, WebKitGTK and the desktop validators
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 gir1.2-soup-3.0 xvfb xauth desktop-file-utils appstream
+      - name: Run the GTK client against its offline loopback fixture
+        env:
+          # GitHub runners cannot create WebKit's bubblewrap namespaces; the fixture is local and offline.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a python3 linux/smoke_test.py
+      - name: Validate the launcher the installer writes and the AppStream metainfo
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          script = Path('linux/install.sh').read_text()
+          body = re.search(r"<<DESKTOP\n(.*?)\nDESKTOP\n", script, re.DOTALL).group(1)
+          target = Path(os.environ['RUNNER_TEMP']) / 'org.techmore.EnergyMonitor.desktop'
+          target.write_text(body.replace('$HOME', os.environ['HOME']) + '\n')
+          PY
+          desktop-file-validate "$RUNNER_TEMP/org.techmore.EnergyMonitor.desktop"
+          appstreamcli validate linux/org.techmore.EnergyMonitor.metainfo.xml
 
   linux-service:
     runs-on: ubuntu-latest
@@ -77,6 +133,13 @@ jobs:
             --data "$RUNNER_TEMP/kasa-service-verification/data" \
             --environment "$RUNNER_TEMP/kasa-service-verification/kasa.env"
           systemd-analyze verify "$RUNNER_TEMP/energy-system-plan/"*.service
+      - name: Verify the elementary client's user service
+        run: |
+          # verify checks that ExecStart exists; stand in for the launcher install.sh writes to ~/.local/bin.
+          mkdir -p "$HOME/.local/bin"
+          printf '#!/usr/bin/env bash\nexit 0\n' > "$HOME/.local/bin/energy-monitor"
+          chmod +x "$HOME/.local/bin/energy-monitor"
+          systemd-analyze --user verify linux/energy-monitor-client.service
 
   swift-typecheck:
     runs-on: macos-latest
@@ -86,6 +149,43 @@ jobs:
 
       - name: Type-check the Mac app sources
         run: xcrun swiftc -typecheck -sdk "$(xcrun --show-sdk-path)" EnergyMonitorApp/Sources/*.swift
+
+  python-linux:
+    # The production collector runs on Linux (Incus); the Python suite and the Flask smoke test must pass there too.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: |
+          python3 -m venv venv
+          venv/bin/python3 -m pip install -r requirements.lock
+
+      - name: Check release metadata
+        run: venv/bin/python3 scripts/check_release.py
+
+      - name: Run unit tests
+        run: venv/bin/python3 -m unittest discover -s tests -v
+
+      - name: Smoke test Flask routes
+        run: |
+          venv/bin/python3 - <<'PY'
+          import web
+          client = web.app.test_client()
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/home-3d', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara']:
+              response = client.get(path, follow_redirects=True)
+              assert response.status_code == 200, f"{path}: {response.status_code}"
+          assert client.get('/api/menu-summary').status_code == 200
+          assert client.get('/api/climate/replay?demo=1').status_code == 200
+          assert client.get('/api/house-control/config').status_code == 200
+          assert client.get('/api/house-control/state').status_code == 200
+          PY
 
   test:
     runs-on: macos-latest

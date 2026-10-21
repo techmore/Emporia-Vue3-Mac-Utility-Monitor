@@ -9,7 +9,8 @@ import unittest
 from pathlib import Path
 
 
-@unittest.skipUnless(shutil.which("swift"), "Swift runtime required")
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("swift"),
+                     "macOS Swift toolchain required (the app sources import Darwin, CryptoKit and SQLite3)")
 class NativeSyncRunnerTests(unittest.TestCase):
     def test_stop_and_timeout_reap_downloader_ignoring_termination(self):
         source = (Path(__file__).resolve().parents[1]

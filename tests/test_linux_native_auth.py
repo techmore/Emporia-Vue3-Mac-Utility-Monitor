@@ -1,9 +1,9 @@
 import importlib.util
 import json
-from email.message import Message
-from pathlib import Path
 import tempfile
 import unittest
+from email.message import Message
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 spec = importlib.util.spec_from_file_location('native_auth', Path(__file__).parents[1]/'linux/native_auth.py')
