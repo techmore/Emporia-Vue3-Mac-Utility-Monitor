@@ -2,3 +2,4 @@ pyemvue>=0.18.0
 flask>=2.0.0
 Pillow>=13.0.0
 python-kasa==0.11.0.1
+waitress>=3.0.2

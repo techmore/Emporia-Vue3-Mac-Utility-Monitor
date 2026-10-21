@@ -134,6 +134,15 @@ def invalidate_after_write(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    if request.scheme == "https":
+        # Only reached through a configured HTTPS proxy origin. Host-only: the parent
+        # domain serves other sites, so includeSubDomains would overreach.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    if request.path.startswith("/api/"):
+        # Private household data must not be kept by shared caches or the proxy.
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -1121,7 +1130,7 @@ def _status(last_ts: str):
         return "dead", "No data", 999
     try:
         dt = datetime.fromisoformat(last_ts[:19])
-        h  = (datetime.now() - dt).total_seconds() / 3600
+        h  = (energy.reporting_now() - dt).total_seconds() / 3600
         if h < 0.1:  return "live",  f"Live · {int(h*60)}m ago",  h
         if h < 1:    return "live",  f"Live · {int(h*60)}m ago",  h
         if h < 6:    return "stale", f"Stale · {h:.1f}h ago",     h
@@ -1136,7 +1145,7 @@ def _poller_status_snapshot() -> dict:
     age_secs = None
     if last_ts:
         try:
-            age_secs = int((datetime.now() - datetime.fromisoformat(last_ts[:19])).total_seconds())
+            age_secs = int((energy.reporting_now() - datetime.fromisoformat(last_ts[:19])).total_seconds())
         except Exception:
             pass
     status["age_secs"] = age_secs
@@ -3115,6 +3124,17 @@ IMPORT_HTML = """
       <label style="display:block; margin-bottom:0.5rem; font-weight:600;">CSV file(s)</label>
       <input type="file" id="csv-files" name="files" multiple accept=".csv"
              style="display:block; margin-bottom:1rem; font-size:0.9rem;">
+      <label for="import-monitor" style="display:block; margin-bottom:0.5rem; font-weight:600;">Monitor</label>
+      <select id="import-monitor" style="display:block; margin-bottom:0.35rem; font-size:0.9rem;">
+        <option value="">Detect from the file name</option>
+        {% for m in monitors %}
+        <option value="{{ m.device_gid }}">{{ m.label ~ ' · ' if m.label }}{{ m.device_gid }}</option>
+        {% endfor %}
+      </select>
+      <p style="margin-bottom:1rem; color:var(--text-light); font-size:0.8rem;">
+        The file name's device prefix must match a monitor this collector has seen.
+        If it can't be matched to exactly one monitor, nothing is imported until you choose one here.
+      </p>
       <button type="submit" class="btn-primary" id="import-btn">Import</button>
     </form>
     <div id="import-results" style="margin-top:1.25rem;"></div>
@@ -3161,6 +3181,8 @@ document.getElementById('import-form').addEventListener('submit', async (e) => {
   for (const file of files) {
     const fd = new FormData();
     fd.append('file', file);
+    const chosen = document.getElementById('import-monitor').value;
+    if (chosen) fd.append('device_gid', chosen);
     try {
       const r = await fetch('/api/import-csv', { method: 'POST', body: fd });
       const d = await r.json();
@@ -3234,7 +3256,7 @@ def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
         return False
     try:
         stamp = datetime.fromisoformat(reading["timestamp"].replace('Z', '+00:00'))
-        reference = datetime.now(timezone.utc) if stamp.tzinfo else datetime.now()
+        reference = datetime.now(timezone.utc) if stamp.tzinfo else energy.reporting_now()
         age = (reference - stamp).total_seconds()
         return -60 <= age < max_age_secs
     except Exception:
@@ -4000,7 +4022,7 @@ def circuit_detail(circuit_name, period="day"):
     conn = energy._connect()
     try:
         conn.execute("BEGIN")
-        now = datetime.now()
+        now = energy.reporting_now()
 
         def circuit_kwh(offset_days):
             end = now - timedelta(days=offset_days)
@@ -4187,7 +4209,8 @@ def api_weather():
         api_weather._cache = {"ts": _time.time(), "data": result}
         return jsonify(result)
     except Exception as e:
-        return jsonify({"days": [], "current_temp": None, "error": str(e)})
+        app.logger.warning("Weather forecast unavailable: %s: %s", type(e).__name__, e)
+        return jsonify({"days": [], "current_temp": None, "error": "Weather forecast unavailable"})
 
 
 @app.route("/api/sync/readings")
@@ -4226,6 +4249,28 @@ def api_sync_readings():
 @app.route("/api/version")
 def api_version():
     return jsonify({"version": VERSION})
+
+
+@app.route("/api/health")
+def api_health():
+    """Liveness/readiness for process supervisors: the server answers and the DB opens.
+
+    Poller freshness is reported, not enforced, so a cloud outage never restarts the
+    dashboard; callers decide whether stale collection is an alert.
+    """
+    try:
+        conn = energy._connect()
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        app.logger.exception("Health check could not open the database")
+        return jsonify({"ok": False, "version": VERSION, "database": "unavailable"}), 503
+    status = _poller_status_snapshot()
+    return jsonify({"ok": True, "version": VERSION, "database": "ok",
+                    "poller": {"running": status["poller_running"],
+                               "heartbeat_age_secs": status["age_secs"]}})
 
 
 @app.route("/api/events")
@@ -4285,8 +4330,9 @@ def api_poller_reconnect():
         with open(energy.RECONNECT_FLAG_FILE, "w") as _f:
             _json.dump({"requested_at": __import__("datetime").datetime.now().isoformat()}, _f)
         return jsonify({"ok": True, "message": "Reconnect flag set — poller will re-authenticate on next cycle (up to 60s)"})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception:
+        app.logger.exception("Could not write the poller reconnect flag")
+        return jsonify({"ok": False, "error": "Could not signal the poller; check the server log"}), 500
 
 
 @app.route("/api/summary")
@@ -5745,7 +5791,8 @@ def api_save_panel_display():
 @app.route("/import")
 def import_page():
     com = _common()
-    return _render(IMPORT_HTML, active_page="settings", **com)
+    return _render(IMPORT_HTML, active_page="settings",
+                   monitors=energy.get_registered_monitors(), **com)
 
 
 @app.route("/api/import-csv", methods=["POST"])
@@ -5761,8 +5808,18 @@ def api_import_csv():
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         f.save(tmp.name)
         tmp_path = tmp.name
+    selected = (request.form.get("device_gid") or "").strip() or None
     try:
-        result = energy.import_emporia_csv(tmp_path, original_filename=f.filename)
+        if selected is not None and selected not in {m["device_gid"] for m in energy.get_registered_monitors()}:
+            return jsonify({"imported": 0, "skipped": 0, "errors": 1,
+                            "message": "Selected monitor is not one this collector has seen; nothing was imported."}), 400
+        result = energy.import_emporia_csv(tmp_path, device_gid=selected, original_filename=f.filename)
+    except energy.device_identity.DeviceIdentityError as exc:
+        # Unknown/ambiguous/contradicting identity: nothing was written. Offer the
+        # candidate monitors so the operator can select one explicitly.
+        return jsonify({"imported": 0, "skipped": 0, "errors": 1, "message": str(exc),
+                        "identity_status": exc.status, "prefix": exc.prefix,
+                        "candidates": list(exc.candidates)}), 400
     except (ValueError, csv.Error) as exc:
         return jsonify({"imported": 0, "skipped": 0, "errors": 1, "message": str(exc)}), 400
     except Exception:
@@ -5820,6 +5877,54 @@ def panel_photo_asset(name):
     return response
 
 
+def _server_threads() -> int:
+    """Worker threads; each open dashboard tab holds one for its /api/events stream."""
+    raw = os.environ.get("WEB_THREADS", "32").strip()
+    try:
+        threads = int(raw)
+    except ValueError:
+        raise ValueError("WEB_THREADS must be a whole number") from None
+    if not 4 <= threads <= 256:
+        raise ValueError("WEB_THREADS must be between 4 and 256")
+    return threads
+
+
+def serve(host: str, port: int) -> None:
+    """Serve with waitress, a production WSGI server; Werkzeug's server is dev-only.
+
+    ENERGY_DEV_SERVER=1 keeps the old Werkzeug server for local debugging.
+    """
+    if host != FLASK_HOST:
+        raise ValueError("The dashboard must stay bound to loopback")
+    threads = _server_threads()
+    if os.environ.get("ENERGY_DEV_SERVER") == "1":
+        app.logger.warning("Using the Werkzeug development server (ENERGY_DEV_SERVER=1)")
+        app.run(debug=False, host=host, port=port, threaded=True)
+        return
+    try:
+        from waitress import serve as waitress_serve
+    except ImportError:
+        # Keep the dashboard up after a code-only upgrade, but make the gap loud.
+        app.logger.error("waitress is not installed; falling back to the Werkzeug development "
+                         "server. Run: venv/bin/pip install -r requirements.lock")
+        app.run(debug=False, host=host, port=port, threaded=True)
+        return
+
+    app.logger.info("Serving with waitress on http://%s:%s (%s threads)", host, port, threads)
+    waitress_serve(
+        app,
+        host=host,
+        port=port,
+        threads=threads,
+        # Server-sent events are tiny; flush each chunk instead of buffering 18 KB.
+        send_bytes=1,
+        # A stuck client cannot hold a socket forever; SSE writes every 5 s.
+        channel_timeout=120,
+        connection_limit=threads * 4,
+        ident="",
+    )
+
+
 if __name__ == "__main__":
     app.logger.info("Energy Monitor — http://%s:%s", FLASK_HOST, FLASK_PORT)
     app.logger.info("Rate: $%.4f/kWh  Budget: $%.0f/mo", RATE, MONTHLY_BUDGET)
@@ -5836,4 +5941,4 @@ if __name__ == "__main__":
             app.logger.info("[startup] prewarmed dashboard cache")
         except Exception:
             app.logger.exception("[startup] dashboard prewarm failed")
-    app.run(debug=False, host=FLASK_HOST, port=FLASK_PORT)
+    serve(FLASK_HOST, FLASK_PORT)

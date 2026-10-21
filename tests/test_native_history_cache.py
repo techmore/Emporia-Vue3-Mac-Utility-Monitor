@@ -1,4 +1,5 @@
 import shutil
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -8,7 +9,8 @@ from unittest.mock import patch
 import energy
 
 
-@unittest.skipUnless(shutil.which("swift"), "Swift runtime required")
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("swift"),
+                     "macOS Swift toolchain required (the app sources import Darwin, CryptoKit and SQLite3)")
 class NativeHistoryCacheTests(unittest.TestCase):
     def test_swift_reads_downloaded_history_with_source_and_device_isolation(self):
         source = (Path(__file__).resolve().parents[1]

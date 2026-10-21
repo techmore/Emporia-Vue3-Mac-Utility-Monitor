@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from flask import Flask
 
+import device_identity
 import energy
 import web
 
@@ -23,9 +24,15 @@ class ImportIntegrityTests(unittest.TestCase):
         database.start()
         self.addCleanup(database.stop)
         energy.ensure_table()
+        # Imports resolve the filename prefix to a registered monitor (#140); the
+        # fixtures' "QA" prefix stands for a monitor whose cloud gid is "QA".
+        conn = energy._connect()
+        with conn:
+            [device_identity.register_cloud_gid(conn, gid) for gid in ('QA', '1SEC', '1MIN', '15MIN', '1H', 'zero', 'export', 'Other')]
+        conn.close()
 
-    def upload(self, value, *, interval='1H', unit='kWhs', stamp='10/08/2026 12:00:00', zone='America/New_York'):
-        path = self.root / f'QA-Panel-{interval}.csv'
+    def upload(self, value, *, prefix='QA', interval='1H', unit='kWhs', stamp='10/08/2026 12:00:00', zone='America/New_York'):
+        path = self.root / f'{prefix}-Panel-{interval}.csv'
         header = f'Time Bucket ({zone})' if zone else 'Time Bucket'
         path.write_text(f'{header},QA-Pump ({unit})\n{stamp},{value}\n')
         return path
@@ -93,7 +100,8 @@ class ImportIntegrityTests(unittest.TestCase):
     def test_actual_startup_preserves_imported_energy_and_cost(self):
         energy.import_emporia_csv(str(self.upload(3)))
         before = self.state()['readings']
-        with patch.object(Flask, 'run'), patch.object(energy.requests, 'get', side_effect=RuntimeError('No external network in fixture')):
+        with patch.object(Flask, 'run'), patch('waitress.serve'), \
+                patch.object(energy.requests, 'get', side_effect=RuntimeError('No external network in fixture')):
             runpy.run_path(web.__file__, run_name='__main__')
         self.assertEqual(self.state()['readings'], before)
 
@@ -132,7 +140,7 @@ class ImportIntegrityTests(unittest.TestCase):
 
     def test_fixed_intervals_convert_identical_average_power_to_correct_energy(self):
         for interval, seconds in (('1SEC', 1), ('1MIN', 60), ('15MIN', 900), ('1H', 3600)):
-            result = energy.import_emporia_csv(str(self.upload(3, interval=interval, unit='kWatts')), device_gid=interval)
+            result = energy.import_emporia_csv(str(self.upload(3, interval=interval, unit='kWatts', prefix=interval)), device_gid=interval)
             self.assertEqual(result['interval_seconds'], seconds)
             conn = energy._connect()
             try:
@@ -161,7 +169,7 @@ class ImportIntegrityTests(unittest.TestCase):
 
     def test_zero_and_signed_finite_energy_are_preserved(self):
         for value, gid in ((0, 'zero'), (-1, 'export')):
-            result = energy.import_emporia_csv(str(self.upload(value)), device_gid=gid)
+            result = energy.import_emporia_csv(str(self.upload(value, prefix=gid)), device_gid=gid)
             self.assertEqual(result['imported'], 1)
         self.assertEqual([row[5] for row in self.state()['readings']], [0, -1])
 
@@ -210,7 +218,7 @@ class ImportIntegrityTests(unittest.TestCase):
 
     def test_older_history_upload_preserves_newer_snapshot_and_other_devices(self):
         energy.import_emporia_csv(str(self.upload(3, stamp='10/08/2026 12:00:00')))
-        energy.import_emporia_csv(str(self.upload(7)), device_gid='Other')
+        energy.import_emporia_csv(str(self.upload(7, prefix='Other')), device_gid='Other')
         energy.import_emporia_csv(str(self.upload(999, stamp='10/07/2026 12:00:00')))
         self.assertEqual([row[3] for row in self.state()['latest_channel_snapshot']], [7, 3])
 
