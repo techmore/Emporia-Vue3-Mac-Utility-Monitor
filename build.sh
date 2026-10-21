@@ -114,6 +114,12 @@ if [ "$DO_PULL" = true ]; then
   echo "[ 2 / 6 ]  Pulling latest from git…"
   cd "$SCRIPT_DIR"
   git pull --ff-only && ok "Up to date" || warn "git pull failed — continuing with local files"
+  # A pull can add locked dependencies (e.g. the waitress server); keep venv in step.
+  if [ -x "$VENV_PYTHON" ]; then
+    "$VENV_PYTHON" -m pip install --quiet --disable-pip-version-check -r "$SCRIPT_DIR/requirements.lock" \
+      && ok "Dependencies match requirements.lock" \
+      || warn "Could not sync requirements.lock — continuing with installed packages"
+  fi
 else
   echo ""
   echo "[ 2 / 6 ]  Skipping git pull (--no-pull)"
