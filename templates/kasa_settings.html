@@ -7,7 +7,7 @@
   <details class="card kasa-tools"><summary>Add a device</summary><p class="kasa-muted">Add its local address to monitoring. Its first reading will appear after the collector checks it.</p><form id="kasaRegisterForm" class="kasa-probe-form"><label>Device name<input id="kasaRegisterLabel" required maxlength="100" placeholder="e.g. Workshop fan"></label><label>IP address<input id="kasaRegisterHost" required maxlength="45" placeholder="192.168.222.10"></label><button type="submit">Add to monitoring</button></form></details>
   <details class="card kasa-tools"><summary>Connection diagnostics</summary><p class="kasa-muted">Check one device directly. Account details are only needed for devices that require them.</p><form id="kasaProbeForm" class="kasa-probe-form"><label>IP address<input id="kasaProbeHost" required value="{{ kasa_host }}" placeholder="192.168.222.10" maxlength="45"></label><label>TP-Link email (optional)<input id="kasaProbeUsername" autocomplete="off" maxlength="1000"></label><label>Password (optional)<input id="kasaProbePassword" type="password" autocomplete="off" maxlength="1000"></label><button type="submit">Check state — no control</button></form><p id="kasaProbeStatus" role="status" aria-live="polite"></p><pre id="kasaProbeResult" class="kasa-probe-result"></pre></details>
 </div>
-<script>
+<script nonce="{{ csp_nonce() }}">
 document.getElementById('kasaProbeForm').addEventListener('submit', async event => {
   event.preventDefault();
   const form = event.currentTarget, button = form.querySelector('button');
@@ -33,7 +33,7 @@ document.getElementById('kasaProbeForm').addEventListener('submit', async event 
   }
 });
 </script>
-<script>
+<script nonce="{{ csp_nonce() }}">
 (() => {
   const $ = id => document.getElementById(id);
   let devices = [], busy = false;

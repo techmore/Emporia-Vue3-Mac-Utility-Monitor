@@ -9,6 +9,7 @@ import io
 import json
 import math
 import os
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.parse import urlsplit
 from flask import (
     Flask,
     Response,
+    g,
     has_request_context,
     jsonify,
     redirect,
@@ -146,6 +148,54 @@ def invalidate_after_write(response):
     return response
 
 
+def _csp_mode_from_environment() -> str:
+    """ENERGY_CSP: enforce (default), report-only for diagnosis, or off."""
+    mode = os.environ.get("ENERGY_CSP", "enforce").strip().lower()
+    if mode not in {"enforce", "report-only", "off"}:
+        raise ValueError("ENERGY_CSP must be enforce, report-only or off")
+    return mode
+
+
+CSP_MODE = _csp_mode_from_environment()
+
+
+def csp_nonce() -> str:
+    """One unguessable nonce per request; only template-authored <script> tags carry it."""
+    if "csp_nonce" not in g:
+        g.csp_nonce = secrets.token_urlsafe(18)
+    return g.csp_nonce
+
+
+app.jinja_env.globals["csp_nonce"] = csp_nonce
+
+
+def content_security_policy(nonce: str) -> str:
+    # Scripts: same-origin files plus nonce'd inline blocks; injected markup cannot run.
+    # Styles keep 'unsafe-inline' for the many style="" attributes; fonts/images are local.
+    return "; ".join((
+        "default-src 'self'",
+        f"script-src 'self' 'nonce-{nonce}'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self'",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ))
+
+
+@app.after_request
+def apply_content_security_policy(response):
+    if CSP_MODE == "off" or response.mimetype != "text/html":
+        return response
+    header = ("Content-Security-Policy" if CSP_MODE == "enforce"
+              else "Content-Security-Policy-Report-Only")
+    response.headers[header] = content_security_policy(csp_nonce())
+    return response
+
+
 def _read_monthly_budget() -> float:
     if os.environ.get("MONTHLY_BUDGET"):
         return float(os.environ["MONTHLY_BUDGET"])
@@ -183,7 +233,9 @@ _refresh_runtime_config()
 
 # ── Shared design tokens (mirrors techmore.github.io) ─────────────────────────
 BASE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@import url('/static/vendor/fonts.css');
+.nav-github { display:flex; align-items:center; color:var(--stone-400); opacity:0.7; transition:opacity 0.15s; }
+.nav-github:hover, .nav-github:focus-visible { opacity:1; }
 .aqara-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:12px 0; }
 .aqara-toolbar label { display:flex; align-items:center; gap:5px; }
 .aqara-toolbar select, .aqara-label-form input { max-width:100%; padding:6px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:5px; }
@@ -1045,8 +1097,7 @@ NAV_HTML = """
       </a>
       <a href="https://github.com/techmore/Emporia-Vue3-Mac-Utility-Monitor" target="_blank" rel="noopener"
          title="View on GitHub"
-         style="display:flex; align-items:center; color:var(--stone-400); opacity:0.7; transition:opacity 0.15s;"
-         onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">
+         class="nav-github">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482
                    0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.463-1.11-1.463
@@ -1062,7 +1113,7 @@ NAV_HTML = """
     </div>
   </div>
 </nav>
-<script>
+<script nonce="{{ csp_nonce() }}">
 window.escapeHTML = function(value) {
   const element = document.createElement('span');
   element.textContent = String(value ?? '');
@@ -1237,7 +1288,8 @@ def _render(template: str, **ctx):
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
         + NAV_HTML + '{% include "mobile_navigation.html" %}' + template
-        + '{% include "circuit_overlay.html" %}</body></html>',
+        + '{% include "circuit_overlay.html" %}'
+        '<script src="/static/actions.js" defer></script></body></html>',
         **ctx
     )
 
@@ -1420,7 +1472,7 @@ DASH_HTML = """
   .banner-forecast-line.heat { background: rgba(220,60,40,0.72); }
   .banner-forecast-line.cool { background: rgba(60,140,220,0.72); }
   </style>
-  <script>
+  <script nonce="{{ csp_nonce() }}">
   (function(){
     const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     fetch('/api/weather').then(r=>r.json()).then(data=>{
@@ -1716,7 +1768,7 @@ DASH_HTML = """
 .circuit-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:0.8rem; }
 .circuit-toolbar-title { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-light); }
   </style>
-  <script>
+  <script nonce="{{ csp_nonce() }}">
   (function(){
     const views = ['bars','panel','grid'];
     const stored = localStorage.getItem('circuitView');
@@ -1795,8 +1847,8 @@ DASH_HTML = """
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script nonce="{{ csp_nonce() }}">
 const daily  = {{ daily_json|tojson }};
 const hourly = {{ hourly_json|tojson }};
 const intradayComparison = {{ intraday_comparison|tojson }};
@@ -2448,7 +2500,7 @@ CIRCUITS_HTML = """
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function(){
   const t = document.getElementById('usageTable');
   if(!t) return;
@@ -2555,8 +2607,8 @@ CIRCUIT_HTML = """
   </div>
 
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script nonce="{{ csp_nonce() }}">
 const d = {{ chart_json|tojson }};
 const s = getComputedStyle(document.documentElement);
 new Chart(document.getElementById('usageChart'), {
@@ -2858,8 +2910,8 @@ TRENDS_HTML = """
     </div>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script nonce="{{ csp_nonce() }}">
 const trendData  = {{ trend_json|tojson }};
 const hourlyData = {{ hourly_json|tojson }};
 const s = getComputedStyle(document.documentElement);
@@ -2928,7 +2980,7 @@ LOG_HTML = """
       <span id="ph-dot" style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--stone-400);"></span>
       <span id="ph-label" style="font-size:0.82rem; color:var(--text-light);">Checking…</span>
       <div style="flex:1;"></div>
-      <button onclick="requestReconnect()" id="reconnectBtn"
+      <button data-action="requestReconnect" id="reconnectBtn"
               style="padding:7px 18px; background:var(--olive-800); color:var(--olive-50);
                      border:none; border-radius:8px; font-size:0.82rem; cursor:pointer; font-family:inherit;">
         ⟳ Reconnect
@@ -2977,7 +3029,7 @@ LOG_HTML = """
                         border:1px solid var(--border); background:var(--bg); color:var(--text);
                         font-size:0.85rem; font-family:inherit; width:180px;">
         </label>
-        <button onclick="sendReconnect()"
+        <button data-action="sendReconnect"
                 style="padding:8px 20px; background:var(--olive-700); color:var(--olive-50);
                        border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
           Re-authenticate →
@@ -3011,7 +3063,7 @@ LOG_HTML = """
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 function fmtAge(secs) {
   if (secs === null || secs === undefined) return '—';
   if (secs < 90)  return secs + 's ago';
@@ -3167,7 +3219,7 @@ IMPORT_HTML = """
 .import-result.err { background: oklch(94% 0.06 25);  color: oklch(30% 0.14 25);  }
 </style>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 document.getElementById('import-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const files = document.getElementById('csv-files').files;
@@ -4605,7 +4657,7 @@ PANEL_EDIT_HTML = """
         {% endfor %}
       </select>
     </label>
-    <button onclick="saveLayout()" style="padding:8px 20px; background:var(--olive-800); color:var(--olive-50); border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
+    <button data-action="saveLayout" style="padding:8px 20px; background:var(--olive-800); color:var(--olive-50); border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
       Save Layout
     </button>
     <span id="saveMsg" style="font-size:0.82rem; color:var(--green); display:none;">Saved ✓</span>
@@ -4654,7 +4706,7 @@ PANEL_EDIT_HTML = """
     <span style="border-left:1px solid var(--border); padding-left:16px;">⚡ = top load circuit</span>
   </div>
 </div>
-<script>
+<script nonce="{{ csp_nonce() }}">
 function saveLayout() {
   const panelSize = parseInt(document.getElementById('panelSize').value);
   const rows = Array.from(document.querySelectorAll('.slot-row'))
@@ -4705,7 +4757,7 @@ SETTINGS_HTML = """
     <!-- ── Sidebar nav ── -->
     <div class="sys-nav">
       <div class="sys-nav-group">Active</div>
-      <button class="sys-link active" onclick="showPanel('emporia',this)">
+      <button class="sys-link active" data-action="showPanel" data-arg="emporia">
         <span class="sys-dot {{ 'ok' if has_tokens else 'warn' }}"></span>
         <div><div class="sys-name">Emporia Vue</div><div class="sys-sub">Energy Monitor</div></div>
       </button>
@@ -4733,23 +4785,23 @@ SETTINGS_HTML = """
       </a>
 
       <div class="sys-nav-group" style="margin-top:0.4rem;">Integrations</div>
-      <button class="sys-link" onclick="showPanel('aqara',this)">
+      <button class="sys-link" data-action="showPanel" data-arg="aqara">
         <span class="sys-dot {{ 'ok' if aqara_configured else 'soon' }}"></span>
         <div><div class="sys-name">Aqara Account</div><div class="sys-sub">Authorize sensors</div></div>
       </button>
-      <button class="sys-link" onclick="showPanel('kasa',this)">
+      <button class="sys-link" data-action="showPanel" data-arg="kasa">
         <span class="sys-dot soon"></span>
         <div><div class="sys-name">Kasa</div><div class="sys-sub">Light Switches</div></div>
       </button>
-      <button class="sys-link" onclick="showPanel('broan',this)">
+      <button class="sys-link" data-action="showPanel" data-arg="broan">
         <span class="sys-dot soon"></span>
         <div><div class="sys-name">Broan AI ERV</div><div class="sys-sub">Ventilation</div></div>
       </button>
-      <button class="sys-link" onclick="showPanel('mitsubishi',this)">
+      <button class="sys-link" data-action="showPanel" data-arg="mitsubishi">
         <span class="sys-dot soon"></span>
         <div><div class="sys-name">Mitsubishi</div><div class="sys-sub">Hyper Heat HVAC</div></div>
       </button>
-      <button class="sys-link" onclick="showPanel('nuts',this)">
+      <button class="sys-link" data-action="showPanel" data-arg="nuts">
         <span class="sys-dot soon"></span>
         <div><div class="sys-name">NUTS / UPS</div><div class="sys-sub">ESP Remote Monitor</div></div>
       </button>
@@ -4788,7 +4840,7 @@ SETTINGS_HTML = """
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-              <button type="button" id="credBtn" onclick="saveCreds()"
+              <button type="button" id="credBtn" data-action="saveCreds"
                       style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
                              border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;
                              display:flex; align-items:center; gap:7px; transition:opacity .2s;">
@@ -4830,7 +4882,7 @@ SETTINGS_HTML = """
             </label>
           </div>
           <div style="display:flex; gap:10px; align-items:center; margin-top:0.85rem;">
-            <button type="button" onclick="saveConfig()"
+            <button type="button" data-action="saveConfig"
                     style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
                            border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
               Save Rate &amp; Budget
@@ -4861,7 +4913,7 @@ SETTINGS_HTML = """
           {% endfor %}
           {% if known_devices %}
           <div style="display:flex; gap:10px; align-items:center; margin-top:0.6rem;">
-            <button type="button" onclick="saveDeviceLabels()"
+            <button type="button" data-action="saveDeviceLabels"
                     style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
                            border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
               Save Labels
@@ -4891,7 +4943,7 @@ SETTINGS_HTML = """
             </label>
           </div>
           <div style="display:flex; gap:10px; align-items:center;">
-            <button type="button" onclick="savePanelDisplay()"
+            <button type="button" data-action="savePanelDisplay"
                     style="padding:9px 22px; background:var(--olive-800); color:var(--olive-50); border:none;
                            border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
               Save Display Options
@@ -4939,7 +4991,7 @@ SETTINGS_HTML = """
               <li>If Aqara still shows your developer application as pending moderation, authorization will remain unavailable until approved.</li>
             </ol>
           </div>
-          <form id="aqaraForm" onsubmit="return false;"
+          <form id="aqaraForm" data-no-submit
                 style="display:flex; flex-direction:column; gap:10px; max-width:460px;">
             <label style="font-size:0.82rem; font-weight:600;">App ID
               <input type="text" id="aqaraAppId" value="{{ aqara_app_id }}" autocomplete="off"
@@ -4973,18 +5025,18 @@ SETTINGS_HTML = """
               </select>
             </label>
             <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:0.25rem;">
-              <button type="button" onclick="saveAqaraSettings().catch(() => {})"
+              <button type="button" data-action="saveAqaraSettings"
                       style="padding:9px 16px; background:var(--surface2); color:var(--text);
                              border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
                 Save App Settings
               </button>
-              <button type="button" id="aqaraAuthorizeBtn" onclick="authorizeAqara()"
+              <button type="button" id="aqaraAuthorizeBtn" data-action="authorizeAqara"
                       style="padding:9px 18px; background:var(--olive-800); color:var(--olive-50);
                              border:none; border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
                 {{ 'Reauthorize Aqara Account' if aqara_configured else 'Authorize Aqara Account' }}
               </button>
               {% if aqara_configured %}
-              <button type="button" onclick="disconnectAqara()"
+              <button type="button" data-action="disconnectAqara"
                       style="padding:9px 14px; background:var(--surface2); color:var(--text);
                              border:1px solid var(--border); border-radius:8px; font-size:0.85rem; cursor:pointer; font-family:inherit;">
                 Disconnect
@@ -5146,7 +5198,7 @@ SETTINGS_HTML = """
   </div><!-- /settings-wrap -->
 </div>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 function showPanel(id, btn) {
   document.querySelectorAll('.sys-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.sys-link').forEach(b => b.classList.remove('active'));
@@ -5159,7 +5211,8 @@ function showPanel(id, btn) {
   const hash = location.hash.slice(1);
   if (hash) {
     const panel = document.getElementById('panel-' + hash);
-    const btn = document.querySelector('.sys-link[onclick*=\\''+hash+'\\']');
+    const btn = [...document.querySelectorAll('.sys-link[data-action="showPanel"]')]
+      .find(b => b.dataset.arg === hash);
     if (panel) showPanel(hash, btn);
   }
 })();

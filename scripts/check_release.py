@@ -9,6 +9,8 @@ with it; the script fails when any of them drifts. --write-metainfo regenerates 
 VERSION and the changelog instead of failing (the Homebrew stage has no linux/ directory, so those checks are
 skipped there). Prints the version on success, which release.sh relies on.
 """
+import hashlib
+import json
 import plistlib
 import re
 import sys
@@ -69,7 +71,7 @@ def main(argv):
     for name in ('web.py', 'energy.py', 'climate.py', 'climate_collect.py', 'extensions.py', 'templates/house.html', 'static/house.js', 'static/cooling-model.js', 'runtime_store.py', 'panel_model.py',
                  'EnergyMonitorApp/Sources/main.swift', 'EnergyMonitorApp/Sources/Lifecycle.swift', 'EnergyMonitorApp/Sources/Theme.swift', 'requirements.lock',
                  'scripts/check_release.py', 'templates/circuit_overlay.html',
-                 'static/circuit-overlay.js', 'EnergyMonitorApp/Sources/MenuPopover.swift',
+                 'static/circuit-overlay.js', 'static/actions.js', 'EnergyMonitorApp/Sources/MenuPopover.swift',
                  'EnergyMonitorApp/Sources/CollectorSync.swift', 'sync_history.py', 'radon.py',
                  'templates/radon.html', 'ecosense.py', 'ecosense_collect.py', 'mitsubishi.py', 'mitsubishi_collect.py', 'aqara_local.py', 'aqara_matter_collect.py', 'templates/mitsubishi.html', 'panel_photos.py', 'templates/panel_photos.html', 'solar_model.py', 'templates/solar_scenario.html', 'kasa_monitor.py', 'kasa_history.py', 'kasa_collect.py', 'templates/kasa_settings.html', 'templates/kasa.html'):
         assert (root / name).is_file(), f'Missing release file: {name}'
@@ -82,6 +84,15 @@ def main(argv):
                  'templates/home_3d.html', 'static/house-control/home-3d.js',
                  'static/house-control/LICENSES.txt', 'docs/HOUSE_CONTROL.md'):
         assert (root / name).is_file(), f'Missing Home 3D release file: {name}'
+    # Self-hosted Chart.js and fonts: every recorded file present and unmodified.
+    vendor = root / 'static/vendor'
+    recorded = json.loads((vendor / 'UPSTREAM.json').read_text())['files']
+    for name in ('chart.umd.min.js', 'fonts.css'):
+        assert name in recorded, f'Missing vendored asset: {name}'
+    for name, digest in recorded.items():
+        path = vendor / name
+        assert path.is_file(), f'Missing vendored asset: {name}'
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, f'Vendored asset changed: {name}'
     if (root / 'linux').is_dir():
         check_metainfo(root, version, (root / 'CHANGELOG.md').read_text(), write)
         check_meson(root)

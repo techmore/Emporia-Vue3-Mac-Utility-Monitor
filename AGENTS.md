@@ -136,6 +136,7 @@ All have sensible defaults; none are required to run locally with an existing `k
 | `MONTHLY_BUDGET`   | `150`       | Monthly cost budget in dollars (web.py only) |
 | `EMPORIA_EMAIL`    | —           | Only needed on first login (no `keys.json`)  |
 | `EMPORIA_PASSWORD` | —           | Only needed on first login (no `keys.json`)  |
+| `ENERGY_CSP`       | `enforce`   | Page Content-Security-Policy: `enforce`, `report-only` or `off` |
 | `WEB_THREADS`      | `32`        | Dashboard worker threads (4–256); each open tab's live stream holds one |
 | `ENERGY_DEV_SERVER`| —           | `1` serves with Werkzeug's dev server instead of waitress (debugging only) |
 
@@ -201,6 +202,13 @@ separately in web.py.
   or rgb in templates.
 - Chart.js colours must be read from CSS custom properties at runtime via
   `getComputedStyle` so dark/light mode is respected.
+- Chart.js and fonts are self-hosted in `static/vendor/` (exact pins, hashes in
+  `UPSTREAM.json`). Never add a CDN `<script>`, stylesheet or font; upgrade with
+  `python3 scripts/vendor_web_assets.py` and commit the result.
+- Pages are served with a nonce-based Content-Security-Policy. Inline scripts must be
+  written as `<script nonce="{{ csp_nonce() }}">`; never add `onclick=`/`on*=` attributes —
+  use `data-action="globalFunction"` (optional `data-arg`) handled by `static/actions.js`,
+  or `addEventListener` in a nonce'd script. Do not add `'unsafe-inline'` to `script-src`.
 
 ---
 
