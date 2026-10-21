@@ -20,6 +20,7 @@ import requests
 from pyemvue.enums import Scale, Unit
 
 from runtime_store import write_private_json, update_private_json, publish_private_text
+import device_identity
 from timestamp_model import classify_timestamp, reporting_day_bounds
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
@@ -42,7 +43,7 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
     try:
         data = {
             "ok": ok,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": reporting_now().isoformat(),
             "error": error,
             "consecutive_errors": consecutive_errors,
         }
@@ -57,7 +58,7 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
             conn.execute('INSERT INTO poller_health_events(timestamp,ok) VALUES (?,?)',
                          (data['timestamp'], int(ok)))
             conn.execute('DELETE FROM poller_health_events WHERE timestamp<?',
-                         ((datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
+                         ((reporting_now() - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
     except Exception:
         logger.exception("Could not record poller health history")
     finally:
@@ -136,6 +137,139 @@ def _connect(path: str | Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+# ── Reporting timezone (#127) ────────────────────────────────────────────────
+# Stored timestamps are still naive wall-clock strings (the UTC cutover is a
+# separate, owner-approved migration). What can be made safe now is *which*
+# wall clock: once an operator records a reporting zone, every naive "now" and
+# every host-local conversion uses that zone, so relocating the database to a
+# host with a different timezone no longer mixes two clocks. With no zone
+# recorded, behaviour is exactly the legacy host-local clock.
+_REPORTING_ZONE_CACHE: dict = {}
+_ZONE_UNSET_RECHECK_SECONDS = 5.0
+_host_zone_warned = False
+
+
+def get_reporting_timezone() -> str | None:
+    """The recorded IANA reporting zone, or None when none has been recorded."""
+    cached = _REPORTING_ZONE_CACHE.get(DB_PATH)
+    if cached is not None and (cached[0] is not None or time.monotonic() < cached[1]):
+        return cached[0]
+    zone = None
+    try:
+        # A short-lived read-only lookup on its own handle: this runs inside other
+        # operations (including open write transactions) and must never share or
+        # close their connection.
+        conn = sqlite3.connect(str(DB_PATH), timeout=30)
+        try:
+            row = conn.execute("SELECT zone FROM collector_timezone WHERE singleton=1").fetchone()
+        finally:
+            conn.close()
+        zone = row[0] if row else None
+    except sqlite3.OperationalError:
+        return None  # table not created yet; do not cache
+    _REPORTING_ZONE_CACHE[DB_PATH] = (zone, time.monotonic() + _ZONE_UNSET_RECHECK_SECONDS)
+    return zone
+
+
+def _reporting_tzinfo() -> ZoneInfo | None:
+    zone = get_reporting_timezone()
+    return ZoneInfo(zone) if zone else None
+
+
+def reporting_now() -> datetime:
+    """Naive wall-clock "now" in the reporting zone (the host's clock if none is recorded)."""
+    zone = get_reporting_timezone()
+    if zone:
+        return datetime.now(ZoneInfo(zone)).replace(tzinfo=None)
+    return datetime.now()
+
+
+def _local_wall_clock_to_utc(moment: datetime, fold: int = 0) -> datetime:
+    """Interpret a naive stored wall-clock time in the reporting zone (else the host's)."""
+    tz = _reporting_tzinfo()
+    moment = moment.replace(fold=fold, tzinfo=tz) if tz else moment.replace(fold=fold)
+    return moment.astimezone(timezone.utc)
+
+
+def detect_host_timezone() -> str | None:
+    """Best-effort IANA name of the host's configured zone; None when it cannot be verified."""
+    candidates = []
+    env = os.environ.get("TZ", "").lstrip(":")
+    if env:
+        candidates.append(env)
+    try:
+        candidates.append(Path("/etc/timezone").read_text().strip())
+    except OSError:
+        pass
+    try:
+        target = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in target:
+            candidates.append(target.split("zoneinfo/", 1)[1])
+    except OSError:
+        pass
+    for name in candidates:
+        try:
+            ZoneInfo(name)
+        except (ValueError, ZoneInfoNotFoundError):
+            continue
+        return name
+    return None
+
+
+def set_reporting_timezone(zone: str, *, existing_history_in_zone: bool = False) -> dict:
+    """Record the collector's reporting zone once; it can never be silently changed.
+
+    Changing the zone would reinterpret stored naive history, which is the
+    migration's job, so a recorded zone is immutable. Recording a zone while
+    readings exist asserts that all of them were written in that clock; that
+    provenance claim must be explicit (``existing_history_in_zone``).
+    """
+    try:
+        key = ZoneInfo(str(zone).strip()).key
+    except (ValueError, ZoneInfoNotFoundError, TypeError) as exc:
+        raise ValueError("Unknown IANA timezone") from exc
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT zone FROM collector_timezone WHERE singleton=1").fetchone()
+            if row:
+                if row["zone"] == key:
+                    return {"status": "unchanged", "zone": key}
+                raise ValueError(f"Reporting zone is already {row['zone']} and cannot be changed "
+                                 "without the reviewed UTC migration")
+            stats = conn.execute("SELECT COUNT(*) AS n, MAX(id) AS last_id FROM readings").fetchone()
+            if stats["n"] and not existing_history_in_zone:
+                raise ValueError(
+                    f"{stats['n']} readings already exist. Recording the zone asserts they were all "
+                    "written in that clock; repeat with --existing-history-in-zone only if that is known.")
+            conn.execute(
+                """INSERT INTO collector_timezone(singleton,zone,recorded_at,readings_at_record,last_reading_id)
+                   VALUES (1,?,?,?,?)""",
+                (key, datetime.now(timezone.utc).isoformat(), stats["n"], stats["last_id"]))
+    finally:
+        conn.close()
+    _REPORTING_ZONE_CACHE.pop(DB_PATH, None)
+    return {"status": "recorded", "zone": key, "existing_readings": stats["n"]}
+
+
+def reporting_timezone_status() -> dict:
+    """Recorded zone, detected host zone and whether the host clock agrees."""
+    zone, host = get_reporting_timezone(), detect_host_timezone()
+    return {"reporting_zone": zone, "host_zone": host,
+            "host_agrees": None if zone is None or host is None else zone == host}
+
+
+def _warn_if_host_zone_differs() -> None:
+    global _host_zone_warned
+    status = reporting_timezone_status()
+    if status["host_agrees"] is False and not _host_zone_warned:
+        _host_zone_warned = True
+        logger.warning("Host timezone %s differs from the recorded reporting zone %s; timestamps "
+                       "follow the reporting zone, not the host clock", status["host_zone"],
+                       status["reporting_zone"])
+
+
 def backup_database(destination: str | Path) -> dict:
     """Publish a verified, standalone SQLite snapshot without overwriting a file."""
     target = Path(destination).expanduser().absolute()
@@ -179,7 +313,7 @@ def get_today_circuit_totals(device_gid: str | None = None, period: str = "day")
     """Recorded totals for local calendar day, Monday-based week, or month to date."""
     if period not in {"day", "week", "month"}:
         raise ValueError("Invalid cost period")
-    now = datetime.now()
+    now = reporting_now()
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "week":
         start -= timedelta(days=start.weekday())
@@ -208,7 +342,7 @@ def get_circuit_week_comparison(
     device_gid: str | None = None, *, end: datetime | None = None,
 ) -> list[dict]:
     """Compare complete seven-day windows, withholding changes for sparse capture."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    boundary = (end or reporting_now()).replace(hour=0, minute=0, second=0, microsecond=0)
     middle = boundary - timedelta(days=7)
     start = boundary - timedelta(days=14)
     conn = _connect()
@@ -264,7 +398,7 @@ def get_circuit_week_comparison(
 
 def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Recorded circuit energy in hourly buckets; absent hours are never zero-filled."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    boundary = (end or reporting_now()).replace(hour=0, minute=0, second=0, microsecond=0)
     start = boundary - timedelta(days=7)
     hours = [(start + timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
     conn = _connect()
@@ -327,7 +461,7 @@ def _weekly_pattern(rows: list[dict]) -> dict:
 
 def get_weekly_power_pattern(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Four-week same-weekday/hour baseline, requiring two >=95%-sampled repetitions."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    boundary = (end or reporting_now()).replace(hour=0, minute=0, second=0, microsecond=0)
     conn = _connect()
     try:
         gid = _resolve_device_gid(conn.cursor(), device_gid)
@@ -380,6 +514,66 @@ def ensure_table():
             usage_kwh REAL NOT NULL,
             cost_cents REAL NOT NULL,
             PRIMARY KEY(device_gid,channel_name)
+        );
+        -- Canonical monitor identity (#140). readings.device_gid is the Emporia cloud
+        -- gid. Aliases are evidence of which cloud gid an identifier was observed under;
+        -- they never rewrite readings.
+        -- Reporting zone (#127): written once, immutable. Naive stored timestamps are
+        -- in this wall clock; changing it requires the reviewed UTC migration.
+        CREATE TABLE IF NOT EXISTS collector_timezone (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+            zone TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            readings_at_record INTEGER NOT NULL,
+            last_reading_id INTEGER
+        );
+        CREATE TRIGGER IF NOT EXISTS collector_timezone_immutable_update
+            BEFORE UPDATE ON collector_timezone
+        BEGIN SELECT RAISE(ABORT, 'reporting timezone is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS collector_timezone_immutable_delete
+            BEFORE DELETE ON collector_timezone
+        BEGIN SELECT RAISE(ABORT, 'reporting timezone is immutable'); END;
+        CREATE TABLE IF NOT EXISTS device_registry (
+            cloud_gid TEXT PRIMARY KEY,
+            first_seen TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS device_aliases (
+            alias_kind TEXT NOT NULL CHECK(alias_kind IN ('manufacturer_id','export_prefix')),
+            alias TEXT NOT NULL,
+            cloud_gid TEXT NOT NULL REFERENCES device_registry(cloud_gid),
+            source TEXT NOT NULL CHECK(source IN ('discovery','operator')),
+            recorded_at TEXT NOT NULL,
+            PRIMARY KEY(alias_kind, alias, cloud_gid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_aliases_gid ON device_aliases(cloud_gid);
+        CREATE TABLE IF NOT EXISTS import_identity_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            imported_at TEXT NOT NULL,
+            original_filename TEXT,
+            filename_prefix TEXT NOT NULL,
+            resolved_gid TEXT NOT NULL,
+            method TEXT NOT NULL,
+            rows_inserted INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS device_rebindings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alias_gid TEXT NOT NULL,
+            canonical_gid TEXT NOT NULL,
+            applied_at TEXT NOT NULL,
+            reverted_at TEXT,
+            reading_count INTEGER NOT NULL,
+            backup_path TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS reading_rebind_log (
+            rebinding_id INTEGER NOT NULL REFERENCES device_rebindings(id),
+            reading_id INTEGER NOT NULL,
+            PRIMARY KEY(rebinding_id, reading_id)
+        );
+        CREATE TABLE IF NOT EXISTS rebinding_compactions (
+            rebinding_id INTEGER NOT NULL REFERENCES device_rebindings(id),
+            channel_name TEXT NOT NULL,
+            hour_key TEXT NOT NULL,
+            PRIMARY KEY(rebinding_id, channel_name, hour_key)
         );
         CREATE TRIGGER IF NOT EXISTS reading_provenance_delete AFTER DELETE ON readings
         BEGIN
@@ -686,6 +880,21 @@ def ensure_table():
             "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
             ("reading_sync_seed_v1", datetime.now().isoformat()),
         )
+    if not conn.execute(
+        "SELECT 1 FROM migrations WHERE name = 'device_registry_seed_v1'"
+    ).fetchone():
+        # Only gids that live polling actually wrote are verified cloud identities;
+        # CSV filename prefixes are never promoted into the registry.
+        conn.execute("""INSERT OR IGNORE INTO device_registry(cloud_gid, first_seen)
+            SELECT device_gid, ? FROM device_capabilities WHERE source='live_poll'
+            UNION
+            SELECT r.device_gid, ? FROM readings r
+              JOIN reading_provenance p ON p.reading_id=r.id WHERE p.source='live_poll'""",
+                     (datetime.now(timezone.utc).isoformat(),) * 2)
+        conn.execute(
+            "INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
+            ("device_registry_seed_v1", datetime.now().isoformat()),
+        )
     conn.commit()
     # Migrate: add poles column if it doesn't exist yet (existing DBs)
     try:
@@ -809,7 +1018,7 @@ def apply_reading_changes(page: dict) -> dict:
                     cost_cents=excluded.cost_cents""",
                     tuple(row.get(key) for key in ("reading_id", "timestamp", "device_gid",
                                                   "channel_num", "channel_name", "usage_kwh", "cost_cents")))
-        synchronized_at = datetime.now().isoformat() if not page["has_more"] else (
+        synchronized_at = reporting_now().isoformat() if not page["has_more"] else (
             state["synchronized_at"] if state else None
         )
         conn.execute("""INSERT INTO sync_cache_state VALUES (1, ?, ?, ?, ?)
@@ -945,7 +1154,7 @@ def _save_device_capabilities_with_conn(
             int(has_mains_c),
             int(mains_c_no_ct),
             source,
-            datetime.now().isoformat(),
+            reporting_now().isoformat(),
         ),
     )
 
@@ -1075,6 +1284,18 @@ def get_known_devices() -> list[str]:
     ).fetchall()
     conn.close()
     return [r["device_gid"] for r in rows]
+
+
+def get_registered_monitors() -> list[dict]:
+    """Monitors the collector has actually seen (the only valid CSV import targets)."""
+    conn = _connect()
+    try:
+        gids = device_identity.known_cloud_gids(conn)
+    finally:
+        conn.close()
+    labels = get_device_labels()
+    return [{"device_gid": gid, "label": (labels.get(gid) or "").strip()}
+            for gid in gids if gid != _GHOST_DEVICE]
 
 
 def get_active_device_gid(device_gid: str | None = None) -> str | None:
@@ -1335,8 +1556,24 @@ def login_vue():
     return vue
 
 
+def _register_discovered_identity(devices) -> None:
+    """Persist cloud gid / manufacturer id evidence; identity bookkeeping never blocks polling."""
+    conn = _connect()
+    try:
+        with conn:
+            result = device_identity.register_discovered_devices(conn, devices)
+        for alias in result["collisions"]:
+            logger.error("Manufacturer id %s was already bound to a different cloud gid; "
+                         "keeping the earlier binding for review", alias)
+    except Exception:
+        logger.exception("Could not record discovered device identities")
+    finally:
+        conn.close()
+
+
 def get_devices_with_channels(vue):
     devices = vue.get_devices()
+    _register_discovered_identity(devices)
     device_gids = []
     device_info = {}
     for device in devices:
@@ -1389,11 +1626,14 @@ def poll_and_store(vue, device_gids):
                 if value is not None and not math.isfinite(value * RATE_CENTS):
                     raise ValueError("Emporia channel cost overflow")
 
-        now = datetime.now().isoformat()
+        reporting_zone = get_reporting_timezone()
+        _warn_if_host_zone_differs()
+        now = reporting_now().isoformat()
         # Serialize coverage checks and writes against concurrent CSV imports.
         conn.execute('BEGIN IMMEDIATE')
 
         for gid, device in usage_dict.items():
+            device_identity.register_cloud_gid(conn, gid)
             capability = {
                 "has_main": False,
                 "has_mains_a": False,
@@ -1433,8 +1673,11 @@ def poll_and_store(vue, device_gids):
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (now, gid, channelnum, channel_name, channel.usage, cost),
                 )
-                c.execute("INSERT INTO reading_provenance(reading_id,source,interval_seconds,source_unit) "
-                          "VALUES (?, 'live_poll', 60, 'kWh')", (c.lastrowid,))
+                # source_timezone is the zone of this naive timestamp; it is known only
+                # when a reporting zone was recorded (never guessed from the host).
+                c.execute("INSERT INTO reading_provenance(reading_id,source,interval_seconds,"
+                          "source_timezone,source_unit) VALUES (?, 'live_poll', 60, ?, 'kWh')",
+                          (c.lastrowid, reporting_zone))
                 _upsert_latest_snapshot_with_conn(
                     conn,
                     device_gid=str(gid),
@@ -1457,7 +1700,7 @@ def poll_and_store(vue, device_gids):
             )
 
         # Prune old rows to keep the database from growing unboundedly.
-        cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
+        cutoff = (reporting_now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
         c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
         global _last_compaction
         compacted = 0
@@ -1508,7 +1751,7 @@ def compact_minute_readings(conn, days: int) -> int:
     """
     if days <= 0:
         return 0
-    cutoff = (datetime.now() - timedelta(days=days)).replace(
+    cutoff = (reporting_now() - timedelta(days=days)).replace(
         minute=0, second=0, microsecond=0).isoformat()
     conn.execute("DROP TABLE IF EXISTS _compact")
     conn.execute(
@@ -1557,7 +1800,7 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
-        first = datetime.now().replace(day=1)
+        first = reporting_now().replace(day=1)
         for _ in range(max(1, months) - 1):
             first = (first - timedelta(days=1)).replace(day=1)
         since = first.strftime("%Y-%m-01")
@@ -1594,7 +1837,7 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
 def write_monthly_reports(directory: str | None = None) -> list[str]:
     """Write a Markdown cost report for each completed month that has none yet."""
     directory = directory or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "reports")
-    current = datetime.now().strftime("%Y-%m")
+    current = reporting_now().strftime("%Y-%m")
     written = []
     for month in get_monthly_costs(12):
         path = os.path.join(directory, f"energy-{month['month']}.md")
@@ -1781,7 +2024,7 @@ def get_main_total(hours: int = 24, device_gid: str | None = None) -> dict | Non
     """
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    since = (reporting_now() - timedelta(hours=hours)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1807,7 +2050,7 @@ def get_summary(hours=24, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    since = (reporting_now() - timedelta(hours=hours)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1842,7 +2085,7 @@ def get_channel_totals(
 
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    since = (reporting_now() - timedelta(hours=hours)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1870,7 +2113,7 @@ def get_hourly_data(days=7, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    since = (datetime.now() - timedelta(days=days)).isoformat()
+    since = (reporting_now() - timedelta(days=days)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1899,7 +2142,7 @@ def get_daily_data(days=30, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    since = (datetime.now() - timedelta(days=days)).isoformat()
+    since = (reporting_now() - timedelta(days=days)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1966,7 +2209,7 @@ def get_month_comparison(device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    now = datetime.now()
+    now = reporting_now()
     # First day of this month
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     # First day of last month
@@ -2008,7 +2251,7 @@ def get_peak_usage(device_gid: str | None = None):
     """Find peak usage times."""
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(days=30)).isoformat()
+    since = (reporting_now() - timedelta(days=30)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2069,7 +2312,7 @@ def get_intraday_comparison(device_gid: str | None = None) -> dict:
         conn.close()
         return {"labels": [], "today": [], "yesterday": []}
 
-    now = datetime.now()
+    now = reporting_now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     yesterday_start = today_start - timedelta(days=1)
     tomorrow_start = today_start + timedelta(days=1)
@@ -2118,7 +2361,7 @@ def get_peak_24h(device_gid: str | None = None) -> dict:
     """Return the highest-demand timestamp in the last 24h (Main channel) and its watt estimate."""
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=24)).isoformat()
+    since = (reporting_now() - timedelta(hours=24)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2156,7 +2399,7 @@ def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    now = datetime.now()
+    now = reporting_now()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2238,7 +2481,7 @@ def get_circuit_history(
     dense minute sampling in both equal-length periods. This is a sampling guard,
     not a guarantee of coverage for imported history of unknown intervals.
     """
-    now = now or datetime.now()
+    now = now or reporting_now()
     conn = _connect()
     try:
         gid = _resolve_device_gid(conn.cursor(), device_gid)
@@ -2357,7 +2600,7 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
     """
     conn = _connect()
     c = conn.cursor()
-    now = datetime.now()
+    now = reporting_now()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2465,7 +2708,7 @@ def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
             "worst_day": None,
         }
 
-    since = (datetime.now() - timedelta(days=days_back)).isoformat()
+    since = (reporting_now() - timedelta(days=days_back)).isoformat()
     c.execute(
         """SELECT strftime('%Y-%m-%d', timestamp) as day,
                   SUM(usage_kwh) as total_kwh,
@@ -2612,7 +2855,7 @@ def _interval_utc_candidates(stamp: str, seconds: float) -> set[tuple[float, flo
     """Conservatively consider both folds of legacy local clocks when comparing intervals."""
     moment = datetime.fromisoformat(stamp)
     return {(start, start + seconds) for fold in (0, 1)
-            for start in (moment.replace(fold=fold).astimezone(timezone.utc).timestamp(),)}
+            for start in (_local_wall_clock_to_utc(moment, fold).timestamp(),)}
 
 
 def _poll_overlaps_import(conn, gid: str, name: str, stamp: str) -> bool:
@@ -2671,13 +2914,18 @@ def import_emporia_csv(
     rather than guessed. Storage remains legacy local until coordinated UTC cutover.
     Declared source instants are normalized into the collector's local-clock basis.
     Source and interval metadata are saved only for newly accepted rows.
+    The device scope is the registered cloud gid the filename prefix resolves to
+    (or an explicit ``device_gid`` that does not contradict that evidence); unknown
+    or ambiguous identities raise ``DeviceIdentityError`` before any write (#140).
     """
     import csv
 
     path = Path(filepath)
     stem = Path(original_filename).stem if original_filename else path.stem
-    gid = str(device_gid) if device_gid is not None else stem.split('-')[0]
-    if not gid:
+    # The filename prefix is evidence, never the device scope: it is resolved to a
+    # registered cloud gid inside the publication transaction (see below).
+    prefix = stem.split('-')[0]
+    if not prefix.strip() and not (device_gid is not None and str(device_gid).strip()):
         raise ValueError("CSV device identity must be nonempty")
     interval = stem.split('-')[-1].upper()
     rate = RATE_CENTS
@@ -2733,11 +2981,11 @@ def import_emporia_csv(
                 stored_moment = moment
                 if zone:
                     instant = moment.replace(tzinfo=ZoneInfo(zone)).astimezone(timezone.utc)
-                    stored_moment = instant.astimezone().replace(tzinfo=None)
+                    stored_moment = instant.astimezone(_reporting_tzinfo()).replace(tzinfo=None)
                     # A naive legacy key cannot distinguish the repeated local hour.
                     # Reject either fold rather than merging two physical intervals.
                     candidates = {
-                        stored_moment.replace(fold=fold).astimezone(timezone.utc)
+                        _local_wall_clock_to_utc(stored_moment, fold)
                         for fold in (0, 1)
                     }
                     if len(candidates) != 1:
@@ -2765,13 +3013,22 @@ def import_emporia_csv(
                 except (ValueError, TypeError, OverflowError):
                     errors += 1
                     continue
-                rows_to_insert.append((stored_moment.isoformat(), gid, None, name, kwh, cents,
+                rows_to_insert.append((stored_moment.isoformat(), None, None, name, kwh, cents,
                                        duration, 'kW' if power else 'kWh'))
 
     conn = _connect()
     try:
         with conn:
             conn.execute('BEGIN IMMEDIATE')
+            gid, identity_method = device_identity.resolve_import_identity(conn, prefix, device_gid)
+            legacy_scopes = device_identity.legacy_alias_gids(conn, gid)
+            if legacy_scopes:
+                raise device_identity.DeviceIdentityError(
+                    "Earlier imports for this monitor were stored under the export prefix "
+                    f"({', '.join(legacy_scopes)}) instead of its cloud ID. Review and rebind "
+                    "that history first (python energy.py device-identities); nothing was imported.",
+                    status='legacy_history', prefix=prefix, candidates=legacy_scopes)
+            rows_to_insert = [(row[0], gid, *row[2:]) for row in rows_to_insert]
             inserted = 0
             compacted_conflicts = interval_conflicts = 0
             coverage_cache = {}
@@ -2825,8 +3082,9 @@ def import_emporia_csv(
                 first_hour = last_hour = row[0][:13]
                 if row[6] is not None:
                     try:
-                        start_utc = datetime.fromisoformat(row[0]).astimezone(timezone.utc)
-                        end_local = (start_utc + timedelta(seconds=row[6], microseconds=-1)).astimezone()
+                        start_utc = _local_wall_clock_to_utc(datetime.fromisoformat(row[0]))
+                        end_local = (start_utc + timedelta(seconds=row[6], microseconds=-1)
+                                     ).astimezone(_reporting_tzinfo())
                         last_hour = max(first_hour, end_local.replace(tzinfo=None).isoformat()[:13])
                     except (ValueError, OverflowError):
                         compacted_conflicts += 1
@@ -2858,6 +3116,12 @@ def import_emporia_csv(
                         for start, end in candidates:
                             _add_coverage(coverage, start, end)
             skipped += len(rows_to_insert) - inserted - compacted_conflicts - interval_conflicts
+            conn.execute(
+                """INSERT INTO import_identity_evidence
+                   (imported_at,original_filename,filename_prefix,resolved_gid,method,rows_inserted)
+                   VALUES (?,?,?,?,?,?)""",
+                (datetime.now(timezone.utc).isoformat(), original_filename or path.name,
+                 prefix, gid, identity_method, inserted))
             if inserted:
                 _refresh_import_snapshot_with_conn(conn, gid)
             if inserted or not (compacted_conflicts or interval_conflicts):
@@ -2872,6 +3136,7 @@ def import_emporia_csv(
     unit = next(iter(units)) if len(units) == 1 else 'mixed'
     return {
         'imported': inserted, 'skipped': skipped, 'errors': errors,
+        'device_gid': gid, 'identity_method': identity_method,
         'compacted_conflicts': compacted_conflicts, 'interval_conflicts': interval_conflicts,
         'message': (f'{compacted_conflicts + interval_conflicts} rows overlap existing recorded intervals or unverified history and need review before import.'
                     if compacted_conflicts or interval_conflicts else ''),
@@ -2880,6 +3145,231 @@ def import_emporia_csv(
         'nonexistent_timestamps': nonexistent,
         'conversion_factor': duration / 3600 if unit == 'kWatts' and duration is not None else 1.0 if unit == 'kWhs' else None,
     }
+
+
+def audit_device_identities() -> dict:
+    """Read-only report of reading scopes versus registered monitors (#140).
+
+    A scope that is not a registered cloud gid is either legacy history that
+    verified identity evidence ties to exactly one monitor (``legacy``), or has no
+    such evidence (``unresolved``). Nothing is modified.
+    """
+    conn = _connect()
+    try:
+        registered = set(device_identity.known_cloud_gids(conn))
+        monitors = {gid: {"device_gid": gid, "aliases": [], "legacy_scopes": []} for gid in sorted(registered)}
+        for row in conn.execute("SELECT cloud_gid, alias_kind, alias, source FROM device_aliases ORDER BY 1,2,3"):
+            monitors[row["cloud_gid"]]["aliases"].append(
+                {"kind": row["alias_kind"], "alias": row["alias"], "source": row["source"]})
+        unresolved = []
+        scopes = conn.execute("""SELECT device_gid, COUNT(*) AS readings, MIN(timestamp) AS first,
+            MAX(timestamp) AS last FROM readings GROUP BY device_gid ORDER BY device_gid""").fetchall()
+        for scope in scopes:
+            if scope["device_gid"] in registered:
+                monitors[scope["device_gid"]]["readings"] = scope["readings"]
+                continue
+            resolution = device_identity.resolve_export_prefix(conn, scope["device_gid"])
+            entry = {"scope": scope["device_gid"], "readings": scope["readings"],
+                     "first": scope["first"], "last": scope["last"]}
+            if resolution.status == "resolved":
+                monitors[resolution.cloud_gid]["legacy_scopes"].append(entry)
+            else:
+                unresolved.append({**entry, "status": resolution.status,
+                                   "candidates": list(resolution.candidates)})
+        evidence = [dict(row) for row in conn.execute(
+            "SELECT * FROM import_identity_evidence ORDER BY id DESC LIMIT 50")]
+        rebindings = [dict(row) for row in conn.execute(
+            "SELECT * FROM device_rebindings ORDER BY id DESC LIMIT 50")]
+    finally:
+        conn.close()
+    return {"monitors": list(monitors.values()), "unresolved_scopes": unresolved,
+            "recent_import_evidence": evidence, "rebindings": rebindings}
+
+
+def _scope_interval_coverage(rows) -> list[tuple[float, float]]:
+    coverage: list[tuple[float, float]] = []
+    for row in rows:
+        stamp, seconds = row["timestamp"], row["interval_seconds"]
+        if seconds is None:
+            stamp, seconds = stamp[:13] + ":00:00", 3600
+        for start, end in _interval_utc_candidates(stamp, seconds):
+            _add_coverage(coverage, start, end)
+    return coverage
+
+
+def _plan_rebind(conn, alias: str, canonical: str) -> dict:
+    """Decide whether legacy scope ``alias`` can move under ``canonical`` without loss."""
+    blockers: list[str] = []
+    plan = {"alias": alias, "canonical": canonical, "readings": 0, "blockers": blockers}
+    if alias == canonical:
+        blockers.append("alias and canonical are the same scope")
+        return plan
+    registered = set(device_identity.known_cloud_gids(conn))
+    if canonical not in registered:
+        blockers.append("canonical is not a registered cloud gid")
+    if alias in registered:
+        blockers.append("alias is itself a registered monitor; separate monitors are never merged")
+    resolution = device_identity.resolve_export_prefix(conn, alias)
+    if resolution.cloud_gid != canonical:
+        blockers.append(f"alias is not verified as this monitor (identity {resolution.status})")
+    plan["readings"] = conn.execute(
+        "SELECT COUNT(*) FROM readings WHERE device_gid=?", (alias,)).fetchone()[0]
+    if blockers or not plan["readings"]:
+        return plan
+    live = conn.execute("""SELECT COUNT(*) FROM readings r JOIN reading_provenance p ON p.reading_id=r.id
+        WHERE r.device_gid=? AND p.source='live_poll'""", (alias,)).fetchone()[0]
+    if live:
+        blockers.append(f"{live} live-poll readings under the alias; it is not an export-only scope")
+    plan["without_provenance"] = conn.execute("""SELECT COUNT(*) FROM readings r
+        LEFT JOIN reading_provenance p ON p.reading_id=r.id
+        WHERE r.device_gid=? AND p.reading_id IS NULL""", (alias,)).fetchone()[0]
+    collisions = conn.execute("""SELECT COUNT(*) FROM readings a JOIN readings c
+        ON c.device_gid=? AND c.timestamp=a.timestamp AND c.channel_name IS a.channel_name
+        WHERE a.device_gid=?""", (canonical, alias)).fetchone()[0]
+    if collisions:
+        blockers.append(f"{collisions} readings share a timestamp and channel with the canonical monitor")
+    overlaps = compaction_overlaps = 0
+    channels = [row[0] for row in conn.execute(
+        "SELECT DISTINCT channel_name FROM readings WHERE device_gid=?", (alias,))]
+    try:
+        for channel in channels:
+            alias_rows = conn.execute("""SELECT r.timestamp, p.interval_seconds FROM readings r
+                LEFT JOIN reading_provenance p ON p.reading_id=r.id
+                WHERE r.device_gid=? AND r.channel_name IS ? ORDER BY r.timestamp""",
+                                      (alias, channel)).fetchall()
+            alias_coverage = _scope_interval_coverage(alias_rows)
+            lower = (datetime.fromisoformat(alias_rows[0]["timestamp"]) - timedelta(hours=27)).isoformat()
+            upper = (datetime.fromisoformat(alias_rows[-1]["timestamp"]) + timedelta(hours=27)).isoformat()
+            for saved in conn.execute("""SELECT r.timestamp, p.interval_seconds FROM readings r
+                    LEFT JOIN reading_provenance p ON p.reading_id=r.id
+                    WHERE r.device_gid=? AND r.channel_name IS ? AND r.timestamp>=? AND r.timestamp<=?""",
+                                      (canonical, channel, lower, upper)):
+                stamp, seconds = saved["timestamp"], saved["interval_seconds"]
+                if seconds is None:
+                    stamp, seconds = stamp[:13] + ":00:00", 3600
+                if any(_intersects_coverage(alias_coverage, start, end)
+                       for start, end in _interval_utc_candidates(stamp, seconds)):
+                    overlaps += 1
+            if channel is not None:
+                compaction_overlaps += conn.execute("""SELECT COUNT(*) FROM reading_compactions
+                    WHERE device_gid=? AND channel_name=? AND hour_key BETWEEN ? AND ?""",
+                    (canonical, channel, alias_rows[0]["timestamp"][:13],
+                     alias_rows[-1]["timestamp"][:13])).fetchone()[0]
+    except (ValueError, OverflowError):
+        blockers.append("a stored timestamp could not be interpreted for overlap checking")
+    if overlaps:
+        blockers.append(f"{overlaps} canonical readings overlap the alias's recorded intervals")
+    if compaction_overlaps:
+        blockers.append(f"{compaction_overlaps} canonical compacted hours fall inside the alias's range")
+    plan["channels"] = len(channels)
+    if _load_settings().get("primary_device_gid") == alias:
+        plan["settings_warning"] = "settings.json primary_device_gid names the alias; update it to the canonical gid"
+    return plan
+
+
+def rebind_device_history(alias: str, canonical: str, *, apply: bool = False,
+                          backup_path: str | None = None) -> dict:
+    """Move a legacy export-prefix scope under its verified canonical monitor.
+
+    Dry run by default. Applying requires a fresh verified backup (never overwritten),
+    runs in one transaction, and only changes ``device_gid``: reading IDs, energy,
+    stored cents, provenance and journal identity are preserved (the journal sees
+    ordinary same-ID upserts). Any key collision, interval overlap, live-poll row
+    or unverified identity blocks the whole operation with no writes. Idempotent:
+    after success there is nothing left under the alias. Reversible with
+    ``revert_device_rebinding``.
+    """
+    alias, canonical = str(alias).strip(), str(canonical).strip()
+    conn = _connect()
+    try:
+        plan = _plan_rebind(conn, alias, canonical)
+    finally:
+        conn.close()
+    if not plan["readings"] and not plan["blockers"]:
+        return {**plan, "status": "nothing_to_rebind"}
+    if plan["blockers"]:
+        return {**plan, "status": "blocked"}
+    if not apply:
+        return {**plan, "status": "dry_run"}
+    if not backup_path:
+        raise ValueError("Applying a rebind requires backup_path for a verified backup")
+    backup = backup_database(backup_path)
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            plan = _plan_rebind(conn, alias, canonical)  # authoritative, under the write lock
+            if plan["blockers"] or not plan["readings"]:
+                return {**plan, "status": "blocked" if plan["blockers"] else "nothing_to_rebind",
+                        "backup": backup}
+            cursor = conn.execute(
+                """INSERT INTO device_rebindings(alias_gid,canonical_gid,applied_at,reading_count,backup_path)
+                   VALUES (?,?,?,?,?)""",
+                (alias, canonical, datetime.now(timezone.utc).isoformat(), plan["readings"], backup["path"]))
+            rebinding_id = cursor.lastrowid
+            conn.execute("INSERT INTO reading_rebind_log(rebinding_id,reading_id) "
+                         "SELECT ?, id FROM readings WHERE device_gid=?", (rebinding_id, alias))
+            conn.execute("INSERT INTO rebinding_compactions(rebinding_id,channel_name,hour_key) "
+                         "SELECT ?, channel_name, hour_key FROM reading_compactions WHERE device_gid=?",
+                         (rebinding_id, alias))
+            conn.execute("UPDATE reading_compactions SET device_gid=? WHERE device_gid=?", (canonical, alias))
+            conn.execute("UPDATE readings SET device_gid=? WHERE device_gid=?", (canonical, alias))
+            conn.execute("DELETE FROM latest_channel_snapshot WHERE device_gid=?", (alias,))
+            _refresh_import_snapshot_with_conn(conn, canonical)
+    finally:
+        conn.close()
+    return {**plan, "status": "applied", "rebinding_id": rebinding_id, "backup": backup}
+
+
+def revert_device_rebinding(rebinding_id: int) -> dict:
+    """Undo ``rebind_device_history``: restore the original scope for the logged readings."""
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM device_rebindings WHERE id=?", (rebinding_id,)).fetchone()
+            if not row:
+                raise ValueError("Unknown rebinding")
+            if row["reverted_at"]:
+                return {"status": "already_reverted", "rebinding_id": rebinding_id}
+            alias, canonical = row["alias_gid"], row["canonical_gid"]
+            clash = conn.execute("""SELECT COUNT(*) FROM readings r JOIN readings o
+                ON o.device_gid=? AND o.timestamp=r.timestamp AND o.channel_name IS r.channel_name
+                WHERE r.device_gid=? AND r.id IN
+                  (SELECT reading_id FROM reading_rebind_log WHERE rebinding_id=?)""",
+                                 (alias, canonical, rebinding_id)).fetchone()[0]
+            if clash:
+                return {"status": "blocked", "rebinding_id": rebinding_id,
+                        "blockers": [f"{clash} readings now collide with data under {alias}"]}
+            cursor = conn.execute("""UPDATE readings SET device_gid=? WHERE device_gid=? AND id IN
+                (SELECT reading_id FROM reading_rebind_log WHERE rebinding_id=?)""",
+                                  (alias, canonical, rebinding_id))
+            restored = cursor.rowcount
+            conn.execute("""INSERT OR IGNORE INTO reading_compactions(device_gid,channel_name,hour_key)
+                SELECT ?, channel_name, hour_key FROM rebinding_compactions WHERE rebinding_id=?""",
+                         (alias, rebinding_id))
+            conn.execute("""DELETE FROM reading_compactions WHERE device_gid=? AND (channel_name,hour_key) IN
+                (SELECT channel_name, hour_key FROM rebinding_compactions WHERE rebinding_id=?)""",
+                         (canonical, rebinding_id))
+            conn.execute("UPDATE device_rebindings SET reverted_at=? WHERE id=?",
+                         (datetime.now(timezone.utc).isoformat(), rebinding_id))
+            _refresh_import_snapshot_with_conn(conn, alias)
+            _refresh_import_snapshot_with_conn(conn, canonical)
+    finally:
+        conn.close()
+    return {"status": "reverted", "rebinding_id": rebinding_id, "restored": restored,
+            "missing": row["reading_count"] - restored}
+
+
+def bind_export_prefix(prefix: str, device_gid: str) -> dict:
+    """Operator-confirmed binding of one export prefix to one registered monitor."""
+    conn = _connect()
+    try:
+        with conn:
+            added = device_identity.bind_export_prefix(conn, prefix, device_gid)
+    finally:
+        conn.close()
+    return {"prefix": device_identity.normalize_alias(prefix), "device_gid": str(device_gid), "added": added}
 
 
 def fix_csv_kwatts_import() -> dict:
@@ -2921,7 +3411,7 @@ def get_capture_history(hours: int, device_gid: str | None = None,
     """Recorded Main minute coverage in completed local-clock hours, not uptime."""
     if type(hours) is not int or hours not in (48, 168):
         raise ValueError('hours must be 48 or 168')
-    end = (now or datetime.now()).replace(minute=0, second=0, microsecond=0)
+    end = (now or reporting_now()).replace(minute=0, second=0, microsecond=0)
     start = end - timedelta(hours=hours)
     conn = _connect()
     try:
@@ -2980,6 +3470,37 @@ if __name__ == "__main__":
             if len(sys.argv) != 3:
                 raise SystemExit("Usage: python energy.py backup DESTINATION.db")
             print(json.dumps(backup_database(sys.argv[2]), indent=2))
+        elif sys.argv[1] == "reporting-timezone":
+            print(json.dumps(reporting_timezone_status(), indent=2))
+        elif sys.argv[1] == "set-reporting-timezone":
+            tail = [a for a in sys.argv[2:] if a != "--existing-history-in-zone"]
+            if len(tail) != 1:
+                raise SystemExit("Usage: python energy.py set-reporting-timezone IANA/ZONE "
+                                 "[--existing-history-in-zone]")
+            print(json.dumps(set_reporting_timezone(
+                tail[0], existing_history_in_zone="--existing-history-in-zone" in sys.argv[2:]), indent=2))
+        elif sys.argv[1] == "device-identities":
+            print(json.dumps(audit_device_identities(), indent=2))
+        elif sys.argv[1] == "bind-prefix":
+            if len(sys.argv) != 4:
+                raise SystemExit("Usage: python energy.py bind-prefix EXPORT_PREFIX CLOUD_GID")
+            print(json.dumps(bind_export_prefix(sys.argv[2], sys.argv[3]), indent=2))
+        elif sys.argv[1] == "rebind":
+            import argparse
+            parser = argparse.ArgumentParser(prog="energy.py rebind", description=(
+                "Move a legacy export-prefix history under its verified monitor. "
+                "Dry run unless --apply; --apply needs --backup DESTINATION.db."))
+            parser.add_argument("alias")
+            parser.add_argument("canonical")
+            parser.add_argument("--apply", action="store_true")
+            parser.add_argument("--backup")
+            args = parser.parse_args(sys.argv[2:])
+            print(json.dumps(rebind_device_history(
+                args.alias, args.canonical, apply=args.apply, backup_path=args.backup), indent=2))
+        elif sys.argv[1] == "revert-rebind":
+            if len(sys.argv) != 3:
+                raise SystemExit("Usage: python energy.py revert-rebind REBINDING_ID")
+            print(json.dumps(revert_device_rebinding(int(sys.argv[2])), indent=2))
         elif sys.argv[1] == "poll":
             poll_once()
         elif sys.argv[1] == "summary":
@@ -3006,6 +3527,7 @@ if __name__ == "__main__":
                     f"{row['channel_name']}: {row['usage_kwh']:.4f} kWh = ${row['cost_cents'] / 100:.2f}"
                 )
         else:
-            print("Usage: python energy.py {poll|summary|hourly|daily|latest}")
+            print("Usage: python energy.py {poll|summary|hourly|daily|latest|backup|"
+                  "reporting-timezone|set-reporting-timezone|device-identities|bind-prefix|rebind|revert-rebind}")
     else:
         run_continuous()
