@@ -67,10 +67,61 @@ reinterpreted or repaired. Compacted raw poll metadata is removed and replacemen
 aggregates retain unknown provenance. Replication does not yet transfer this metadata, so the full
 interval-aware aggregation and synchronization work in #135 remains open.
 
+## Monitor identity (#140)
+
+A CSV filename names its monitor with a manufacturer suffix (for example
+`8C9E94-Barn-1H.csv`); live polling uses Emporia's numeric cloud `deviceGid`. They
+are the same physical monitor, so readings must share one `readings.device_gid`:
+the cloud gid.
+
+Every real device discovery (and every poll) records the cloud gid in
+`device_registry`, and each manufacturer id the SDK reports for it in
+`device_aliases`. The SDK can return several objects for one gid (parent and
+nested); they merge by gid and keep all channels. An import resolves the filename
+prefix inside its publication transaction:
+
+* the prefix equals a registered cloud gid, an observed manufacturer id, or (for
+  six or more hex digits) the end of exactly one observed manufacturer id; or
+* it does not resolve, or resolves to several monitors: the import is rejected with
+  nothing written (HTTP 400 with `identity_status` and `candidates`). The Import
+  page's **Monitor** menu supplies an explicit selection, which is recorded as a
+  source-local `export_prefix` binding for that exact prefix only.
+
+A selection that contradicts discovery evidence is rejected. Display names are
+never used. Original filename, prefix, resolved gid and method are kept in
+`import_identity_evidence`. Two monitors that share a suffix stay separate and
+require a selection; a new install with no discovery yet cannot import until the
+collector has polled once.
+
+Histories imported before this change were stored under the prefix itself. Nothing
+is rewritten automatically, and new imports for that monitor are refused until the
+legacy history is reviewed:
+
+```bash
+venv/bin/python3 energy.py device-identities                 # read-only audit
+venv/bin/python3 energy.py rebind 8C9E94 551741              # dry run: shows blockers
+venv/bin/python3 energy.py rebind 8C9E94 551741 --apply --backup ~/energy-pre-rebind.db
+venv/bin/python3 energy.py revert-rebind 1                   # undo, using the log
+```
+
+`--apply` writes a verified, non-overwriting backup first, then changes only
+`device_gid` in one transaction: reading IDs, energy, stored cents and provenance
+are untouched, and the change journal records ordinary same-ID upserts, so clients
+converge without a cache reset. Any key collision, any overlap between the legacy
+intervals and existing canonical readings or compacted hours, any live-poll row
+under the alias, or an alias not verified as that monitor blocks the whole
+operation. Repeating it finds nothing left to move. `bind-prefix PREFIX GID`
+records an operator-confirmed binding when discovery cannot verify a prefix.
+
+Not handled here (still part of #135/#127): reconciling legacy data that overlaps
+canonical live history, and the UTC cutover. Mapping a monitor does not establish
+phase count, slot map or continuous capture.
+
 ## Verification
 
 ```bash
 venv/bin/python3 -m unittest discover -s tests -p test_import_integrity.py -v
+venv/bin/python3 -m unittest discover -s tests -p test_device_identity.py -v
 venv/bin/python3 -m unittest discover -s tests -v
 ```
 
