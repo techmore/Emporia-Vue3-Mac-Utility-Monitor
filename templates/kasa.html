@@ -34,7 +34,7 @@
 
   {% with history_kind='kasa', history_title='Device history & comparisons' %}{% include 'device_history.html' %}{% endwith %}
 </div>
-<script>
+<script nonce="{{ csp_nonce() }}">
 (() => {
   const status = document.getElementById('kasaStatus');
   const gid = {{ active_device_gid|tojson }};

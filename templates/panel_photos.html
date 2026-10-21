@@ -17,7 +17,7 @@
   {% else %}<p>No reference photos uploaded yet.</p>{% endfor %}
   </div>
 </section>
-<script>
+<script nonce="{{ csp_nonce() }}">
 const status=document.getElementById('photo-status');
 async function photoRequest(url,options){
   try{const response=await fetch(url,options);const result=await response.json();
