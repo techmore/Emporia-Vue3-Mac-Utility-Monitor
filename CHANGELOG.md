@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reporting timezone for the collector (#127, first safe step): `energy.py set-reporting-timezone ZONE` records an immutable zone inside the database; once set, poll stamps, retention cutoffs, calendar bounds, bills, freshness checks and the CSV importer's conversions and overlap checks use it instead of the host clock, so relocating the database to a host in another zone no longer mixes two clocks (verified by running the same scenarios under several host zones). New live readings record the zone as provenance. Stored data is not converted; unset behaves as before. The UTC cutover and the decisions it needs are listed in docs/UTC_MIGRATION.md.
+
 - One canonical identity per monitor (#140): CSV imports no longer store the filename prefix as the device scope. Device discovery and polling now record each cloud gid and its manufacturer ids; an import resolves its prefix to exactly one registered monitor (cloud gid, manufacturer id, or an observed six-hex suffix) and is otherwise rejected with nothing written, with a **Monitor** menu on the Import page for an explicit selection. Original filename and resolution method are kept as evidence. Existing prefix-scoped history is not rewritten automatically: `energy.py device-identities` audits it, and `rebind`/`revert-rebind` move or restore it under a verified backup, only when there are no collisions or overlaps. See docs/CSV_IMPORT.md.
 
 - A **Compact layout** switch in the dropdown's More… section (no need to find Preferences); the app watches `ui.json` and re-applies density and dashboard style live when the dropdown or an editor changes it.

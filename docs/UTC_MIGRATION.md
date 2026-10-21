@@ -1,8 +1,9 @@
 # UTC migration - issue #127
 
-Status: preflight tooling only. Production still uses legacy naive/local energy
-timestamps. Do not convert live data or change the collector timezone yet.
-This is not a completed UTC migration, and a clean preflight does not authorize one.
+Status: preflight tooling plus an opt-in, host-independent reporting clock (see
+"Reporting timezone" below). Production still uses legacy naive wall-clock energy
+timestamps. Do not convert stored data yet. This is not a completed UTC migration,
+and a clean preflight does not authorize one.
 
 On October 8, the preflight examined all 100,237 readings from the verified
 pre-2.3.36 backup. Without declared provenance, every naive timestamp was correctly
@@ -10,6 +11,54 @@ unresolved. With an explicit America/New_York assumption, every timestamp had
 one valid candidate, with zero projected key collisions or duplicate IDs. The
 archived backup and exported input retained their SHA-256 hashes. This evidence
 applies to that snapshot, not later readings or unverified original source zones.
+
+## Reporting timezone: the safe step that has landed
+
+Storage is still naive wall-clock text; nothing below converts or reinterprets
+stored data. What changed is *which* wall clock new writes and queries use:
+
+```bash
+venv/bin/python3 energy.py reporting-timezone                  # recorded zone, host zone, agreement
+venv/bin/python3 energy.py set-reporting-timezone America/New_York
+# With readings already stored, recording the zone asserts they were all written in
+# that clock; only repeat with the flag if that is independently known:
+venv/bin/python3 energy.py set-reporting-timezone America/New_York --existing-history-in-zone
+```
+
+* The zone lives in `collector_timezone` inside the database, so it travels with
+  the data on relocation. It is written once and enforced immutable by triggers:
+  changing it would reinterpret history, which is the migration's job.
+* Once recorded, every naive "now" (poll stamps, heartbeats, retention cutoffs,
+  calendar-day/week/month bounds, heatmaps, bills, freshness checks) and every
+  host-local conversion in the CSV importer and its interval-overlap and fold
+  checks uses that zone, not the host's. Relocating the database to a host in
+  another zone therefore keeps one clock. A poller on a mismatching host logs one
+  warning per process.
+* New live readings record the zone in `reading_provenance.source_timezone`, the
+  first row-level evidence of a naive timestamp's zone. Unset zone means exactly
+  the old behaviour and NULL provenance. The host zone is never guessed into data.
+* `reading_provenance.source_timezone` on **CSV** rows is the *export's* declared
+  zone, while the stored timestamp has been converted to the collector clock. Do not
+  feed it to `audit_timestamps.py` as the row's interpretation zone.
+
+Still true, and intentionally not changed: the DST repeated hour remains
+ambiguous in naive text; nothing is stored as UTC; legacy rows have no provenance.
+
+### Decisions needed before the UTC cutover (not made here)
+
+1. **Existing history's zone.** Rows written before a zone was recorded have no
+   proof of their clock (see the preflight evidence above). Someone must assert the
+   zone (`--existing-history-in-zone`) or supply per-row provenance.
+2. **Convert or dual-read.** Rewrite stored timestamps to aware UTC (a one-way,
+   journal/generation-resetting change for every sync client, including the Mac
+   app and native cache), or keep naive text and add a UTC column/offset. Both
+   need a rehearsed rollback and an old-client policy.
+3. **Fold-hour policy.** Legacy rows inside a repeated hour cannot be split by
+   inspection. Quarantine, assume the first occurrence, or use journal order.
+4. **Whether a mismatched host should refuse to poll** (today: warn and keep
+   using the reporting clock).
+5. **Retire the draft protocol-3/UTC client work** from the closed drafts #134/#146
+   or reintroduce it in separately reviewable pieces after 1-3.
 
 ## Evidence and interpretation
 

@@ -43,7 +43,7 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
     try:
         data = {
             "ok": ok,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": reporting_now().isoformat(),
             "error": error,
             "consecutive_errors": consecutive_errors,
         }
@@ -58,7 +58,7 @@ def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: 
             conn.execute('INSERT INTO poller_health_events(timestamp,ok) VALUES (?,?)',
                          (data['timestamp'], int(ok)))
             conn.execute('DELETE FROM poller_health_events WHERE timestamp<?',
-                         ((datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
+                         ((reporting_now() - timedelta(days=DB_RETENTION_DAYS)).isoformat(),))
     except Exception:
         logger.exception("Could not record poller health history")
     finally:
@@ -137,6 +137,139 @@ def _connect(path: str | Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+# ── Reporting timezone (#127) ────────────────────────────────────────────────
+# Stored timestamps are still naive wall-clock strings (the UTC cutover is a
+# separate, owner-approved migration). What can be made safe now is *which*
+# wall clock: once an operator records a reporting zone, every naive "now" and
+# every host-local conversion uses that zone, so relocating the database to a
+# host with a different timezone no longer mixes two clocks. With no zone
+# recorded, behaviour is exactly the legacy host-local clock.
+_REPORTING_ZONE_CACHE: dict = {}
+_ZONE_UNSET_RECHECK_SECONDS = 5.0
+_host_zone_warned = False
+
+
+def get_reporting_timezone() -> str | None:
+    """The recorded IANA reporting zone, or None when none has been recorded."""
+    cached = _REPORTING_ZONE_CACHE.get(DB_PATH)
+    if cached is not None and (cached[0] is not None or time.monotonic() < cached[1]):
+        return cached[0]
+    zone = None
+    try:
+        # A short-lived read-only lookup on its own handle: this runs inside other
+        # operations (including open write transactions) and must never share or
+        # close their connection.
+        conn = sqlite3.connect(str(DB_PATH), timeout=30)
+        try:
+            row = conn.execute("SELECT zone FROM collector_timezone WHERE singleton=1").fetchone()
+        finally:
+            conn.close()
+        zone = row[0] if row else None
+    except sqlite3.OperationalError:
+        return None  # table not created yet; do not cache
+    _REPORTING_ZONE_CACHE[DB_PATH] = (zone, time.monotonic() + _ZONE_UNSET_RECHECK_SECONDS)
+    return zone
+
+
+def _reporting_tzinfo() -> ZoneInfo | None:
+    zone = get_reporting_timezone()
+    return ZoneInfo(zone) if zone else None
+
+
+def reporting_now() -> datetime:
+    """Naive wall-clock "now" in the reporting zone (the host's clock if none is recorded)."""
+    zone = get_reporting_timezone()
+    if zone:
+        return datetime.now(ZoneInfo(zone)).replace(tzinfo=None)
+    return datetime.now()
+
+
+def _local_wall_clock_to_utc(moment: datetime, fold: int = 0) -> datetime:
+    """Interpret a naive stored wall-clock time in the reporting zone (else the host's)."""
+    tz = _reporting_tzinfo()
+    moment = moment.replace(fold=fold, tzinfo=tz) if tz else moment.replace(fold=fold)
+    return moment.astimezone(timezone.utc)
+
+
+def detect_host_timezone() -> str | None:
+    """Best-effort IANA name of the host's configured zone; None when it cannot be verified."""
+    candidates = []
+    env = os.environ.get("TZ", "").lstrip(":")
+    if env:
+        candidates.append(env)
+    try:
+        candidates.append(Path("/etc/timezone").read_text().strip())
+    except OSError:
+        pass
+    try:
+        target = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in target:
+            candidates.append(target.split("zoneinfo/", 1)[1])
+    except OSError:
+        pass
+    for name in candidates:
+        try:
+            ZoneInfo(name)
+        except (ValueError, ZoneInfoNotFoundError):
+            continue
+        return name
+    return None
+
+
+def set_reporting_timezone(zone: str, *, existing_history_in_zone: bool = False) -> dict:
+    """Record the collector's reporting zone once; it can never be silently changed.
+
+    Changing the zone would reinterpret stored naive history, which is the
+    migration's job, so a recorded zone is immutable. Recording a zone while
+    readings exist asserts that all of them were written in that clock; that
+    provenance claim must be explicit (``existing_history_in_zone``).
+    """
+    try:
+        key = ZoneInfo(str(zone).strip()).key
+    except (ValueError, ZoneInfoNotFoundError, TypeError) as exc:
+        raise ValueError("Unknown IANA timezone") from exc
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT zone FROM collector_timezone WHERE singleton=1").fetchone()
+            if row:
+                if row["zone"] == key:
+                    return {"status": "unchanged", "zone": key}
+                raise ValueError(f"Reporting zone is already {row['zone']} and cannot be changed "
+                                 "without the reviewed UTC migration")
+            stats = conn.execute("SELECT COUNT(*) AS n, MAX(id) AS last_id FROM readings").fetchone()
+            if stats["n"] and not existing_history_in_zone:
+                raise ValueError(
+                    f"{stats['n']} readings already exist. Recording the zone asserts they were all "
+                    "written in that clock; repeat with --existing-history-in-zone only if that is known.")
+            conn.execute(
+                """INSERT INTO collector_timezone(singleton,zone,recorded_at,readings_at_record,last_reading_id)
+                   VALUES (1,?,?,?,?)""",
+                (key, datetime.now(timezone.utc).isoformat(), stats["n"], stats["last_id"]))
+    finally:
+        conn.close()
+    _REPORTING_ZONE_CACHE.pop(DB_PATH, None)
+    return {"status": "recorded", "zone": key, "existing_readings": stats["n"]}
+
+
+def reporting_timezone_status() -> dict:
+    """Recorded zone, detected host zone and whether the host clock agrees."""
+    zone, host = get_reporting_timezone(), detect_host_timezone()
+    return {"reporting_zone": zone, "host_zone": host,
+            "host_agrees": None if zone is None or host is None else zone == host}
+
+
+def _warn_if_host_zone_differs() -> None:
+    global _host_zone_warned
+    status = reporting_timezone_status()
+    if status["host_agrees"] is False and not _host_zone_warned:
+        _host_zone_warned = True
+        logger.warning("Host timezone %s differs from the recorded reporting zone %s; timestamps "
+                       "follow the reporting zone, not the host clock", status["host_zone"],
+                       status["reporting_zone"])
+
+
 def backup_database(destination: str | Path) -> dict:
     """Publish a verified, standalone SQLite snapshot without overwriting a file."""
     target = Path(destination).expanduser().absolute()
@@ -180,7 +313,7 @@ def get_today_circuit_totals(device_gid: str | None = None, period: str = "day")
     """Recorded totals for local calendar day, Monday-based week, or month to date."""
     if period not in {"day", "week", "month"}:
         raise ValueError("Invalid cost period")
-    now = datetime.now()
+    now = reporting_now()
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "week":
         start -= timedelta(days=start.weekday())
@@ -209,7 +342,7 @@ def get_circuit_week_comparison(
     device_gid: str | None = None, *, end: datetime | None = None,
 ) -> list[dict]:
     """Compare complete seven-day windows, withholding changes for sparse capture."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    boundary = (end or reporting_now()).replace(hour=0, minute=0, second=0, microsecond=0)
     middle = boundary - timedelta(days=7)
     start = boundary - timedelta(days=14)
     conn = _connect()
@@ -265,7 +398,7 @@ def get_circuit_week_comparison(
 
 def get_power_heatmap(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Recorded circuit energy in hourly buckets; absent hours are never zero-filled."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    boundary = (end or reporting_now()).replace(hour=0, minute=0, second=0, microsecond=0)
     start = boundary - timedelta(days=7)
     hours = [(start + timedelta(hours=i)).strftime('%Y-%m-%dT%H') for i in range(168)]
     conn = _connect()
@@ -328,7 +461,7 @@ def _weekly_pattern(rows: list[dict]) -> dict:
 
 def get_weekly_power_pattern(device_gid: str | None = None, *, end: datetime | None = None) -> dict:
     """Four-week same-weekday/hour baseline, requiring two >=95%-sampled repetitions."""
-    boundary = (end or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    boundary = (end or reporting_now()).replace(hour=0, minute=0, second=0, microsecond=0)
     conn = _connect()
     try:
         gid = _resolve_device_gid(conn.cursor(), device_gid)
@@ -385,6 +518,21 @@ def ensure_table():
         -- Canonical monitor identity (#140). readings.device_gid is the Emporia cloud
         -- gid. Aliases are evidence of which cloud gid an identifier was observed under;
         -- they never rewrite readings.
+        -- Reporting zone (#127): written once, immutable. Naive stored timestamps are
+        -- in this wall clock; changing it requires the reviewed UTC migration.
+        CREATE TABLE IF NOT EXISTS collector_timezone (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+            zone TEXT NOT NULL,
+            recorded_at TEXT NOT NULL,
+            readings_at_record INTEGER NOT NULL,
+            last_reading_id INTEGER
+        );
+        CREATE TRIGGER IF NOT EXISTS collector_timezone_immutable_update
+            BEFORE UPDATE ON collector_timezone
+        BEGIN SELECT RAISE(ABORT, 'reporting timezone is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS collector_timezone_immutable_delete
+            BEFORE DELETE ON collector_timezone
+        BEGIN SELECT RAISE(ABORT, 'reporting timezone is immutable'); END;
         CREATE TABLE IF NOT EXISTS device_registry (
             cloud_gid TEXT PRIMARY KEY,
             first_seen TEXT NOT NULL
@@ -870,7 +1018,7 @@ def apply_reading_changes(page: dict) -> dict:
                     cost_cents=excluded.cost_cents""",
                     tuple(row.get(key) for key in ("reading_id", "timestamp", "device_gid",
                                                   "channel_num", "channel_name", "usage_kwh", "cost_cents")))
-        synchronized_at = datetime.now().isoformat() if not page["has_more"] else (
+        synchronized_at = reporting_now().isoformat() if not page["has_more"] else (
             state["synchronized_at"] if state else None
         )
         conn.execute("""INSERT INTO sync_cache_state VALUES (1, ?, ?, ?, ?)
@@ -1006,7 +1154,7 @@ def _save_device_capabilities_with_conn(
             int(has_mains_c),
             int(mains_c_no_ct),
             source,
-            datetime.now().isoformat(),
+            reporting_now().isoformat(),
         ),
     )
 
@@ -1478,7 +1626,9 @@ def poll_and_store(vue, device_gids):
                 if value is not None and not math.isfinite(value * RATE_CENTS):
                     raise ValueError("Emporia channel cost overflow")
 
-        now = datetime.now().isoformat()
+        reporting_zone = get_reporting_timezone()
+        _warn_if_host_zone_differs()
+        now = reporting_now().isoformat()
         # Serialize coverage checks and writes against concurrent CSV imports.
         conn.execute('BEGIN IMMEDIATE')
 
@@ -1523,8 +1673,11 @@ def poll_and_store(vue, device_gids):
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (now, gid, channelnum, channel_name, channel.usage, cost),
                 )
-                c.execute("INSERT INTO reading_provenance(reading_id,source,interval_seconds,source_unit) "
-                          "VALUES (?, 'live_poll', 60, 'kWh')", (c.lastrowid,))
+                # source_timezone is the zone of this naive timestamp; it is known only
+                # when a reporting zone was recorded (never guessed from the host).
+                c.execute("INSERT INTO reading_provenance(reading_id,source,interval_seconds,"
+                          "source_timezone,source_unit) VALUES (?, 'live_poll', 60, ?, 'kWh')",
+                          (c.lastrowid, reporting_zone))
                 _upsert_latest_snapshot_with_conn(
                     conn,
                     device_gid=str(gid),
@@ -1547,7 +1700,7 @@ def poll_and_store(vue, device_gids):
             )
 
         # Prune old rows to keep the database from growing unboundedly.
-        cutoff = (datetime.now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
+        cutoff = (reporting_now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
         c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
         global _last_compaction
         compacted = 0
@@ -1598,7 +1751,7 @@ def compact_minute_readings(conn, days: int) -> int:
     """
     if days <= 0:
         return 0
-    cutoff = (datetime.now() - timedelta(days=days)).replace(
+    cutoff = (reporting_now() - timedelta(days=days)).replace(
         minute=0, second=0, microsecond=0).isoformat()
     conn.execute("DROP TABLE IF EXISTS _compact")
     conn.execute(
@@ -1647,7 +1800,7 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
         gid = _resolve_device_gid(conn.cursor(), device_gid)
         if not gid:
             return []
-        first = datetime.now().replace(day=1)
+        first = reporting_now().replace(day=1)
         for _ in range(max(1, months) - 1):
             first = (first - timedelta(days=1)).replace(day=1)
         since = first.strftime("%Y-%m-01")
@@ -1684,7 +1837,7 @@ def get_monthly_costs(months: int = 12, device_gid: str | None = None) -> list[d
 def write_monthly_reports(directory: str | None = None) -> list[str]:
     """Write a Markdown cost report for each completed month that has none yet."""
     directory = directory or os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "reports")
-    current = datetime.now().strftime("%Y-%m")
+    current = reporting_now().strftime("%Y-%m")
     written = []
     for month in get_monthly_costs(12):
         path = os.path.join(directory, f"energy-{month['month']}.md")
@@ -1871,7 +2024,7 @@ def get_main_total(hours: int = 24, device_gid: str | None = None) -> dict | Non
     """
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    since = (reporting_now() - timedelta(hours=hours)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1897,7 +2050,7 @@ def get_summary(hours=24, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    since = (reporting_now() - timedelta(hours=hours)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1932,7 +2085,7 @@ def get_channel_totals(
 
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=hours)).isoformat()
+    since = (reporting_now() - timedelta(hours=hours)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1960,7 +2113,7 @@ def get_hourly_data(days=7, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    since = (datetime.now() - timedelta(days=days)).isoformat()
+    since = (reporting_now() - timedelta(days=days)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -1989,7 +2142,7 @@ def get_daily_data(days=30, device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    since = (datetime.now() - timedelta(days=days)).isoformat()
+    since = (reporting_now() - timedelta(days=days)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2056,7 +2209,7 @@ def get_month_comparison(device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    now = datetime.now()
+    now = reporting_now()
     # First day of this month
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     # First day of last month
@@ -2098,7 +2251,7 @@ def get_peak_usage(device_gid: str | None = None):
     """Find peak usage times."""
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(days=30)).isoformat()
+    since = (reporting_now() - timedelta(days=30)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2159,7 +2312,7 @@ def get_intraday_comparison(device_gid: str | None = None) -> dict:
         conn.close()
         return {"labels": [], "today": [], "yesterday": []}
 
-    now = datetime.now()
+    now = reporting_now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     yesterday_start = today_start - timedelta(days=1)
     tomorrow_start = today_start + timedelta(days=1)
@@ -2208,7 +2361,7 @@ def get_peak_24h(device_gid: str | None = None) -> dict:
     """Return the highest-demand timestamp in the last 24h (Main channel) and its watt estimate."""
     conn = _connect()
     c = conn.cursor()
-    since = (datetime.now() - timedelta(hours=24)).isoformat()
+    since = (reporting_now() - timedelta(hours=24)).isoformat()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2246,7 +2399,7 @@ def get_circuit_data(channel_name, period="day", device_gid: str | None = None):
     conn = _connect()
     c = conn.cursor()
 
-    now = datetime.now()
+    now = reporting_now()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2328,7 +2481,7 @@ def get_circuit_history(
     dense minute sampling in both equal-length periods. This is a sampling guard,
     not a guarantee of coverage for imported history of unknown intervals.
     """
-    now = now or datetime.now()
+    now = now or reporting_now()
     conn = _connect()
     try:
         gid = _resolve_device_gid(conn.cursor(), device_gid)
@@ -2447,7 +2600,7 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
     """
     conn = _connect()
     c = conn.cursor()
-    now = datetime.now()
+    now = reporting_now()
     resolved_gid = _resolve_device_gid(c, device_gid)
     if not resolved_gid:
         conn.close()
@@ -2555,7 +2708,7 @@ def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
             "worst_day": None,
         }
 
-    since = (datetime.now() - timedelta(days=days_back)).isoformat()
+    since = (reporting_now() - timedelta(days=days_back)).isoformat()
     c.execute(
         """SELECT strftime('%Y-%m-%d', timestamp) as day,
                   SUM(usage_kwh) as total_kwh,
@@ -2702,7 +2855,7 @@ def _interval_utc_candidates(stamp: str, seconds: float) -> set[tuple[float, flo
     """Conservatively consider both folds of legacy local clocks when comparing intervals."""
     moment = datetime.fromisoformat(stamp)
     return {(start, start + seconds) for fold in (0, 1)
-            for start in (moment.replace(fold=fold).astimezone(timezone.utc).timestamp(),)}
+            for start in (_local_wall_clock_to_utc(moment, fold).timestamp(),)}
 
 
 def _poll_overlaps_import(conn, gid: str, name: str, stamp: str) -> bool:
@@ -2828,11 +2981,11 @@ def import_emporia_csv(
                 stored_moment = moment
                 if zone:
                     instant = moment.replace(tzinfo=ZoneInfo(zone)).astimezone(timezone.utc)
-                    stored_moment = instant.astimezone().replace(tzinfo=None)
+                    stored_moment = instant.astimezone(_reporting_tzinfo()).replace(tzinfo=None)
                     # A naive legacy key cannot distinguish the repeated local hour.
                     # Reject either fold rather than merging two physical intervals.
                     candidates = {
-                        stored_moment.replace(fold=fold).astimezone(timezone.utc)
+                        _local_wall_clock_to_utc(stored_moment, fold)
                         for fold in (0, 1)
                     }
                     if len(candidates) != 1:
@@ -2929,8 +3082,9 @@ def import_emporia_csv(
                 first_hour = last_hour = row[0][:13]
                 if row[6] is not None:
                     try:
-                        start_utc = datetime.fromisoformat(row[0]).astimezone(timezone.utc)
-                        end_local = (start_utc + timedelta(seconds=row[6], microseconds=-1)).astimezone()
+                        start_utc = _local_wall_clock_to_utc(datetime.fromisoformat(row[0]))
+                        end_local = (start_utc + timedelta(seconds=row[6], microseconds=-1)
+                                     ).astimezone(_reporting_tzinfo())
                         last_hour = max(first_hour, end_local.replace(tzinfo=None).isoformat()[:13])
                     except (ValueError, OverflowError):
                         compacted_conflicts += 1
@@ -3257,7 +3411,7 @@ def get_capture_history(hours: int, device_gid: str | None = None,
     """Recorded Main minute coverage in completed local-clock hours, not uptime."""
     if type(hours) is not int or hours not in (48, 168):
         raise ValueError('hours must be 48 or 168')
-    end = (now or datetime.now()).replace(minute=0, second=0, microsecond=0)
+    end = (now or reporting_now()).replace(minute=0, second=0, microsecond=0)
     start = end - timedelta(hours=hours)
     conn = _connect()
     try:
@@ -3316,6 +3470,15 @@ if __name__ == "__main__":
             if len(sys.argv) != 3:
                 raise SystemExit("Usage: python energy.py backup DESTINATION.db")
             print(json.dumps(backup_database(sys.argv[2]), indent=2))
+        elif sys.argv[1] == "reporting-timezone":
+            print(json.dumps(reporting_timezone_status(), indent=2))
+        elif sys.argv[1] == "set-reporting-timezone":
+            tail = [a for a in sys.argv[2:] if a != "--existing-history-in-zone"]
+            if len(tail) != 1:
+                raise SystemExit("Usage: python energy.py set-reporting-timezone IANA/ZONE "
+                                 "[--existing-history-in-zone]")
+            print(json.dumps(set_reporting_timezone(
+                tail[0], existing_history_in_zone="--existing-history-in-zone" in sys.argv[2:]), indent=2))
         elif sys.argv[1] == "device-identities":
             print(json.dumps(audit_device_identities(), indent=2))
         elif sys.argv[1] == "bind-prefix":
@@ -3365,6 +3528,6 @@ if __name__ == "__main__":
                 )
         else:
             print("Usage: python energy.py {poll|summary|hourly|daily|latest|backup|"
-                  "device-identities|bind-prefix|rebind|revert-rebind}")
+                  "reporting-timezone|set-reporting-timezone|device-identities|bind-prefix|rebind|revert-rebind}")
     else:
         run_continuous()
