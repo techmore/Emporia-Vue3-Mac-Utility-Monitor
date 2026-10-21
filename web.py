@@ -1121,7 +1121,7 @@ def _status(last_ts: str):
         return "dead", "No data", 999
     try:
         dt = datetime.fromisoformat(last_ts[:19])
-        h  = (datetime.now() - dt).total_seconds() / 3600
+        h  = (energy.reporting_now() - dt).total_seconds() / 3600
         if h < 0.1:  return "live",  f"Live · {int(h*60)}m ago",  h
         if h < 1:    return "live",  f"Live · {int(h*60)}m ago",  h
         if h < 6:    return "stale", f"Stale · {h:.1f}h ago",     h
@@ -1136,7 +1136,7 @@ def _poller_status_snapshot() -> dict:
     age_secs = None
     if last_ts:
         try:
-            age_secs = int((datetime.now() - datetime.fromisoformat(last_ts[:19])).total_seconds())
+            age_secs = int((energy.reporting_now() - datetime.fromisoformat(last_ts[:19])).total_seconds())
         except Exception:
             pass
     status["age_secs"] = age_secs
@@ -3247,7 +3247,7 @@ def _reading_fresh(reading: dict, max_age_secs: int = 300) -> bool:
         return False
     try:
         stamp = datetime.fromisoformat(reading["timestamp"].replace('Z', '+00:00'))
-        reference = datetime.now(timezone.utc) if stamp.tzinfo else datetime.now()
+        reference = datetime.now(timezone.utc) if stamp.tzinfo else energy.reporting_now()
         age = (reference - stamp).total_seconds()
         return -60 <= age < max_age_secs
     except Exception:
@@ -4013,7 +4013,7 @@ def circuit_detail(circuit_name, period="day"):
     conn = energy._connect()
     try:
         conn.execute("BEGIN")
-        now = datetime.now()
+        now = energy.reporting_now()
 
         def circuit_kwh(offset_days):
             end = now - timedelta(days=offset_days)
