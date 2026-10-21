@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- One canonical identity per monitor (#140): CSV imports no longer store the filename prefix as the device scope. Device discovery and polling now record each cloud gid and its manufacturer ids; an import resolves its prefix to exactly one registered monitor (cloud gid, manufacturer id, or an observed six-hex suffix) and is otherwise rejected with nothing written, with a **Monitor** menu on the Import page for an explicit selection. Original filename and resolution method are kept as evidence. Existing prefix-scoped history is not rewritten automatically: `energy.py device-identities` audits it, and `rebind`/`revert-rebind` move or restore it under a verified backup, only when there are no collisions or overlaps. See docs/CSV_IMPORT.md.
+
 - A **Compact layout** switch in the dropdown's More… section (no need to find Preferences); the app watches `ui.json` and re-applies density and dashboard style live when the dropdown or an editor changes it.
 - elementary OS integration pass: the client now follows the system light/dark setting (a plain GTK app does not copy it the way Granite apps do, so it stayed light on a dark desktop; confirmed headlessly before and after), the launcher gains Keywords, StartupNotify, notification permission and dock actions (Temperatures, Collector Connection), and an AppStream metainfo file is installed. Both files validate (`desktop-file-validate`, `appstreamcli`).
 - The Wingpanel house preview no longer demands 350 px, which was forcing the compact 340 px dropdown wider; a test now rejects any fixed minimum over 300 px in the panel code.
