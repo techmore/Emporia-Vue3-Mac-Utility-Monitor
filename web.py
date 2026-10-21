@@ -183,7 +183,7 @@ _refresh_runtime_config()
 
 # ── Shared design tokens (mirrors techmore.github.io) ─────────────────────────
 BASE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+@import url('/static/vendor/fonts.css');
 .aqara-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:12px 0; }
 .aqara-toolbar label { display:flex; align-items:center; gap:5px; }
 .aqara-toolbar select, .aqara-label-form input { max-width:100%; padding:6px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:5px; }
@@ -1795,7 +1795,7 @@ DASH_HTML = """
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="/static/vendor/chart.umd.min.js"></script>
 <script>
 const daily  = {{ daily_json|tojson }};
 const hourly = {{ hourly_json|tojson }};
@@ -2555,7 +2555,7 @@ CIRCUIT_HTML = """
   </div>
 
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="/static/vendor/chart.umd.min.js"></script>
 <script>
 const d = {{ chart_json|tojson }};
 const s = getComputedStyle(document.documentElement);
@@ -2858,7 +2858,7 @@ TRENDS_HTML = """
     </div>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="/static/vendor/chart.umd.min.js"></script>
 <script>
 const trendData  = {{ trend_json|tojson }};
 const hourlyData = {{ hourly_json|tojson }};
