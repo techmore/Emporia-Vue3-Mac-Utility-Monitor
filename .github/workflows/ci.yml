@@ -1,8 +1,20 @@
 name: CI
 
+# Run once per change: on pull requests, and on pushes to main.
+# Pushing to a PR branch used to start CI twice (push + pull_request): 18 jobs, 4 of them macOS,
+# which fills most of the account-wide concurrent job limit shared by every techmore repo.
 on:
   push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+# A newer push to the same PR cancels the older run; runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   home-3d-assets:
