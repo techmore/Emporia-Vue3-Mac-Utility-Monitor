@@ -1,12 +1,25 @@
 name: CI
 
+# Run once per change: on pull requests, and on pushes to main.
+# Pushing to a PR branch used to start CI twice (push + pull_request): 18 jobs, 4 of them macOS,
+# which fills most of the account-wide concurrent job limit shared by every techmore repo.
 on:
   push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+  workflow_dispatch:
+
+# A newer push to the same PR cancels the older run; runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   home-3d-assets:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -22,12 +35,14 @@ jobs:
 
   native-house-preview:
     runs-on: ubuntu-latest
+    # Longer cap: the runner's Ubuntu mirror sometimes takes ~25 min for this apt install.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build and test the native GTK house renderer
         run: |
           sudo apt-get -o Acquire::Retries=5 update -qq
-          sudo apt-get -o Acquire::Retries=5 install -y valac libgtk-4-dev libwebkitgtk-6.0-dev libjson-glib-dev xvfb xauth
+          sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends valac libgtk-4-dev libwebkitgtk-6.0-dev libjson-glib-dev xvfb xauth
           # --target-glib=2.80 matches linux/wingpanel/meson.build (GLib 2.80 type registration; no volatile warnings from GLib's headers).
           valac --target-glib=2.80 --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala tests/wingpanel_house_preview.vala -o /tmp/test-house-preview
           xvfb-run -a /tmp/test-house-preview
@@ -43,6 +58,7 @@ jobs:
   wingpanel-indicator:
     # The real indicator needs the Wingpanel and Granite development packages, which only elementary's image carries.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: ghcr.io/elementary/docker:next-unstable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,6 +72,7 @@ jobs:
 
   ruff:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -68,6 +85,8 @@ jobs:
 
   linux-client:
     runs-on: ubuntu-latest
+    # Longer cap: the runner's Ubuntu mirror sometimes takes ~25 min for this apt install.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install GTK 4, WebKitGTK and the desktop validators
@@ -95,6 +114,7 @@ jobs:
 
   linux-service:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,6 +163,7 @@ jobs:
 
   swift-typecheck:
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,6 +174,7 @@ jobs:
   python-linux:
     # The production collector runs on Linux (Incus); the Python suite and the Flask smoke test must pass there too.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -189,6 +211,7 @@ jobs:
 
   test:
     runs-on: macos-latest
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
