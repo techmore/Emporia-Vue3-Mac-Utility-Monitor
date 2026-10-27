@@ -26,10 +26,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Cached .debs: the runner's Ubuntu mirror sometimes serves ~1 package/s and stalls the job.
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: valac libgtk-4-dev libwebkitgtk-6.0-dev libjson-glib-dev xvfb xauth
+          version: 1
       - name: Build and test the native GTK house renderer
         run: |
-          sudo apt-get -o Acquire::Retries=5 update -qq
-          sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends valac libgtk-4-dev libwebkitgtk-6.0-dev libjson-glib-dev xvfb xauth
           # --target-glib=2.80 matches linux/wingpanel/meson.build (GLib 2.80 type registration; no volatile warnings from GLib's headers).
           valac --target-glib=2.80 --pkg gtk4 --pkg webkitgtk-6.0 --pkg json-glib-1.0 -X -lm linux/wingpanel/HousePreview.vala linux/wingpanel/WebHouseView.vala tests/wingpanel_house_preview.vala -o /tmp/test-house-preview
           xvfb-run -a /tmp/test-house-preview
@@ -75,10 +78,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Cached .debs: the runner's Ubuntu mirror sometimes serves ~1 package/s and stalls the job.
       - name: Install GTK 4, WebKitGTK and the desktop validators
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update -qq
-          sudo apt-get -o Acquire::Retries=5 install -y --no-install-recommends python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 gir1.2-soup-3.0 xvfb xauth desktop-file-utils appstream
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 gir1.2-soup-3.0 xvfb xauth desktop-file-utils appstream
+          version: 1
       - name: Run the GTK client against its offline loopback fixture
         env:
           # GitHub runners cannot create WebKit's bubblewrap namespaces; the fixture is local and offline.
