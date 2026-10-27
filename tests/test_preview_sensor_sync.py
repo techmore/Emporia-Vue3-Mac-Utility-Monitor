@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import energy
 import preview_sensor_sync as sync
@@ -190,6 +191,27 @@ class PreviewSensorSyncTests(unittest.TestCase):
         self.assertEqual(exported['power']['active_device_gid'], 'source-panel')
         self.assertEqual(exported['power']['summary'][0]['total_kwh'], .2)
         self.assertEqual(sync.validate_power(exported['power']), exported['power'])
+
+    def test_exporter_ages_naive_stamps_in_the_recorded_reporting_zone_not_the_host_clock(self):
+        # #127: a collector relocated to a host in another zone must keep one clock.
+        energy.set_reporting_timezone('Asia/Tokyo')
+        now = datetime.now(ZoneInfo('Asia/Tokyo')).replace(tzinfo=None).isoformat()
+        conn = energy._connect()
+        with conn:
+            conn.execute('INSERT INTO readings(timestamp,device_gid,channel_name,usage_kwh,cost_cents) VALUES (?,?,?,?,?)',
+                         (now, 'source-panel', 'Main', .2, 4))
+            conn.execute('INSERT INTO latest_channel_snapshot VALUES(?,?,?,?,?,?)',
+                         ('source-panel', 'Main', None, .2, 4, now))
+        conn.close()
+        (self.root / 'poller_status.json').write_text(json.dumps({'ok': True, 'timestamp': now}))
+        script = sync.REMOTE_SCRIPT.replace('/var/lib/energy-monitor/collector', str(self.root))
+        import sys
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=True,
+                                env={**os.environ, 'TZ': 'Pacific/Honolulu'})
+        power = json.loads(result.stdout)['power']
+        self.assertTrue(power['poller_ok'])
+        self.assertLess(abs(power['latest'][0]['age_seconds']), 60)
+        self.assertEqual(power['summary'][0]['total_kwh'], .2)
 
     def test_actual_cloud_legs_replace_imports_without_splitting_total_or_touching_plan(self):
         self.cache_power()

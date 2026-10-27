@@ -31,6 +31,7 @@ REMOTE_SCRIPT = r'''
 import json, sqlite3
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 c=sqlite3.connect(Path('/var/lib/energy-monitor/collector/energy.db').as_uri()+'?mode=ro',uri=True)
 c.row_factory=sqlite3.Row
 c.execute('PRAGMA query_only=ON');c.execute('BEGIN')
@@ -58,7 +59,9 @@ if not gid or gid=='81134' or not c.execute('SELECT 1 FROM readings WHERE device
  row=c.execute("SELECT device_gid FROM readings WHERE device_gid!='81134' GROUP BY device_gid ORDER BY MAX(timestamp) DESC LIMIT 1").fetchone()
  gid=row['device_gid'] if row else None
 latest=[dict(row) for row in c.execute('SELECT * FROM latest_channel_snapshot WHERE device_gid=?',(gid,))]
-now=datetime.now()
+# Naive stored stamps are in the collector's recorded reporting zone (#127), not this host's.
+zone=c.execute('SELECT zone FROM collector_timezone WHERE singleton=1').fetchone() if c.execute("SELECT 1 FROM sqlite_master WHERE name='collector_timezone'").fetchone() else None
+now=datetime.now(ZoneInfo(zone['zone'])).replace(tzinfo=None) if zone else datetime.now()
 for row in latest:
  try:
   stamp=datetime.fromisoformat(row['timestamp'])
