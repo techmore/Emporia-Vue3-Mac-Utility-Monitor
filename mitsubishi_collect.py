@@ -3,7 +3,10 @@ import argparse
 import logging
 from time import monotonic, sleep
 
+import log_setup
 import mitsubishi
+
+logger = logging.getLogger("mitsubishi_collect")
 
 
 def main() -> None:
@@ -13,6 +16,7 @@ def main() -> None:
     retry_at, failed_generation = 0, None
     while True:
         result = {}
+        started = monotonic()
         try:
             config_path = mitsubishi._path('private.json')
             generation = config_path.stat().st_mtime_ns if config_path.exists() else None
@@ -20,21 +24,25 @@ def main() -> None:
                 sleep(60)
                 continue
             result = mitsubishi.poll()
-            logging.info('Comfort collection: %s', result['state'])
+            log_setup.event(logger, 'poll_cycle', duration_s=round(monotonic() - started, 3),
+                            state=result['state'], devices=len(result.get('units') or []))
             if result['state'] == 'authentication_rejected':
                 retry_at = monotonic() + 900
                 failed_generation = config_path.stat().st_mtime_ns if config_path.exists() else None
             else:
                 retry_at = 0
         except mitsubishi.ComfortError as exc:
-            logging.warning('Comfort collection: %s', str(exc))
+            log_setup.event(logger, 'poll_cycle', logging.WARNING, ok=False, error=type(exc).__name__,
+                            detail=str(exc)[:200], duration_s=round(monotonic() - started, 3))
         except Exception:
-            logging.warning('Comfort collection: collector_error')
+            log_setup.event(logger, 'poll_cycle', logging.WARNING, ok=False, error='collector_error',
+                            duration_s=round(monotonic() - started, 3))
         if args.once:
             return
         sleep(60)
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
+    log_setup.configure()
+    log_setup.startup(logger, 'mitsubishi-collector', interval_s=60)
     main()

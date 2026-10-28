@@ -15,6 +15,9 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import climate
+import log_setup
+
+logger = logging.getLogger("climate_collect")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -94,15 +97,21 @@ def main() -> None:
     if args.import_json:
         print(json.dumps(climate.ingest_observations(json.loads(args.import_json.read_text()).get('observations'))))
         return
+    log_setup.configure()
+    log_setup.startup(logger, 'climate-collector', watch=args.watch)
     while True:
+        started = time.monotonic()
         try:
             result = collect_home_assistant()
             print(json.dumps({'collected_at': datetime.now(timezone.utc).isoformat(), **result}), flush=True)
+            log_setup.event(logger, 'poll_cycle', duration_s=round(time.monotonic() - started, 3),
+                            **{k: v for k, v in result.items() if isinstance(v, (int, str))})
         except Exception as exc:
             if not args.watch:
                 raise
             # Error messages can contain remote content; do not emit credential-bearing responses.
-            logging.warning('Temperature collection failed (%s); retrying in 60 seconds', type(exc).__name__)
+            log_setup.event(logger, 'poll_cycle', logging.WARNING, ok=False, error=type(exc).__name__,
+                            retry_in_s=60, duration_s=round(time.monotonic() - started, 3))
         if not args.watch:
             break
         time.sleep(60)
