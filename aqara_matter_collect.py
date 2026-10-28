@@ -7,6 +7,9 @@ import time
 import aiohttp
 
 import aqara_local
+import log_setup
+
+logger = logging.getLogger("aqara_matter_collect")
 
 
 async def collect() -> None:
@@ -30,7 +33,7 @@ async def collect() -> None:
                             for node in data['result']:
                                 nodes[node['node_id']] = node
                                 count = aqara_local.record_node(node, 'matter_snapshot')
-                                print(json.dumps({'event':'aqara_snapshot','node_id':node['node_id'],'sensors':count}),flush=True)
+                                log_setup.event(logger, 'aqara_snapshot', node_id=node['node_id'], sensors=count)
                         elif event in ('node_updated','node_added'):
                             node = data['data']; nodes[node['node_id']] = node
                             aqara_local.record_node(node, 'matter_snapshot')
@@ -40,17 +43,20 @@ async def collect() -> None:
                                 nodes[node_id]['attributes'][path] = value
                                 if path.endswith(('/1026/0','/1029/0','/47/12','/57/17')):
                                     aqara_local.record_node(nodes[node_id], 'matter_event', changed_path=path)
-                                    print(json.dumps({'event':'aqara_attribute','node_id':node_id,'path':path}),flush=True)
+                                    log_setup.event(logger, 'aqara_attribute', logging.DEBUG,
+                                                    node_id=node_id, path=path)
                 if time.monotonic()-last_refresh >= 60:
                     await ws.send_json({'message_id':'snapshot','command':'get_nodes','args':{}})
                     last_refresh = time.monotonic()
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
+    log_setup.configure()
+    log_setup.startup(logger, 'aqara-local-collector', matter_ws='127.0.0.1:5580', retry_s=10)
     while True:
         try:
             asyncio.run(collect())
         except Exception as exc:
-            logging.warning('Aqara local collector disconnected (%s); retrying in 10 seconds', type(exc).__name__)
+            log_setup.event(logger, 'collector_disconnected', logging.WARNING,
+                            error=type(exc).__name__, retry_in_s=10)
         time.sleep(10)

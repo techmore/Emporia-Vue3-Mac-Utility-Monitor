@@ -81,7 +81,7 @@ jobs:
       - name: Lint the elementary client and its tests
         run: |
           python3 -m pip install ruff==0.17.1
-          ruff check linux/ tests/test_linux_client.py tests/test_linux_native_auth.py tests/test_linux_tunnel.py
+          ruff check linux/ tests/test_linux_client.py tests/test_linux_native_auth.py tests/test_linux_tunnel.py log_setup.py guidance.py scripts/solar_guidance_report.py tests/test_log_setup.py tests/test_energy_hourly.py tests/test_guidance.py
 
   linux-client:
     runs-on: ubuntu-latest
@@ -200,10 +200,11 @@ jobs:
           venv/bin/python3 - <<'PY'
           import web
           client = web.app.test_client()
-          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/home-3d', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara']:
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/home-3d', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara', '/guidance']:
               response = client.get(path, follow_redirects=True)
               assert response.status_code == 200, f"{path}: {response.status_code}"
           assert client.get('/api/menu-summary').status_code == 200
+          assert client.get('/api/guidance').status_code == 200
           assert client.get('/api/climate/replay?demo=1').status_code == 200
           assert client.get('/api/house-control/config').status_code == 200
           assert client.get('/api/house-control/state').status_code == 200
@@ -232,7 +233,7 @@ jobs:
         run: venv/bin/python3 scripts/check_release.py
 
       - name: Syntax check
-        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py radon.py ecosense.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_trends.py device_history.py aqara_matter_collect.py device_identity.py
+        run: venv/bin/python3 -m py_compile energy.py web.py aqara.py runtime_store.py panel_model.py climate.py climate_collect.py extensions.py radon.py ecosense.py panel_photos.py solar_model.py kasa_monitor.py kasa_history.py kasa_collect.py mitsubishi.py mitsubishi_collect.py aqara_local.py aqara_trends.py device_history.py aqara_matter_collect.py device_identity.py log_setup.py guidance.py scripts/solar_guidance_report.py
 
       - name: Run unit tests
         run: venv/bin/python3 -m unittest discover -s tests -v
@@ -249,10 +250,11 @@ jobs:
           venv/bin/python3 - <<'PY'
           import web
           client = web.app.test_client()
-          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/home-3d', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara']:
+          for path in ['/', '/reports', '/guide', '/recommendations', '/circuits', '/trends', '/log', '/house', '/home-3d', '/radon', '/panel/photos', '/kasa', '/mitsubishi', '/aqara', '/guidance']:
               response = client.get(path, follow_redirects=True)
               assert response.status_code == 200, f"{path}: {response.status_code}"
           assert client.get('/api/menu-summary').status_code == 200
+          assert client.get('/api/guidance').status_code == 200
           assert client.get('/api/health').get_json()['database'] == 'ok'
           assert client.get('/api/climate/replay?demo=1').status_code == 200
           assert client.get('/api/house-control/config').status_code == 200

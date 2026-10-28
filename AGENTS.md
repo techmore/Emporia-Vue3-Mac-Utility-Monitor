@@ -134,6 +134,10 @@ All have sensible defaults; none are required to run locally with an existing `k
 | `DB_RETENTION_DAYS`| `365`       | Rows older than this are pruned each poll    |
 | `MINUTE_RETENTION_DAYS` | `30`   | Minute rows older than this are folded into hourly rows (0 = keep all) |
 | `MONTHLY_BUDGET`   | `150`       | Monthly cost budget in dollars (web.py only) |
+| `LOG_LEVEL`        | `INFO`      | Root log level for every process (`log_setup.py`) |
+| `LOG_LEVELS`       | —           | Per-logger overrides, e.g. `energy=DEBUG,kasa_collect=WARNING` |
+| `LOG_FORMAT`       | `kv`        | `kv` (key=value lines), `json` (JSON lines) or `text` (legacy) |
+| `ENERGY_HOURLY_RETENTION_DAYS` | `0` | Durable `energy_hourly` rows kept this long (0 = forever) |
 | `EMPORIA_EMAIL`    | —           | Only needed on first login (no `keys.json`)  |
 | `EMPORIA_PASSWORD` | —           | Only needed on first login (no `keys.json`)  |
 | `ENERGY_CSP`       | `enforce`   | Page Content-Security-Policy: `enforce`, `report-only` or `off` |
@@ -239,6 +243,15 @@ separately in web.py.
    logs appear in `/tmp/energymonitor-poller.log` in real time.
 7. LaunchAgent plists use `__PROJECT_ROOT__` as a placeholder;
    `setup_launch.sh` substitutes the real path via `sed` at install time.
+
+## Logging and long-term energy
+
+`log_setup.py` is the single logging setup: every process calls `log_setup.configure()` and
+`log_setup.startup(...)` once, and logs structured events with `log_setup.event(logger, name, **fields)`
+(`poll_cycle`, `poll_stored`, `emporia_api_retry`, `emporia_api_error`, `gap_detected`, ...).
+Never pass secrets as fields; secret-looking field names are redacted anyway.
+`energy_hourly` is the durable per-channel hourly record (never pruned by `DB_RETENTION_DAYS`);
+`guidance.py` builds the `/guidance` solar/battery model from it (see docs/solar-battery-guidance.md).
 
 ## Experimental climate extension
 

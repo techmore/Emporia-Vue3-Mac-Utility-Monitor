@@ -32,7 +32,9 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import RequestEntityTooLarge
 
 import energy
+import guidance
 import house_control
+import log_setup
 import panel_photos
 import radon
 from extensions import HOUSE_CSS, register_extensions
@@ -3894,6 +3896,86 @@ def guide_page():
     return _render(GUIDE_HTML, active_page="guide", **_common())
 
 
+_guidance_cache: dict[str, object] = {"key": None, "built_at": 0.0, "doc": None, "heater": None}
+
+
+def _guidance_document(device_gid: str | None) -> tuple[dict, str | None]:
+    """Recompute solar/battery guidance from durable hourly energy, cached for 10 minutes."""
+    key = (device_gid, energy.RATE_CENTS)
+    if (_guidance_cache["key"] == key and _guidance_cache["doc"] is not None
+            and time.monotonic() - float(_guidance_cache["built_at"]) < 600):
+        return _guidance_cache["doc"], _guidance_cache["heater"]
+    records = energy.get_energy_hourly(device_gid)
+    heater = guidance.find_water_heater({r["channel_name"] for r in records})
+    doc = guidance.build_guidance(guidance.rows_from_hourly(records, heater),
+                                  {"rate_cents": energy.RATE_CENTS})
+    doc["water_heater_channel"] = heater
+    doc["source"] = "energy_hourly"
+    _guidance_cache.update(key=key, built_at=time.monotonic(), doc=doc, heater=heater)
+    return doc, heater
+
+
+GUIDANCE_HTML = """
+<div class="page">
+  <div class="section-head"><h2>Solar &amp; Battery Guidance</h2></div>
+  <section class="card" style="margin-bottom:16px">
+    <p><strong>Estimates, not a verdict.</strong> Load is measured; solar production is modelled from a
+    typical-year yield table because this panel has no solar or battery channels. Costs, export credit and
+    incentives are assumptions. JSON: <a href="/api/guidance">/api/guidance</a>.</p>
+    {% if not p.days %}<p role="alert">No complete days of hourly data yet. The poller fills durable hourly
+    totals every minute; check back after a full day.</p>{% else %}
+    <p class="card-meta">{{ p.days }} complete days, {{ p.first_day }} to {{ p.last_day }} · water heater channel:
+    {{ heater or 'not found' }} · rate {{ '%.2f'|format(doc.assumptions.rate_cents) }}¢/kWh</p>
+    <table class="data-table"><tbody>
+      <tr><th>House load</th><td>{{ '%.1f'|format(p.kwh_per_day) }} kWh/day</td></tr>
+      {% if p.has_water_heater %}
+      <tr><th>Water heater</th><td>{{ '%.1f'|format(p.wh_kwh_per_day) }} kWh/day ({{ '%.0f'|format(p.wh_share_pct) }} % of load)</td></tr>
+      <tr><th>Water heater share of evening/night load</th><td>{{ '%.0f'|format(p.wh_share_of_evening_pct) }} %</td></tr>
+      {% endif %}
+      <tr><th>Evening/night ({{ p.evening_window[0] }}:00–{{ p.evening_window[1] }}:00)</th><td>{{ '%.1f'|format(p.evening_kwh_per_day) }} kWh/day</td></tr>
+    </tbody></table>
+  </section>
+  <section class="card" style="margin-bottom:16px">
+    <h3>By month</h3>
+    <table class="data-table"><thead><tr><th>Month</th><th>Days</th><th>kWh/day</th><th>Water heater kWh/day</th></tr></thead><tbody>
+    {% for month, m in p.months.items() %}<tr><td>{{ month }}</td><td>{{ m.days }}</td><td>{{ '%.1f'|format(m.kwh_per_day) }}</td>
+      <td>{{ '%.1f'|format(m.wh_kwh_per_day) if m.wh_kwh_per_day is not none else '—' }}</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+  <section class="card" style="margin-bottom:16px">
+    <h3>Scenarios</h3>
+    <table class="data-table"><thead><tr><th>Scenario</th><th>Load kWh/day</th><th>PV kW</th><th>Battery kWh / kW</th>
+      <th>Overnight need p50 / p90</th><th>Self-sufficiency PV only</th><th>PV + battery</th><th>Payback PV only (net metering / low export)</th></tr></thead><tbody>
+    {% for name, s in doc.scenarios.items() %}<tr><td>{{ labels.get(name, name) }}</td>
+      <td>{{ '%.1f'|format(s.load_kwh_per_day) }}</td><td>{{ '%.1f'|format(s.pv_kw) }}</td>
+      <td>{{ '%.1f'|format(s.battery_kwh) }} / {{ '%.1f'|format(s.battery_kw) }}</td>
+      <td>{{ '%.1f'|format(s.overnight.p50_kwh or 0) }} / {{ '%.1f'|format(s.overnight.p90_kwh or 0) }} kWh</td>
+      <td>{{ '%.0f'|format(s.pv_only.self_sufficiency_pct or 0) }} %</td>
+      <td>{{ '%.0f'|format(s.recommended.self_sufficiency_pct or 0) }} %</td>
+      <td>{{ s.economics.pv_only_net_metering.simple_payback_years or '—' }} / {{ s.economics.pv_only_low_export.simple_payback_years or '—' }} y</td></tr>{% endfor %}
+    </tbody></table>
+    <ul>{% for caveat in doc.caveats %}<li>{{ caveat }}</li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+</div>
+"""
+GUIDANCE_LABELS = {"current": "Current house", "no_wh": "Water heater removed",
+                   "hpwh": "Heat pump water heater", "timer": "Water heater on a solar-hours timer"}
+
+
+@app.route("/api/guidance")
+def api_guidance():
+    doc, _ = _guidance_document(_common()["active_device_gid"])
+    return jsonify(doc)
+
+
+@app.route("/guidance")
+def guidance_page():
+    doc, heater = _guidance_document(_common()["active_device_gid"])
+    return _render(GUIDANCE_HTML, doc=doc, p=doc["profile"], heater=heater, labels=GUIDANCE_LABELS,
+                   **_common())
+
+
 @app.route("/recommendations")
 def recommendations_page():
     return redirect("/reports#recommendations", code=302)
@@ -5979,8 +6061,11 @@ def serve(host: str, port: int) -> None:
 
 
 if __name__ == "__main__":
-    app.logger.info("Energy Monitor — http://%s:%s", FLASK_HOST, FLASK_PORT)
-    app.logger.info("Rate: $%.4f/kWh  Budget: $%.0f/mo", RATE, MONTHLY_BUDGET)
+    log_setup.startup(app.logger, "energy-dashboard", host=FLASK_HOST, port=FLASK_PORT,
+                      rate_per_kwh=RATE, monthly_budget=MONTHLY_BUDGET, db_path=energy.DB_PATH,
+                      web_threads=os.environ.get("WEB_THREADS", "32"),
+                      csp=os.environ.get("ENERGY_CSP", "enforce"),
+                      dev_server=os.environ.get("ENERGY_DEV_SERVER") == "1")
     n = energy.migrate_channel_names()
     if n:
         app.logger.info("[startup] migrated %s channel name(s)", n)

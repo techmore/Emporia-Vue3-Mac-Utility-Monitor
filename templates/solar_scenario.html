@@ -17,6 +17,7 @@
     occurs outside sufficient solar production. Battery energy also depends on
     how long the peak lasts. The energy-cost scenario below uses kWh separately.</p>
   </details>
+  <p><a href="/guidance">Solar &amp; battery sizing guidance</a> models array and battery sizes from the full recorded hourly history, with and without the water heater.</p>
   <p>Scenario only, not solar sizing, a production forecast or guaranteed savings. Use generation for the same last-24-hour window as the recorded Main consumption below.</p>
   {% if solar_main %}<p>Recorded Main: <strong>{{ '%.2f'|format(solar_main.total_kwh) }} kWh</strong> in the last 24 hours. Current usage rate: {{ '%.2f'|format(solar_rate_cents) }} cents/kWh.</p>
   {% else %}<p>No recorded Main consumption in this window. Missing data is not zero consumption; calculation is unavailable.</p>{% endif %}

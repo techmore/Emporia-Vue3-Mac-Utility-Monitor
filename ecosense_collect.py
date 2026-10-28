@@ -12,13 +12,14 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from time import sleep
+from time import monotonic, sleep
 
 code_root = os.environ.get('ENERGY_CODE_ROOT')
 if code_root:
     sys.path.insert(0, code_root)
 
 import energy  # noqa: E402 - standalone collector resolves its installation first
+import log_setup  # noqa: E402
 import radon  # noqa: E402
 from ecosense import EcoSenseClient  # noqa: E402
 from runtime_store import write_private_json  # noqa: E402
@@ -27,6 +28,7 @@ STATE_ROOT = Path(os.environ.get('ECOSENSE_STATE_ROOT', Path(energy.DB_PATH).par
 CONFIG_PATH = STATE_ROOT / 'ecosense-private.json'
 STATUS_PATH = STATE_ROOT / 'ecosense-status.json'
 SNAPSHOT_PATH = STATE_ROOT / 'ecosense-device-snapshot.json'
+logger = logging.getLogger('ecosense_collect')
 
 
 def measurement_time(value, now: datetime, reference_time=None, reference_epoch=None) -> str:
@@ -129,6 +131,7 @@ def run() -> None:
     failures = 0
     while True:
         delay = 60
+        started = monotonic()
         try:
             if not CONFIG_PATH.exists():
                 status('credentials_missing', message='EcoSense credentials have not been saved on SER8.')
@@ -153,8 +156,9 @@ def run() -> None:
             counts = radon.ingest_observations(rows) if rows else {'inserted': 0, 'duplicates': 0}
             status('collecting' if rows else 'no_valid_measurements',
                    devices=len(devices), skipped=skipped, **counts)
-            logging.info('EcoSense: devices=%d inserted=%d duplicates=%d skipped=%d',
-                         len(devices), counts['inserted'], counts['duplicates'], skipped)
+            log_setup.event(logger, 'poll_cycle', duration_s=round(monotonic() - started, 3),
+                            devices=len(devices), readings=len(rows), inserted=counts['inserted'],
+                            duplicates=counts['duplicates'], skipped=skipped)
             failures = 0
         except Exception as exc:
             failures += 1
@@ -163,7 +167,10 @@ def run() -> None:
             state = 'authentication_rejected' if rejected else 'connection_error'
             status(state, error_class=type(exc).__name__)
             # Never log secret-bearing exception strings, tokens or account URLs.
-            logging.warning('EcoSense: %s (%s)', state, type(exc).__name__)
+            log_setup.event(logger, 'poll_cycle', logging.WARNING, ok=False, state=state,
+                            error=type(exc).__name__, status=getattr(getattr(exc, 'response', None),
+                                                                     'status_code', None),
+                            consecutive_failures=failures, duration_s=round(monotonic() - started, 3))
             if rejected:
                 client, identity = None, None
                 delay = 900
@@ -173,5 +180,6 @@ def run() -> None:
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    log_setup.configure()
+    log_setup.startup(logger, 'ecosense-collector', interval_s=60, state_root=str(STATE_ROOT))
     run()
