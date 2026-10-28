@@ -21,6 +21,7 @@ from pyemvue.enums import Scale, Unit
 
 from runtime_store import write_private_json, update_private_json, publish_private_text
 import device_identity
+import log_setup
 from timestamp_model import classify_timestamp, reporting_day_bounds
 
 DB_PATH = os.environ.get("DB_PATH", "energy.db")
@@ -31,11 +32,11 @@ MINUTE_RETENTION_DAYS = int(os.environ.get("MINUTE_RETENTION_DAYS", "30"))
 POLLER_STATUS_FILE = os.environ.get("POLLER_STATUS_FILE", "poller_status.json")
 RECONNECT_FLAG_FILE = "reconnect.flag"
 
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(message)s",
-)
-logger = logging.getLogger(__name__)
+# Hourly per-channel energy is kept this long (0 = forever) for long-term analysis.
+ENERGY_HOURLY_RETENTION_DAYS = int(os.environ.get("ENERGY_HOURLY_RETENTION_DAYS", "0"))
+
+log_setup.configure()
+logger = logging.getLogger("energy")
 
 
 def write_poller_status(ok: bool, error: str | None = None, consecutive_errors: int = 0):
@@ -601,6 +602,20 @@ def ensure_table():
             ON readings(device_gid, channel_name, timestamp);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_device_ts_channel
             ON readings(device_gid, timestamp, channel_name);
+        -- Durable hourly per-channel energy (never pruned by DB_RETENTION_DAYS).
+        -- hour_start uses the readings' local wall-clock convention.
+        CREATE TABLE IF NOT EXISTS energy_hourly (
+            device_gid TEXT NOT NULL,
+            channel_name TEXT NOT NULL,
+            hour_start TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('mains','circuit','balance','solar','battery')),
+            kwh REAL NOT NULL,
+            observed_seconds REAL NOT NULL,
+            samples INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(device_gid,channel_name,hour_start)
+        );
+        CREATE INDEX IF NOT EXISTS idx_energy_hourly_hour ON energy_hourly(hour_start);
         CREATE TABLE IF NOT EXISTS migrations (
             name TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL
@@ -1521,7 +1536,8 @@ def login_vue():
     username = os.environ.get("EMPORIA_EMAIL")    or cfg.get("emporia_email")
     password = os.environ.get("EMPORIA_PASSWORD") or cfg.get("emporia_password")
 
-    logger.info("Attempting login with user: %s", username)
+    log_setup.event(logger, "emporia_login_start", tokens_file=os.path.exists(token_file),
+                    credentials_configured=bool(username and password))
 
     if os.path.exists(token_file):
         with open(token_file) as f:
@@ -1546,7 +1562,7 @@ def login_vue():
             )
         except Exception as e:
             raise RuntimeError(f"Login failed: {type(e).__name__}: {e}") from e
-        logger.info("Login result: %s", result)
+        log_setup.event(logger, "emporia_login_result", ok=bool(result))
         if not result:
             raise RuntimeError(
                 "Login returned False — check credentials or Emporia API availability."
@@ -1592,15 +1608,43 @@ def _normalize_channel_name(name: str | None) -> str | None:
     return _clean_csv_channel_name(name)
 
 
-def poll_and_store(vue, device_gids):
+def _http_status(exc: BaseException) -> int | None:
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def _detect_gap(conn, gid: str, now: str) -> float | None:
+    """Seconds since this device's previous live Main reading, when it exceeds 3 intervals."""
+    row = conn.execute("""SELECT MAX(r.timestamp) AS stamp FROM readings r
+        JOIN reading_provenance p ON p.reading_id=r.id AND p.source='live_poll'
+        WHERE r.device_gid=? AND r.channel_name='Main' AND r.timestamp<?""",
+                       (gid, now)).fetchone()
+    if not row or not row["stamp"]:
+        return None
+    try:
+        gap = (datetime.fromisoformat(now) - datetime.fromisoformat(row["stamp"])).total_seconds()
+    except ValueError:
+        return None
+    return gap if gap > POLL_INTERVAL * 3 else None
+
+
+def poll_and_store(vue, device_gids) -> dict:
+    """Store one minute of channel usage; returns the cycle's counts for logging."""
     global RATE_CENTS
     RATE_CENTS = _read_rate_cents()
+    started = time.monotonic()
+    stats = {"devices_requested": len(device_gids), "devices_reported": 0, "channels_null": 0,
+             "readings_written": 0, "covered_by_import": 0, "api_attempts": 0,
+             "rows_pruned": 0, "rows_compacted": 0, "hourly_rows_upserted": 0,
+             "mains_intervals_written": 0, "mains_errors": 0}
     conn = _connect()
     try:
         c = conn.cursor()
 
         usage_dict = None
         for attempt in range(1, 4):
+            stats["api_attempts"] = attempt
             try:
                 usage_dict = vue.get_device_list_usage(
                     deviceGids=device_gids,
@@ -1610,18 +1654,23 @@ def poll_and_store(vue, device_gids):
                 )
                 break
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                log_setup.event(logger, "emporia_api_retry", logging.WARNING,
+                                error=type(exc).__name__, attempt=attempt, max_attempts=3,
+                                will_retry=attempt < 3)
                 if attempt == 3:
-                    conn.close()
                     raise
-                logger.warning("Emporia API %s (attempt %s/3); retrying", type(exc).__name__, attempt)
                 time.sleep(2 * attempt)
+            except requests.exceptions.HTTPError as exc:
+                log_setup.event(logger, "emporia_api_error", logging.WARNING,
+                                error=type(exc).__name__, status=_http_status(exc), attempt=attempt)
+                raise
+        usage_dict = usage_dict or {}
 
         # Validate the complete response before mutating any channel history.
         for device in usage_dict.values():
             for channel in device.channels.values():
                 value = channel.usage
                 if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
-                    conn.close()
                     raise ValueError("Emporia returned invalid channel energy")
                 if value is not None and not math.isfinite(value * RATE_CENTS):
                     raise ValueError("Emporia channel cost overflow")
@@ -1632,7 +1681,18 @@ def poll_and_store(vue, device_gids):
         # Serialize coverage checks and writes against concurrent CSV imports.
         conn.execute('BEGIN IMMEDIATE')
 
+        missing = sorted(set(map(str, device_gids)) - set(map(str, usage_dict)))
+        if missing:
+            log_setup.event(logger, "emporia_devices_missing", logging.WARNING,
+                            device_gids=missing, requested=len(device_gids))
         for gid, device in usage_dict.items():
+            stats["devices_reported"] += 1
+            if str(gid) != _GHOST_DEVICE:
+                gap = _detect_gap(conn, str(gid), now)
+                if gap is not None:
+                    log_setup.event(logger, "gap_detected", logging.WARNING, device_gid=str(gid),
+                                    channel="Main", gap_seconds=round(gap),
+                                    missed_polls=max(0, round(gap / POLL_INTERVAL) - 1))
             device_identity.register_cloud_gid(conn, gid)
             capability = {
                 "has_main": False,
@@ -1642,8 +1702,9 @@ def poll_and_store(vue, device_gids):
             }
             for channelnum, channel in device.channels.items():
                 if channel.usage is None:
+                    stats["channels_null"] += 1
                     continue
-                channel_name = _normalize_channel_name(channel.name)
+                channel_name = _normalize_channel_name(channel.name) or str(channelnum)
                 if channel_name == "Main":
                     capability["has_main"] = True
                 elif channel_name == "Mains_A":
@@ -1664,6 +1725,7 @@ def poll_and_store(vue, device_gids):
                         channel_num=excluded.channel_num,timestamp=excluded.timestamp,
                         usage_kwh=excluded.usage_kwh,cost_cents=excluded.cost_cents""",
                         (str(gid), channel_name, channelnum, now, channel.usage, cost))
+                    stats["covered_by_import"] += 1
                     continue
                 c.execute('DELETE FROM covered_live_observations WHERE device_gid=? AND channel_name=?',
                           (str(gid), channel_name))
@@ -1673,6 +1735,7 @@ def poll_and_store(vue, device_gids):
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (now, gid, channelnum, channel_name, channel.usage, cost),
                 )
+                stats["readings_written"] += 1
                 # source_timezone is the zone of this naive timestamp; it is known only
                 # when a reporting zone was recorded (never guessed from the host).
                 c.execute("INSERT INTO reading_provenance(reading_id,source,interval_seconds,"
@@ -1699,16 +1762,28 @@ def poll_and_store(vue, device_gids):
                 source="live_poll",
             )
 
-        # Prune old rows to keep the database from growing unboundedly.
+        if not stats["readings_written"] and not stats["covered_by_import"]:
+            # A 200 response without usage is an outage, not a successful poll.
+            raise RuntimeError("Emporia returned no channel usage")
+
+        # Prune old live rows to keep the database bounded. Imported CSV history is the
+        # user's deliberate backfill and is kept; hourly totals survive in energy_hourly.
         cutoff = (reporting_now() - timedelta(days=DB_RETENTION_DAYS)).isoformat()
-        c.execute("DELETE FROM readings WHERE timestamp < ?", (cutoff,))
+        if DB_RETENTION_DAYS > 0:
+            stats["rows_pruned"] = c.execute(
+                """DELETE FROM readings WHERE timestamp < ? AND id NOT IN (
+                       SELECT reading_id FROM reading_provenance WHERE source='csv_import')""",
+                (cutoff,)).rowcount
+        hour_start = (datetime.fromisoformat(now) - timedelta(hours=1)).replace(
+            minute=0, second=0, microsecond=0).isoformat()
+        stats["hourly_rows_upserted"] = rollup_energy_hourly(conn, hour_start)
         global _last_compaction
-        compacted = 0
         if time.monotonic() - _last_compaction > 3600:
             _last_compaction = time.monotonic()
-            compacted = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
-        if compacted:
-            logger.info("Compacted %s minute rows into hourly rows", compacted)
+            stats["rows_compacted"] = compact_minute_readings(conn, MINUTE_RETENTION_DAYS)
+        if stats["rows_compacted"]:
+            log_setup.event(logger, "readings_compacted", rows=stats["rows_compacted"],
+                            older_than_days=MINUTE_RETENTION_DAYS)
 
         conn.commit()
         conn.close()
@@ -1716,7 +1791,7 @@ def poll_and_store(vue, device_gids):
         if time.monotonic() - _last_reports > 3600:
             try:
                 for report in write_monthly_reports():
-                    logger.info("Wrote monthly report %s", report)
+                    log_setup.event(logger, "monthly_report_written", path=report)
                 _last_reports = time.monotonic()
             except Exception:
                 # Retry on the next poll; auxiliary reports cannot fail collection.
@@ -1728,14 +1803,98 @@ def poll_and_store(vue, device_gids):
                         for channel in usage_dict[gid].channels.values()):
                     continue
                 try:
-                    collect_mains_history(vue, str(gid))
+                    snapshot = collect_mains_history(vue, str(gid))
+                    if isinstance(snapshot, dict):
+                        stats["mains_intervals_written"] += len(snapshot.get("intervals") or [])
                 except Exception as exc:
                     # Phase collection must not interrupt existing branch collection or leak auth errors.
-                    logger.warning('Mains history collection failed for %s: %s', gid, type(exc).__name__)
-        logger.info("[%s] Recorded readings", now)
+                    stats["mains_errors"] += 1
+                    log_setup.event(logger, "mains_history_error", logging.WARNING,
+                                    device_gid=str(gid), error=type(exc).__name__,
+                                    status=_http_status(exc))
+        stats["duration_s"] = round(time.monotonic() - started, 3)
+        stats["timestamp"] = now
+        log_setup.event(logger, "poll_stored", **stats)
+        return stats
 
     finally:
         conn.close()
+
+
+ENERGY_KIND_SQL = """CASE
+    WHEN channel_name IN ('Main','Mains_A','Mains_B','Mains_C') THEN 'mains'
+    WHEN channel_name = 'Balance' THEN 'balance'
+    WHEN lower(channel_name) LIKE '%solar%' OR lower(channel_name) LIKE '%inverter%'
+         OR lower(channel_name) LIKE '%pv %' OR lower(channel_name) = 'pv' THEN 'solar'
+    WHEN lower(channel_name) LIKE '%battery%' OR lower(channel_name) LIKE '%powerwall%' THEN 'battery'
+    ELSE 'circuit' END"""
+
+
+def rollup_energy_hourly(conn, since: str | None = None) -> int:
+    """Upsert per-channel hourly energy from `readings` for hours starting at/after `since`.
+
+    `energy_hourly` is the durable long-term record: it is never pruned by
+    DB_RETENTION_DAYS, keeps observed seconds so gaps stay visible, and tags each
+    channel as mains, circuit, balance, solar or battery (by name). Caller commits.
+    """
+    params: tuple = ()
+    where = "r.channel_name IS NOT NULL AND r.usage_kwh IS NOT NULL"
+    if since:
+        where += " AND r.timestamp >= ?"
+        params = (since,)
+    cursor = conn.execute(f"""
+        INSERT INTO energy_hourly(device_gid,channel_name,hour_start,kind,kwh,
+                                  observed_seconds,samples,updated_at)
+        SELECT r.device_gid, r.channel_name, substr(r.timestamp,1,13)||':00:00',
+               {ENERGY_KIND_SQL.replace('channel_name', 'r.channel_name')},
+               SUM(r.usage_kwh),
+               MIN(3600, SUM(COALESCE(p.interval_seconds,
+                   CASE WHEN substr(r.timestamp,14,6)=':00:00' THEN 3600 ELSE 60 END))),
+               COUNT(*), ?
+        FROM readings r LEFT JOIN reading_provenance p ON p.reading_id=r.id
+        WHERE {where}
+        GROUP BY r.device_gid, r.channel_name, substr(r.timestamp,1,13)
+        ON CONFLICT(device_gid,channel_name,hour_start) DO UPDATE SET
+            kind=excluded.kind, kwh=excluded.kwh, observed_seconds=excluded.observed_seconds,
+            samples=excluded.samples, updated_at=excluded.updated_at""",
+        (datetime.now(timezone.utc).isoformat(timespec='seconds'), *params))
+    if ENERGY_HOURLY_RETENTION_DAYS > 0:
+        conn.execute("DELETE FROM energy_hourly WHERE hour_start < ?",
+                     ((reporting_now() - timedelta(days=ENERGY_HOURLY_RETENTION_DAYS)).isoformat(),))
+    return cursor.rowcount
+
+
+def backfill_energy_hourly() -> int:
+    """One-time fill of energy_hourly from all retained readings (safe to re-run)."""
+    conn = _connect()
+    try:
+        with conn:
+            done = conn.execute("SELECT 1 FROM migrations WHERE name='energy_hourly_backfill_v1'").fetchone()
+            if done:
+                return 0
+            rows = rollup_energy_hourly(conn)
+            conn.execute("INSERT INTO migrations(name, applied_at) VALUES (?, ?)",
+                         ("energy_hourly_backfill_v1", datetime.now().isoformat()))
+        log_setup.event(logger, "energy_hourly_backfill", rows=rows)
+        return rows
+    finally:
+        conn.close()
+
+
+def get_energy_hourly(device_gid: str | None = None, since: str | None = None) -> list[dict]:
+    """Durable hourly per-channel energy, oldest first (local naive hour_start)."""
+    conn = _connect()
+    try:
+        gid = _resolve_device_gid(conn.cursor(), device_gid)
+        if not gid:
+            return []
+        rows = conn.execute("""SELECT hour_start, channel_name, kind, kwh, observed_seconds, samples
+            FROM energy_hourly WHERE device_gid=? AND hour_start>=? ORDER BY hour_start, channel_name""",
+                            (gid, since or "")).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
 
 _last_compaction = float("-inf")  # monotonic seconds; compaction runs at most hourly
 _last_reports = float("-inf")  # advance only after successful publication
@@ -1880,6 +2039,7 @@ def _poller_lock():
 
 def poll_once() -> None:
     with _poller_lock():
+        backfill_energy_hourly()
         vue = login_vue()
         device_gids, _ = get_devices_with_channels(vue)
         poll_and_store(vue, device_gids)
@@ -1899,9 +2059,17 @@ def _run_continuous():
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
-    logger.info("Starting continuous polling every %s seconds", POLL_INTERVAL)
-    logger.info("Rate: $%.4f/kWh", RATE_CENTS / 100)
-    logger.info("Database: %s", DB_PATH)
+    log_setup.startup(logger, "energy-poller", poll_interval_s=POLL_INTERVAL,
+                      rate_cents=RATE_CENTS, db_path=DB_PATH, db_retention_days=DB_RETENTION_DAYS,
+                      minute_retention_days=MINUTE_RETENTION_DAYS,
+                      energy_hourly_retention_days=ENERGY_HOURLY_RETENTION_DAYS,
+                      mains_history=os.environ.get('EMPORIA_MAINS_HISTORY', '1') != '0',
+                      reporting_timezone=get_reporting_timezone(),
+                      keys_file_present=os.path.exists("keys.json"))
+    try:
+        backfill_energy_hourly()
+    except Exception:
+        logger.exception("energy_hourly backfill failed; hourly rollups continue per poll")
 
     # ── Initial login — stay alive even if first login fails ─────────────
     vue = None
@@ -1915,7 +2083,8 @@ def _run_continuous():
     try:
         vue = login_vue()
         device_gids, _ = get_devices_with_channels(vue)
-        logger.info("Found %s device(s)", len(device_gids))
+        log_setup.event(logger, "emporia_devices", count=len(device_gids),
+                        device_gids=[str(g) for g in device_gids])
         write_poller_status(True, consecutive_errors=0)
     except Exception as e:
         err = f"Startup login failed: {e}"
@@ -1968,9 +2137,9 @@ def _run_continuous():
                                     consecutive_errors=consecutive_errors)
                 continue
 
+        started = time.monotonic()
         try:
-            started = time.monotonic()
-            poll_and_store(vue, device_gids)
+            stats = poll_and_store(vue, device_gids)
             finished = time.monotonic()
             if finished - last_journal_check >= 3600:
                 try:
@@ -1980,15 +2149,21 @@ def _run_continuous():
                 except Exception:
                     logger.exception("History sync journal maintenance failed")
             if last_ok is not None and started - last_ok > POLL_INTERVAL * 3:
-                logger.warning("Poll gap: %.0fs since last successful poll", started - last_ok)
-            logger.info("Poll took %.2fs", finished - started)
+                log_setup.event(logger, "poll_gap", logging.WARNING,
+                                seconds_since_last_ok=round(started - last_ok))
+            log_setup.event(logger, "poll_cycle", ok=True, duration_s=round(finished - started, 3),
+                            devices=len(device_gids),
+                            readings=(stats or {}).get("readings_written") if isinstance(stats, dict) else None)
             last_ok = finished
             consecutive_errors = 0
             write_poller_status(True, consecutive_errors=0)
         except Exception as e:
             consecutive_errors += 1
             err_str = f"{type(e).__name__}: {e}"
-            logger.warning("[Poll error #%s] %s", consecutive_errors, err_str)
+            log_setup.event(logger, "poll_cycle", logging.WARNING, ok=False,
+                            duration_s=round(time.monotonic() - started, 3),
+                            error=type(e).__name__, detail=str(e)[:300],
+                            status=_http_status(e), consecutive_errors=consecutive_errors)
             write_poller_status(False, error=err_str, consecutive_errors=consecutive_errors)
 
             # Auto re-login after enough consecutive failures (expired tokens etc.)
@@ -2013,7 +2188,15 @@ def _run_continuous():
                     write_poller_status(False, error=reauth_err,
                                         consecutive_errors=consecutive_errors)
 
-        time.sleep(POLL_INTERVAL)
+        # Sleep to the next cycle start, not a full interval after the poll ends: the
+        # old poll-then-sleep(60) cadence drifted to 61-66 s and skipped Emporia minutes.
+        time.sleep(_next_poll_delay(started, time.monotonic()))
+
+
+def _next_poll_delay(started: float, now: float) -> float:
+    """Seconds until the next cycle, keeping a fixed start-to-start interval."""
+    remaining = POLL_INTERVAL - (now - started)
+    return remaining if remaining > 1 else 1.0
 
 
 def get_main_total(hours: int = 24, device_gid: str | None = None) -> dict | None:
@@ -3124,6 +3307,8 @@ def import_emporia_csv(
                  prefix, gid, identity_method, inserted))
             if inserted:
                 _refresh_import_snapshot_with_conn(conn, gid)
+                # Keep durable hourly totals in step with the backfilled history.
+                rollup_energy_hourly(conn, min(r[0] for r in rows_to_insert)[:13] + ':00:00')
             if inserted or not (compacted_conflicts or interval_conflicts):
                 _save_device_capabilities_with_conn(
                     conn, device_gid=gid,
@@ -3443,23 +3628,28 @@ def get_capture_history(hours: int, device_gid: str | None = None,
 
 
 def get_log_entries(n: int = 200) -> list[dict]:
-    """Return the most recent n poll timestamps and total kWh recorded."""
+    """Return the most recent n poll timestamps with whole-home (Main) kWh and cost.
+
+    Summing every channel would add Main, both legs, each circuit and Balance together,
+    roughly tripling the household figure; circuits are counted in channel_count only.
+    """
     conn = _connect()
-    c = conn.cursor()
-    c.execute(
-        """SELECT timestamp,
-                  SUM(usage_kwh)   as total_kwh,
-                  SUM(cost_cents)  as total_cents,
-                  COUNT(*)         as channel_count
-           FROM readings
-           GROUP BY timestamp
-           ORDER BY timestamp DESC
-           LIMIT ?""",
-        (n,),
-    )
-    rows = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return rows
+    try:
+        rows = conn.execute(
+            """SELECT timestamp,
+                      SUM(CASE WHEN channel_name='Main' THEN usage_kwh END)  as total_kwh,
+                      SUM(CASE WHEN channel_name='Main' THEN cost_cents END) as total_cents,
+                      COUNT(*)         as channel_count
+               FROM readings
+               WHERE device_gid != ?
+               GROUP BY timestamp
+               ORDER BY timestamp DESC
+               LIMIT ?""",
+            (_GHOST_DEVICE, n),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
