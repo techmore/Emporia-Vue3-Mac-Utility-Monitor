@@ -387,13 +387,19 @@ nav.topnav a {
   color: var(--stone-600);
   text-decoration: none;
   font-size: 0.875rem; font-weight: 500;
-  padding: 0.4rem 0.75rem;
+  padding: 0.4rem 0.6rem;
   border-radius: 6px;
   transition: background 0.15s, color 0.15s;
 }
 nav.topnav a:hover { background: var(--olive-100); color: var(--olive-800); }
 nav.topnav a.active { background: var(--olive-600); color: #fff; }
-nav.topnav .nav-links { display: flex; gap: 4px; }
+nav.topnav .nav-links { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+nav.topnav .nav-links::-webkit-scrollbar { display: none; }
+nav.topnav .nav-meta { flex-shrink: 0; }
+nav.topnav .nav-links a, #nav-status-link { white-space: nowrap; }
+@media (max-width: 1280px) and (min-width: 721px) {
+  nav.topnav a { padding: 0.4rem 0.5rem; font-size: 0.82rem; }
+}
 nav.topnav .brand {
   font-family: 'Instrument Serif', serif;
   font-size: 1.1rem; font-weight: 700;
@@ -1078,7 +1084,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 """
 
 NAV_HTML = """
-<nav class="topnav">
+<nav class="topnav" aria-label="Main">
   <div class="inner">
     <div style="display:flex; align-items:center; gap:0.25rem;">
       <a href="/" class="brand" style="display:flex; align-items:center; gap:0.5rem; text-decoration:none;">
@@ -1087,20 +1093,20 @@ NAV_HTML = """
       </a>
     </div>
     <div class="nav-links">
-      <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
-      <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
-      <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
-      <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
-      <a href="/home-3d" class="{{ 'active' if active_page == 'home-3d' else '' }}">Home 3D</a>
-      <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
-      <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
-      <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}">HVAC</a>
-      <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}">Kasa</a>
-      <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
-      <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
+      <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}"{% if active_page == 'dashboard' %} aria-current="page"{% endif %}>Dashboard</a>
+      <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}"{% if active_page == 'reports' %} aria-current="page"{% endif %}>Reports</a>
+      <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}"{% if active_page == 'trends' %} aria-current="page"{% endif %}>Trends</a>
+      <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}"{% if active_page == 'house' %} aria-current="page"{% endif %}>House · Lab</a>
+      <a href="/home-3d" class="{{ 'active' if active_page == 'home-3d' else '' }}"{% if active_page == 'home-3d' %} aria-current="page"{% endif %}>Home 3D</a>
+      <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}"{% if active_page == 'radon' %} aria-current="page"{% endif %}>Radon</a>
+      <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}"{% if active_page == 'aqara' %} aria-current="page"{% endif %}>Aqara</a>
+      <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}"{% if active_page == 'mitsubishi' %} aria-current="page"{% endif %}>HVAC</a>
+      <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}"{% if active_page == 'kasa' %} aria-current="page"{% endif %}>Kasa</a>
+      <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}"{% if active_page == 'guide' %} aria-current="page"{% endif %}>Guide</a>
+      <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}"{% if active_page == 'settings' %} aria-current="page"{% endif %}>Settings</a>
     </div>
-    <div style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
-      <span style="font-size:0.65rem; color:var(--stone-400); font-variant-numeric:tabular-nums;">v{{ version }}</span>
+    <div class="nav-meta" style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
+      <span style="font-size:0.65rem; color:var(--stone-500); font-variant-numeric:tabular-nums;">v{{ version }}</span>
       <a href="/log" id="nav-status-link" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
         <span class="status-dot {{ status_cls }}" id="nav-status-dot"></span>
         <span id="nav-status-label">{{ status_label }}</span>
