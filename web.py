@@ -465,6 +465,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .delta.down { background: oklch(52% 0.14 145 / 0.12); color: var(--green); }
 .delta.flat { background: var(--olive-100); color: var(--text-light); }
 .delta.nodata { background: var(--olive-100); color: var(--text-light); font-style: italic; }
+.now-panel .delta.flat, .now-panel .delta.nodata { background: rgba(247,248,244,0.08); color: var(--olive-300); }
 
 /* ── Now panel ── */
 .now-panel {
@@ -1235,10 +1236,15 @@ def _build_live_dashboard_payload() -> dict:
     }
 
 
+DELTA_NEUTRAL_PCT = 2.0  # smaller changes are noise, not good or bad news
+
+
 def _delta_badge(pct, label: str, invert: bool = False) -> str:
     """Return an HTML delta badge. invert=True means lower is better."""
     if pct is None:
         return '<span class="delta nodata">no prior data</span>'
+    if abs(pct) < DELTA_NEUTRAL_PCT:
+        return f'<span class="delta flat">→ {abs(pct):.1f}% vs {label}</span>'
     arrow = "↑" if pct > 0 else "↓"
     if invert:
         cls = "up" if pct > 0 else ("flat" if pct == 0 else "down")
@@ -1713,11 +1719,10 @@ DASH_HTML = """
               <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) if month_comparison.this_month else '0' }} kWh &bull; {{ delta_month|safe }}</div>
             </div>
             <div class="card">
-              <div class="card-label">7-Day Trend</div>
+              <div class="card-label">14-Day Trend</div>
               <div class="card-value" style="font-size:1.4rem; color:{{ trend_color }};">{{ trend_dir }}</div>
               <div class="card-meta">
-                {{ "%.2f"|format(trend_avg) }} kWh/day avg
-                {% if slope %}· {{ "%.3f"|format(slope|abs) }} kWh/day {% if slope > 0 %}more{% else %}less{% endif %}{% endif %}
+                {% if trend_change_pct is not none %}{{ "%.1f"|format(trend_avg) }} kWh/day avg · {{ '%+.1f'|format(trend_change_pct) }}% over complete days{% else %}Needs two complete days of readings{% endif %}
               </div>
             </div>
           </div>
@@ -2180,7 +2185,7 @@ REPORTS_HTML = """
             <div style="font-size:0.74rem; color:var(--text-light);">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) }}</div>
           </div>
           <div>
-            <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase;">Last Month</div>
+            <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase;">Last Month (full)</div>
             <div style="font-size:1.15rem; font-weight:700;">{{ "%.1f"|format(last_kwh) }} <span style="font-size:0.72rem; font-weight:400;">kWh</span></div>
             <div style="font-size:0.74rem; color:var(--text-light);">${{ "%.2f"|format((month_comparison.last_month.total_cents or 0) / 100) }}</div>
           </div>
@@ -2740,35 +2745,36 @@ TRENDS_HTML = """
 
   {% if trend.slope is not none %}
   <div class="trend-banner" style="margin-bottom:1.5rem;">
-    <span class="trend-icon">{{ '📈' if trend.slope > 0.1 else ('📉' if trend.slope < -0.1 else '➡️') }}</span>
+    <span class="trend-icon" aria-hidden="true">{{ '📈' if trend.direction == 'rising' else ('📉' if trend.direction == 'falling' else '➡️') }}</span>
     <span>
-      Usage is <strong>{{ 'rising' if trend.slope > 0.1 else ('falling' if trend.slope < -0.1 else 'stable') }}</strong>
-      &mdash; {{ '%+.2f'|format(trend.slope) }} kWh/day.
+      Usage is <strong>{{ trend.direction }}</strong>
+      &mdash; {{ '%+.1f'|format(trend.change_pct) }}% across {{ trend.complete_days }} complete days ({{ '%+.2f'|format(trend.slope) }} kWh/day).
       Daily average: <strong>{{ "%.1f"|format(trend.avg_kwh) }} kWh</strong>
-      (${{ "%.2f"|format(trend.avg_kwh * rate) }}/day).
+      (${{ "%.2f"|format(trend.avg_kwh * rate) }}/day). Today and days with missing hours are left out.
     </span>
   </div>
 
   <div class="grid-4" style="margin-bottom:1.5rem;">
     <div class="card">
-      <div class="card-label">14-Day Avg</div>
+      <div class="card-label">Daily Avg · {{ trend.complete_days }} complete days</div>
       <div class="card-value">{{ "%.1f"|format(trend.avg_kwh) }}<span class="unit">kWh/day</span></div>
       <div class="card-meta">${{ "%.2f"|format(trend.avg_kwh * rate) }}/day</div>
     </div>
     <div class="card">
       <div class="card-label">Trend</div>
-      <div class="card-value" style="font-size:1.4rem; color:{{ 'var(--red)' if trend.slope > 0.1 else ('var(--green)' if trend.slope < -0.1 else 'var(--text-light)') }}">
+      <div class="card-value" style="font-size:1.4rem; color:{{ 'var(--red)' if trend.direction == 'rising' else ('var(--green)' if trend.direction == 'falling' else 'var(--text-light)') }}">
         {{ '%+.2f'|format(trend.slope) }}<span class="unit">kWh/day</span>
       </div>
+      <div class="card-meta">{{ trend.direction|capitalize }} · {{ '%+.1f'|format(trend.change_pct) }}% over the window</div>
     </div>
     <div class="card">
       <div class="card-label">Best Day</div>
-      <div class="card-value" style="font-size:1.2rem;">{{ trend.best_day.day[-5:] }}</div>
+      <div class="card-value" style="font-size:1.2rem;">{{ trend.best_day.day[5:7]|int }}/{{ trend.best_day.day[8:]|int }}</div>
       <div class="card-meta" style="color:var(--green);">{{ "%.1f"|format(trend.best_day.total_kwh) }} kWh</div>
     </div>
     <div class="card">
       <div class="card-label">Peak Day</div>
-      <div class="card-value" style="font-size:1.2rem;">{{ trend.worst_day.day[-5:] }}</div>
+      <div class="card-value" style="font-size:1.2rem;">{{ trend.worst_day.day[5:7]|int }}/{{ trend.worst_day.day[8:]|int }}</div>
       <div class="card-meta" style="color:var(--red);">{{ "%.1f"|format(trend.worst_day.total_kwh) }} kWh</div>
     </div>
   </div>
@@ -2776,8 +2782,8 @@ TRENDS_HTML = """
 
   <div class="grid-2">
     <div class="chart-box">
-      <h3>Daily Usage — 14 Days</h3>
-      <canvas id="trendChart" height="200"></canvas>
+      <h3>Daily Usage — 14 Days <span style="font-weight:400;">· kWh per day · lighter bars are partial days</span></h3>
+      <canvas id="trendChart" height="200" role="img" aria-label="Daily whole-home energy for the last 14 days; partial days are lighter"></canvas>
     </div>
     <div class="chart-box">
       <h3>Hourly Pattern — 7 Days</h3>
@@ -2788,7 +2794,7 @@ TRENDS_HTML = """
   <div id="month-comparison" class="section">
     <div class="section-head">
       <h2>Month Comparison</h2>
-      <span class="section-sub">This month against the previous full month</span>
+      <span class="section-sub">Month to date against the same days of last month</span>
     </div>
   <div class="grid-3">
     <div class="card">
@@ -2797,16 +2803,16 @@ TRENDS_HTML = """
       <div class="card-meta">${{ "%.2f"|format((mc.this_month.total_cents or 0)/100) }}</div>
     </div>
     <div class="card">
-      <div class="card-label">Last Month</div>
-      <div class="card-value">{{ "%.1f"|format(mc.last_month.total_kwh or 0) }}<span class="unit">kWh</span></div>
-      <div class="card-meta">${{ "%.2f"|format((mc.last_month.total_cents or 0)/100) }}</div>
+      <div class="card-label">Last Month · Same Days</div>
+      <div class="card-value">{{ "%.1f"|format(mc.last_month_same_period.total_kwh or 0) if mc.last_month_same_period else '—' }}<span class="unit">kWh</span></div>
+      <div class="card-meta">{% if mc.last_month_same_period %}${{ "%.2f"|format((mc.last_month_same_period.total_cents or 0)/100) }} · {% endif %}full month {{ "%.1f"|format(mc.last_month.total_kwh or 0) if mc.last_month else '—' }} kWh</div>
     </div>
-    {% if mc.this_month and mc.last_month %}
+    {% if mc.this_month and mc.last_month_same_period and mc.last_month_same_period.total_kwh %}
     <div class="card">
       <div class="card-label">Change</div>
-      {% set ch = ((mc.this_month.total_kwh or 0)-(mc.last_month.total_kwh or 0))/(mc.last_month.total_kwh or 1)*100 %}
-      <div class="card-value" style="font-size:1.8rem; color:{{ 'var(--green)' if ch<0 else 'var(--red)' }}">{{ '%+.1f'|format(ch) }}%</div>
-      <div class="card-meta">vs last month</div>
+      {% set ch = ((mc.this_month.total_kwh or 0)-mc.last_month_same_period.total_kwh)/mc.last_month_same_period.total_kwh*100 %}
+      <div class="card-value" style="font-size:1.8rem; color:{{ 'var(--text-light)' if ch|abs < 2 else ('var(--green)' if ch<0 else 'var(--red)') }}">{{ '%+.1f'|format(ch) }}%</div>
+      <div class="card-meta">vs the same days last month</div>
     </div>
     {% endif %}
   </div>
@@ -2957,13 +2963,13 @@ const s = getComputedStyle(document.documentElement);
 const textLight = s.getPropertyValue('--olive-600').trim();
 const gridCol   = s.getPropertyValue('--olive-200').trim();
 
-function mkChart(id, labels, data, color) {
+function mkChart(id, labels, data, color, notes) {
   new Chart(document.getElementById(id), {
     type:'bar',
     data:{ labels, datasets:[{ data, backgroundColor:color, borderRadius:3 }] },
     options:{
       responsive:true,
-      plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw == null ? "no data" : c.raw.toFixed(2) + " kWh"}`}}},
+      plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw == null ? "no data" : c.raw.toFixed(2) + " kWh"}${notes && notes[c.dataIndex] ? " · " + notes[c.dataIndex] : ""}`}}},
       scales:{
         x:{ticks:{color:textLight, font:{size:10}, maxRotation:45}, grid:{color:gridCol}},
         y:{beginAtZero:true, ticks:{color:textLight, font:{size:10}}, grid:{color:gridCol}}
@@ -2972,10 +2978,12 @@ function mkChart(id, labels, data, color) {
   });
 }
 
+const shortDay = d => { const [, m, day] = d.split('-'); return `${+m}/${+day}`; };
 mkChart('trendChart',
-  trendData.map(d=>d.day.slice(5)),
+  trendData.map(d=>shortDay(d.day)),
   trendData.map(d=>d.total_kwh),
-  'oklch(35% 0.045 110)');
+  trendData.map(d=>d.partial ? 'oklch(72% 0.03 110)' : 'oklch(35% 0.045 110)'),
+  trendData.map(d=>d.partial ? 'partial day' : ''));
 
 mkChart('hourlyChart',
   hourlyData.map(d=>d.hour.slice(11,16)),
@@ -3680,12 +3688,13 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     for row in peak_usage["peak_hours"]:
         row["hour_label"] = _format_hour(row["hour"])
     month_comparison = energy.get_month_comparison(active_device_gid)
-    if month_comparison["this_month"] and month_comparison["last_month"]:
+    baseline = month_comparison.get("last_month_same_period")
+    if month_comparison["this_month"] and baseline and baseline.get("total_kwh"):
         month_change = (
-            (month_comparison["this_month"]["total_kwh"] or 0)
-            - (month_comparison["last_month"]["total_kwh"] or 0)
-        ) / (month_comparison["last_month"]["total_kwh"] or 1) * 100
-        delta_month = _delta_badge(month_change, "last month", invert=True)
+            (month_comparison["this_month"]["total_kwh"] or 0) - baseline["total_kwh"]
+        ) / baseline["total_kwh"] * 100
+        through = datetime.fromisoformat(baseline["through"]) - timedelta(seconds=1)
+        delta_month = _delta_badge(month_change, f"{through:%b} 1–{through.day}", invert=True)
     else:
         delta_month = _delta_badge(None, "last month")
 
@@ -3751,8 +3760,11 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         "leg_b": leg_rows[1] if len(leg_rows) > 1 and legs_fresh else None,
         "service_mode": service_mode,
         "slope": slope,
-        "trend_dir": "↑ rising" if slope > 0.05 else ("↓ falling" if slope < -0.05 else "→ steady"),
-        "trend_color": "#f87171" if slope > 0.05 else ("#81c784" if slope < -0.05 else "var(--text-light)"),
+        "trend_dir": {"rising": "↑ rising", "falling": "↓ falling", "steady": "→ steady"}.get(
+            (trend or {}).get("direction"), "Collecting history"),
+        "trend_color": {"rising": "var(--red)", "falling": "var(--green)"}.get(
+            (trend or {}).get("direction"), "var(--text-light)"),
+        "trend_change_pct": (trend or {}).get("change_pct"),
         "trend_avg": (trend or {}).get("avg_kwh") or 0,
         "delta_month": delta_month,
         "panel_fragment": _render_panel_fragment(
@@ -4251,7 +4263,7 @@ def trends_page():
     hourly_solar = (hourly_generation_offset(
         [cell['kwh'] for cell in main['cells']], generation, energy.RATE_CENTS, export_rate,
     ) if main and main['weekly_kwh'] is not None else None)
-    trend = energy.get_trend(14)
+    trend = energy.get_trend(14, com["active_device_gid"])
     mc = energy.get_month_comparison(com["active_device_gid"])
     summary_24 = energy.get_summary(24, com["active_device_gid"])
     total_24h = energy.get_main_total(24, com["active_device_gid"]) or {
@@ -4319,7 +4331,7 @@ def trends_page():
         hourly_solar=hourly_solar,
         trend_json=_fill_gaps(trend["daily"], "day"),
         hourly_json=_fill_gaps(energy.get_hourly_data(7, com["active_device_gid"]), "hour", hourly=True),
-        mc={"this_month": mc["this_month"], "last_month": mc["last_month"]},
+        mc=mc,
         rate=RATE,
         total_24h=total_24h,
         biggest_circuit=biggest_circuit,
