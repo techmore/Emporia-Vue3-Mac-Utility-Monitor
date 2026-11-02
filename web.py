@@ -253,11 +253,19 @@ BASE_CSS = """
 .kasa-controls-grid label { display:grid; gap:4px; margin:12px 0; }
 .kasa-controls-grid input, .kasa-controls-grid select { width:100%; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
 .kasa-actions { display:flex; gap:8px; margin:12px 0; }
-.power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px; }
-.power-heatmap th { font-size: 0.7rem; padding: 3px; }
-.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); min-width: 140px; text-align: left; }
+.power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px;
+  background: var(--olive-950); border-radius: 10px; padding: 6px; }
+.power-heatmap th { font-size: 0.7rem; padding: 3px; color: var(--olive-200); font-weight: 500; }
+.power-heatmap tbody th { position: sticky; left: 0; z-index: 1; background: var(--olive-950); color: var(--olive-50);
+  min-width: 140px; padding-right: 10px; text-align: left; white-space: nowrap; }
 .power-heatmap .heat-cell { padding: 0; height: 20px; min-width: 8px; border-radius: 2px; }
-.heat-missing { background: var(--stone-200); opacity: 0.15; }
+.power-heatmap .heat-cell:focus-visible { outline: 2px solid var(--olive-50); outline-offset: 0; }
+.heat-missing { background: repeating-linear-gradient(135deg, transparent 0 3px, rgba(247,248,244,0.18) 3px 4px); }
+.heat-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0.5rem 0 0.75rem;
+  font-size: 0.75rem; color: var(--text-light); }
+.heat-legend .heat-scale { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: 4px;
+  background: var(--olive-950); }
+.heat-legend .heat-cell { display: inline-block; width: 14px; height: 12px; border-radius: 2px; }
 .heat-1 { background: var(--olive-900); }
 .heat-2 { background: var(--olive-700); }
 .heat-3 { background: var(--olive-500); }
@@ -539,9 +547,9 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   letter-spacing: 0.08em;
   color: var(--olive-300);
 }
-.banner-chart-row canvas {
-  width: 100%;
-}
+.banner-chart-canvas { position: relative; height: 26px; min-width: 0; overflow: hidden; }
+.banner-chart-canvas.with-axis { height: 40px; }
+.banner-chart-row canvas { display: block; }
 .legend-swatch {
   width: 10px;
   height: 10px;
@@ -1619,18 +1627,21 @@ DASH_HTML = """
       <div class="banner-chart-head">
         <div class="banner-chart-title">Today vs Yesterday</div>
         <div class="banner-chart-legend">
-          <span><span class="legend-swatch" style="background:var(--chart1);"></span>Today</span>
+          <span><span class="legend-swatch" style="background:var(--olive-300);"></span>Today</span>
           <span><span class="legend-swatch" style="background:var(--chart2);"></span>Yesterday</span>
+          <span>kWh per hour</span>
         </div>
       </div>
       <div class="banner-chart-rows">
         <div class="banner-chart-row">
           <div class="banner-chart-row-label">Today</div>
-          <canvas id="todayRowChart" height="26"></canvas>
+          <div class="banner-chart-canvas"><canvas id="todayRowChart" role="img"
+            aria-label="Hourly energy today so far; hours without readings are gaps"></canvas></div>
         </div>
         <div class="banner-chart-row">
           <div class="banner-chart-row-label">Yesterday</div>
-          <canvas id="yesterdayRowChart" height="26"></canvas>
+          <div class="banner-chart-canvas with-axis"><canvas id="yesterdayRowChart" role="img"
+            aria-label="Hourly energy yesterday"></canvas></div>
         </div>
       </div>
     </div>
@@ -1878,10 +1889,12 @@ function oliveChart(id, labels, data, color) {
   });
 }
 
-function thinRowChart(id, labels, data, color) {
+function thinRowChart(id, labels, data, color, showAxis, yMax) {
+  // Drawn on the dark banner, so ticks and hour guides use the light end of the palette.
   const s = getComputedStyle(document.documentElement);
-  const textLight = s.getPropertyValue('--olive-600').trim() || '#666';
-  const borderCol = s.getPropertyValue('--olive-200').trim() || '#ddd';
+  const textLight = s.getPropertyValue('--olive-300').trim() || '#ccc';
+  const borderCol = s.getPropertyValue('--olive-800').trim() || '#444';
+  const axisHours = ['12a', '6a', '12p', '6p'];
   new Chart(document.getElementById(id), {
     type: 'bar',
     data: {
@@ -1904,25 +1917,29 @@ function thinRowChart(id, labels, data, color) {
       scales: {
         x: {
           ticks: {
+            display: !!showAxis,
             color: textLight,
             font: { size: 10 },
             maxRotation: 0,
             autoSkip: false,
             callback: (_value, index) => {
               const label = labels[index];
-              return ['12a', '12p'].includes(label) ? label : '';
+              return axisHours.includes(label) ? label : '';
             },
           },
           grid: {
+            drawTicks: false,
             color: (_ctx) => {
               const i = _ctx.index;
               const label = labels[i];
-              return ['12a', '12p'].includes(label) ? borderCol : 'transparent';
+              return axisHours.includes(label) ? borderCol : 'transparent';
             }
           },
+          border: { display: false },
         },
         y: {
           beginAtZero: true,
+          max: yMax || undefined,
           display: false,
           grid: { display: false }
         }
@@ -1946,19 +1963,25 @@ if (document.getElementById('hourlyChart')) {
 }
 
 if (document.getElementById('todayRowChart')) {
+  const rootStyle = getComputedStyle(document.documentElement);
+  // One shared scale so a taller bar always means more energy across both rows.
+  const sharedMax = Math.max(0.001, ...intradayComparison.today.concat(intradayComparison.yesterday)
+    .filter(v => v != null));
   thinRowChart(
     'todayRowChart',
     intradayComparison.labels,
     intradayComparison.today,
-    'oklch(35% 0.045 110)'
+    rootStyle.getPropertyValue('--olive-300').trim() || '#c4c9b0',
+    false,
+    sharedMax
   );
-}
-if (document.getElementById('yesterdayRowChart')) {
   thinRowChart(
     'yesterdayRowChart',
     intradayComparison.labels,
     intradayComparison.yesterday,
-    'oklch(55% 0.06 210)'
+    rootStyle.getPropertyValue('--chart2').trim() || '#5ba4b5',
+    true,
+    sharedMax
   );
 }
 
@@ -2647,9 +2670,13 @@ TRENDS_HTML = """
   <section class="card" style="margin-bottom:1.5rem;">
     <h2>Weekly Power Heatmap</h2>
     <p class="card-meta">Last seven complete days · hourly recorded kWh · brighter means more energy.
-      Blank cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
+      Hatched cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
       Sample counts do not prove coverage; imports may represent longer intervals.</p>
     {% if heatmap.circuits %}
+    <div class="heat-legend" aria-hidden="true">
+      <span>Less</span><span class="heat-scale"><span class="heat-cell heat-1"></span><span class="heat-cell heat-2"></span><span class="heat-cell heat-3"></span><span class="heat-cell heat-4"></span><span class="heat-cell heat-5"></span></span><span>More energy</span>
+      <span class="heat-scale"><span class="heat-cell heat-missing"></span></span><span>No recorded data (not zero)</span>
+    </div>
     <div style="overflow-x:auto;">
       <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
         <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
@@ -2669,9 +2696,13 @@ TRENDS_HTML = """
       two matching weekdays with 57 or more distinct recorded minutes. Hourly imports alone cannot qualify.
       This is a repeat-pattern baseline, not a weather-adjusted forecast. Missing hours remain unknown.</p>
     {% if pattern.circuits %}
+    <div class="heat-legend" aria-hidden="true">
+      <span>Less</span><span class="heat-scale"><span class="heat-cell heat-1"></span><span class="heat-cell heat-2"></span><span class="heat-cell heat-3"></span><span class="heat-cell heat-4"></span><span class="heat-cell heat-5"></span></span><span>More energy</span>
+      <span class="heat-scale"><span class="heat-cell heat-missing"></span></span><span>No recorded data (not zero)</span>
+    </div>
     <div style="overflow-x:auto;">
       <table class="power-heatmap" aria-label="Typical weekly circuit energy">
-        <thead><tr><th>Circuit</th>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th colspan="24">{{ day }}</th>{% endfor %}</tr></thead>
+        <thead><tr><th scope="col">Circuit</th>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr></thead>
         <tbody>{% for circuit in pattern.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
         {% for cell in circuit.cells %}<td tabindex="0" class="heat-cell {{ 'heat-' ~ ([5, (cell.kwh / pattern_max * 5)|int + 1]|min) if cell else 'heat-missing' }}"
           title="{{ circuit.name }} · {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][loop.index0 // 24] }} {{ '%02d'|format(loop.index0 % 24) }}:00{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.weeks }} qualifying weeks · observed range {{ '%.3f'|format(cell.low) }}–{{ '%.3f'|format(cell.high) }} kWh{% else %} · Insufficient repeated history{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>

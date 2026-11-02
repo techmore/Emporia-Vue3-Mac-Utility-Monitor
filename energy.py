@@ -2517,8 +2517,10 @@ def get_intraday_comparison(device_gid: str | None = None) -> dict:
 
     today_key = today_start.date().isoformat()
     yesterday_key = yesterday_start.date().isoformat()
-    today = [0.0] * 24
-    yesterday = [0.0] * 24
+    # Unrecorded hours (gaps, and the rest of today) stay None so charts show them as
+    # gaps rather than as zero usage.
+    today: list[float | None] = [None] * 24
+    yesterday: list[float | None] = [None] * 24
     for row in rows:
         hour = row["hour_num"]
         if row["day_key"] == today_key:
