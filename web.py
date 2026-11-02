@@ -395,7 +395,7 @@ nav.topnav a:hover { background: var(--olive-100); color: var(--olive-800); }
 nav.topnav a.active { background: var(--olive-600); color: #fff; }
 nav.topnav .nav-links { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 nav.topnav .nav-links::-webkit-scrollbar { display: none; }
-nav.topnav .nav-meta { flex-shrink: 0; }
+nav.topnav .nav-meta { flex-shrink: 0; margin-left: 12px; }
 nav.topnav .nav-links a, #nav-status-link { white-space: nowrap; }
 @media (max-width: 1280px) and (min-width: 721px) {
   nav.topnav a { padding: 0.4rem 0.5rem; font-size: 0.82rem; }
@@ -555,7 +555,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 .banner-chart-row {
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
+  grid-template-columns: 84px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
 }
@@ -764,7 +764,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   font-size: 0.7rem; color: var(--olive-400); margin-top: 2px;
 }
 .breaker-bars {
-  width: 44px; flex-shrink: 0;
+  width: 52px; flex-shrink: 0;
   display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
   align-items: flex-end; height: 32px;
 }
@@ -805,11 +805,14 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .breaker { position: relative; }
 .breaker-amps { font-size: 0.6rem; color: var(--olive-500); margin-top: 1px; }
 .breaker-bar-labels {
-  width: 44px; flex-shrink: 0;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
-  font-size: 0.5rem; color: var(--olive-500); text-transform: uppercase;
-  letter-spacing: 0.06em; margin-top: 2px;
+  width: 52px; flex-shrink: 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px; text-align: center;
+  font-size: 0.56rem; color: var(--olive-400); margin-top: 2px;
 }
+.breaker-safe.unknown { background: transparent; border: 1px dashed var(--olive-700); }
+.breaker-safe.unknown::after { display: none; }
+.panel-rating-hint { margin-top: 0.75rem; font-size: 0.75rem; color: var(--olive-300); }
+.panel-rating-hint a { color: var(--olive-100); }
 
 /* ── Breaker safety zones ── */
 .breaker-load-row {
@@ -827,7 +830,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   content: ''; position: absolute; top: 0; left: 80%; width: 1px; height: 100%;
   background: rgba(255,255,255,0.35);
 }
-.breaker-load-text { font-size: 0.58rem; white-space: nowrap; min-width: 28px; text-align: right; }
+.breaker-load-text { font-size: 0.62rem; white-space: nowrap; min-width: 28px; text-align: right; color: var(--olive-300); }
 
 /* safety zone colours */
 .load-normal   { color: #4ade80; }
@@ -1378,7 +1381,8 @@ PANEL_FRAGMENT_HTML = """
       <div class="mc-leg">{{ m.label }}</div>
       <div class="mc-w">{{ "%.0f"|format(m.watts) if m.watts is not none else "—" }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
       {% if m.live_estimated %}<div class="mc-kwh" style="margin-top:2px;">live watts estimated from slot layout</div>{% endif %}
-      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+      {% if m.live_estimated and not m.kwh_24h %}<div class="mc-kwh">24h energy not measured per leg</div>
+      {% else %}<div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -1403,7 +1407,7 @@ PANEL_FRAGMENT_HTML = """
           {{ "%.0f"|format(b.watts) if b.watts is not none else "—" }} W
           {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
         </div>
-        {% if b.load_label %}
+        {% if b.load_label and b.load_label != 'Rating not set' %}
         <div class="breaker-load-row">
           <div class="breaker-load-bar-wrap">
             <div class="breaker-load-bar-fill {{ b.fill_cls }}" style="width:{{ b.load_bar_w }}%"></div>
@@ -1417,11 +1421,11 @@ PANEL_FRAGMENT_HTML = """
           <div class="breaker-bar-wrap" title="Relative share of current panel load">
             <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
           </div>
-          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="{{ 'Estimated load vs configured rating; 80% reference' if b.rating_known else 'Set breaker rating in Panel Layout' }}">
+          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}{{ '' if b.rating_known else ' unknown' }}" title="{{ 'Estimated load vs configured rating; 80% reference' if b.rating_known else 'Breaker rating not set — add it in the Panel Editor' }}">
             <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
           </div>
         </div>
-        <div class="breaker-bar-labels"><span>Load</span><span>Rating</span></div>
+        <div class="breaker-bar-labels" aria-hidden="true"><span>Load</span><span>Limit</span></div>
       </div>
       {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
     </a>
@@ -1446,6 +1450,11 @@ PANEL_FRAGMENT_HTML = """
       {% for b in breakers_right %}{{ render_breaker_shared(b) }}{% endfor %}
     </div>
   </div>
+  {% set unrated = (breakers_left + breakers_right)|selectattr('channel_name')|rejectattr('rating_known')|list %}
+  {% if unrated %}
+  <p class="panel-rating-hint">{{ unrated|length }} breaker{{ '' if unrated|length == 1 else 's' }} without a rating, so the
+    Limit bar is empty.{% if edit_href %} <a href="{{ edit_href }}">Add ratings in the Panel Editor</a>{% endif %}</p>
+  {% endif %}
   {% if edit_href %}
   <div style="text-align:right; margin-top:0.75rem;">
     <a href="{{ edit_href }}" style="font-size:0.75rem; color:var(--olive-400); text-decoration:none;">
