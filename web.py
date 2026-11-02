@@ -1212,6 +1212,17 @@ def _format_hour(h: str) -> str:
     return f"{hour - 12} PM"
 
 
+def _circuit_display(name, label=None) -> str:
+    """Saved label, else the channel name; bare CT numbers (Emporia's unnamed channels) get words."""
+    if label:
+        return label
+    text = str(name or "").strip()
+    return f"Circuit {text} (unnamed)" if text.isdigit() else (name or "—")
+
+
+app.jinja_env.filters["circuit_label"] = _circuit_display
+
+
 def _friendly_time(value) -> str:
     """'Today 4:31 PM', 'Yesterday 9:05 AM' or 'Oct 28, 4:31 PM' for a stored local timestamp."""
     try:
@@ -2221,7 +2232,7 @@ REPORTS_HTML = """
       <table style="width:100%; margin-top:10px;">
         <thead><tr><th>Circuit</th><th>Recent week</th><th>Previous week</th><th>Change</th><th>Capture</th></tr></thead>
         <tbody>{% for row in circuit_week_comparison %}
-          <tr><td>{{ row.channel_name }}</td>
+          <tr><td>{{ row.channel_name|circuit_label }}</td>
             <td>{{ "%.2f"|format(row.current_kwh) }} kWh</td>
             <td>{{ "%.2f"|format(row.previous_kwh) }} kWh</td>
             <td>{% if row.change_pct is not none %}{{ "%+.1f"|format(row.change_pct) }}%{% elif row.comparable %}No positive baseline{% else %}Insufficient capture{% endif %}</td>
@@ -2642,7 +2653,7 @@ CIRCUITS_HTML = """
 CIRCUIT_HTML = """
 <div class="page">
   <a class="back-link" href="/circuits">&#8592; All Circuits</a>
-  <h1 style="font-size:2rem; margin-bottom:1rem;">{{ circuit_name }}</h1>
+  <h1 style="font-size:2rem; margin-bottom:1rem;">{{ circuit_name|circuit_label }}</h1>
 
   <div class="periods" style="display:flex; gap:8px; margin-bottom:1.5rem; flex-wrap:wrap;">
     {% for p, label in [('hour','Hour'),('day','Day'),('week','Week'),('month','Month'),('year','Year')] %}
@@ -2763,7 +2774,7 @@ TRENDS_HTML = """
       <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
         <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
         <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ hour[-2:] if hour[-2:] in ['00','06','12','18'] else '' }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
+        <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
         {% for cell in circuit.cells %}<td class="heat-cell {{ 'heat-' ~ cell.level if cell else 'heat-missing' }}"
           tabindex="0" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
           title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }}{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
@@ -2785,13 +2796,13 @@ TRENDS_HTML = """
     <div style="overflow-x:auto;">
       <table class="power-heatmap" aria-label="Typical weekly circuit energy">
         <thead><tr><th scope="col">Circuit</th>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for circuit in pattern.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
+        <tbody>{% for circuit in pattern.circuits %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
         {% for cell in circuit.cells %}<td tabindex="0" class="heat-cell {{ 'heat-' ~ ([5, (cell.kwh / pattern_max * 5)|int + 1]|min) if cell else 'heat-missing' }}"
           title="{{ circuit.name }} · {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][loop.index0 // 24] }} {{ '%02d'|format(loop.index0 % 24) }}:00{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.weeks }} qualifying weeks · observed range {{ '%.3f'|format(cell.low) }}–{{ '%.3f'|format(cell.high) }} kWh{% else %} · Insufficient repeated history{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
       </table>
     </div>
     <table><thead><tr><th>Circuit</th><th>Supported hours</th><th>Typical week</th><th>Usage cost</th></tr></thead><tbody>
-      {% for circuit in pattern.circuits %}<tr><td>{{ circuit.name }}</td><td>{{ circuit.supported }}/168</td>
+      {% for circuit in pattern.circuits %}<tr><td>{{ circuit.name|circuit_label }}</td><td>{{ circuit.supported }}/168</td>
       {% if circuit.weekly_kwh is not none %}<td>{{ '%.2f'|format(circuit.weekly_kwh) }} kWh</td><td>${{ '%.2f'|format(circuit.weekly_kwh * rate) }}</td>
       {% else %}<td colspan="2">Collecting repeated history — no complete-week estimate</td>{% endif %}</tr>{% endfor %}
     </tbody></table>
@@ -3668,7 +3679,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         summary_row = summary_24_map.get(name, {})
         top_circuits.append({
             **row,
-            "display_name": name,
+            "display_name": _circuit_display(name),
             "watts": watts,
             "pct": (row["kwh"] / (ctx["current_kwh"] or 1)) * 100,
             "kwh_24h": summary_row.get("total_kwh", 0),
@@ -3730,7 +3741,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         dash_breakers.append({
             "slot": slot,
             "channel_name": name,
-            "label": row.get("label") or name or "—",
+            "label": _circuit_display(name, row.get("label")),
             "note": row.get("note"),
             "amps": configured_amps,
             "poles": poles,
@@ -3770,7 +3781,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         delta_month = _delta_badge(None, "last month")
 
     standby = [
-        {"name": name, "watts": _watts_estimate(kwh)}
+        {"name": _circuit_display(name), "watts": _watts_estimate(kwh)}
         for name, kwh in latest_map.items()
         if name not in _MAINS_NAMES and name not in _SKIP_NAMES
         and 1 <= (_watts_estimate(kwh) or 0) <= 50
@@ -3921,7 +3932,7 @@ def reports_page():
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest = energy.get_latest()
     standby = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row)}
+        {"name": _circuit_display(row["channel_name"]), "watts": _watts_estimate(row)}
         for row in latest
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
@@ -3946,7 +3957,7 @@ def reports_page():
         safe_pct = amps_now / (amps * 0.8) * 100 if amps else 0
         if safe_pct >= 80:
             safety_breakers.append({
-                "label": panel_row.get("label") or name,
+                "label": _circuit_display(name, panel_row.get("label")),
                 "safe_pct": safe_pct,
             })
     safety_breakers.sort(key=lambda x: x["safe_pct"], reverse=True)
@@ -4157,7 +4168,7 @@ def circuits_page():
         breakers.append({
             "slot":         slot,
             "channel_name": name,
-            "label":        row.get("label") or name or "—",
+            "label":        _circuit_display(name, row.get("label")),
             "note":         row.get("note"),
             "amps":         configured_amps,
             "poles":        poles,
@@ -4195,7 +4206,7 @@ def circuits_page():
                             if r.get("channel_name") == name and r.get("label")), None)
         usage_rows.append({
             "channel_name": name,
-            "display_name": saved_label or name,
+            "display_name": _circuit_display(name, saved_label),
             "day_kwh":   dk, "day_cost":   dc / 100,
             "week_kwh":  wk, "week_cost":  wc / 100,
             "month_kwh": mk, "month_cost": mc / 100,
@@ -4357,7 +4368,7 @@ def trends_page():
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest_rows = energy.get_latest(com["active_device_gid"])
     standby_circuits = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row)}
+        {"name": _circuit_display(row["channel_name"]), "watts": _watts_estimate(row)}
         for row in latest_rows
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
@@ -4365,7 +4376,7 @@ def trends_page():
     ]
     standby_circuits.sort(key=lambda x: (x["watts"] is not None, x["watts"] or 0), reverse=True)
     top_live_circuits = [
-        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": _watts_estimate(row)}
+        {"channel_name": row["channel_name"], "display_name": _circuit_display(row["channel_name"]), "watts": _watts_estimate(row)}
         for row in latest_rows
         if row["channel_name"] not in _MAINS_NAMES and row["channel_name"] not in _SKIP_NAMES
     ]
@@ -4389,7 +4400,7 @@ def trends_page():
         safe_pct = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
         if safe_pct >= 80:
             safety_breakers.append({
-                "label": row.get("label") or name,
+                "label": _circuit_display(name, row.get("label")),
                 "safe_cls": "danger" if safe_pct >= 100 else "warn",
                 "load_label": f"{amps_now:.1f}/{configured_amps}A",
             })
@@ -4767,7 +4778,7 @@ def _build_menu_summary_payload() -> dict:
             ),
             "slot_state": "monitored" if name else "unmonitored" if _panel_slot_reserved(row) else "empty",
             "channel_name": name,
-            "display_name": row.get("label") or name or "—",
+            "display_name": _circuit_display(name, row.get("label")),
             "amps": row.get("amps"),
             "poles": row.get("poles") or 1,
             "watts": breaker_watts,
@@ -4798,7 +4809,7 @@ def _build_menu_summary_payload() -> dict:
     circuits = [
         {
             "channel_name": row["channel_name"],
-            "display_name": labels.get(row["channel_name"]) or row["channel_name"],
+            "display_name": _circuit_display(row["channel_name"], labels.get(row["channel_name"])),
             "watts": _watts_estimate(row) if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None else None,
         }
         for row in latest if row["channel_name"] not in energy.META_CHANNELS
