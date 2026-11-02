@@ -387,7 +387,7 @@ nav.topnav a {
   color: var(--stone-600);
   text-decoration: none;
   font-size: 0.875rem; font-weight: 500;
-  padding: 0.4rem 0.6rem;
+  padding: 0.4rem 0.55rem;
   border-radius: 6px;
   transition: background 0.15s, color 0.15s;
 }
