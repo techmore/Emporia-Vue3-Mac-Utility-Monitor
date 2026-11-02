@@ -1347,8 +1347,17 @@ WORKSPACE_NAV_HTML = """
 """
 
 
+PAGE_TITLES = {
+    "dashboard": "Dashboard", "reports": "Reports", "trends": "Trends", "house": "House Lab",
+    "home-3d": "Home 3D", "radon": "Radon", "aqara": "Aqara", "mitsubishi": "HVAC", "kasa": "Kasa",
+    "guide": "Guide", "settings": "Settings",
+}
+
+
 def _render(template: str, **ctx):
     ctx["mobile_path"] = request.path if has_request_context() else ""
+    ctx.setdefault("page_title", WORKSPACE_PAGES.get(ctx["mobile_path"])
+                   or PAGE_TITLES.get(ctx.get("active_page", "")))
     if has_request_context() and request.path in WORKSPACE_PAGES:
         ctx.update(workspace_pages=WORKSPACE_PAGES, workspace_path=request.path)
         template = ('<div class="page"><div class="section-head"><h2>Settings Workspace</h2>'
@@ -1357,7 +1366,7 @@ def _render(template: str, **ctx):
     return render_template_string(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<title>Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
+        '<title>{% if page_title %}{{ page_title }} · {% endif %}Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
         + NAV_HTML + '{% include "mobile_navigation.html" %}' + template
         + '{% include "circuit_overlay.html" %}'
         '<script src="/static/actions.js" defer></script></body></html>',
@@ -4319,6 +4328,7 @@ def circuit_detail(circuit_name, period="day"):
     return _render(
         CIRCUIT_HTML,
         active_page="circuits",
+        page_title=_circuit_display(circuit_name),
         circuit_name=circuit_name,
         circuit_url=circuit_url,
         period=period,
