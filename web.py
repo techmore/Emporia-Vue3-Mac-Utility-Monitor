@@ -396,6 +396,7 @@ nav.topnav a.active { background: var(--olive-600); color: #fff; }
 nav.topnav .nav-links { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 nav.topnav .nav-links::-webkit-scrollbar { display: none; }
 nav.topnav .nav-meta { flex-shrink: 0; margin-left: 12px; }
+@media (max-width: 1500px) { nav.topnav .nav-version { display: none; } }
 nav.topnav .nav-links a, #nav-status-link { white-space: nowrap; }
 @media (max-width: 1280px) and (min-width: 721px) {
   nav.topnav a { padding: 0.4rem 0.5rem; font-size: 0.82rem; }
@@ -1121,8 +1122,8 @@ NAV_HTML = """
       <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}"{% if active_page == 'settings' %} aria-current="page"{% endif %}>Settings</a>
     </div>
     <div class="nav-meta" style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
-      <span style="font-size:0.65rem; color:var(--stone-500); font-variant-numeric:tabular-nums;">v{{ version }}</span>
-      <a href="/log" id="nav-status-link" title="Open the poller log" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
+      <span class="nav-version" style="font-size:0.65rem; color:var(--stone-500); font-variant-numeric:tabular-nums;">v{{ version }}</span>
+      <a href="/log" id="nav-status-link" title="Open the poller log · v{{ version }}" data-version="{{ version }}" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
         <span class="status-dot {{ status_cls }}" id="nav-status-dot"></span>
         <span id="nav-status-label">{{ status_label }}</span>
       </a>
@@ -1192,7 +1193,7 @@ window.escapeHTML = function(value) {
     dot.className = 'status-dot ' + st.cls;
     label.textContent = st.label;
     const link = document.getElementById('nav-status-link');
-    if (link) link.title = (s.error ? s.error + ' — ' : '') + 'Open the poller log';
+    if (link) link.title = (s.error ? s.error + ' — ' : '') + 'Open the poller log · v' + (link.dataset.version || '');
   }
   window.subscribeEnergyEvents(function(payload) {
     if (payload && payload.status) applyNavStatus(payload.status);
