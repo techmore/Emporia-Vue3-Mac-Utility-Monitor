@@ -455,6 +455,17 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .section-block { display:flex; flex-direction:column; gap:14px; }
 
 /* ── Delta badges ── */
+.visually-hidden { position:absolute !important; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.first-run { max-width: 44rem; margin: 2rem auto 0; padding: 1.75rem 2rem; }
+.first-run h1 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 2rem; color: var(--text); margin-bottom: 0.4rem; }
+.first-run ol { margin: 1.25rem 0 0 1.25rem; display: grid; gap: 0.9rem; font-size: 0.92rem; line-height: 1.5; }
+.first-run ol a { margin-left: 0.25rem; color: var(--olive-800); }
+.first-run ol a.btn-primary { color: var(--accent-fg); margin-left: 0; }
+.btn-primary { background: var(--accent); color: var(--accent-fg); border: none; border-radius: 6px;
+  padding: 0.5rem 1.25rem; font-size: 0.9rem; cursor: pointer; font-family: inherit; }
+.first-run .btn-primary { display: inline-block; margin: 0.5rem 0 0; text-decoration: none; }
+.first-run-problem { margin-top: 0.9rem; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.85rem;
+  background: oklch(52% 0.18 25 / 0.10); color: var(--text); border-left: 3px solid var(--red); }
 .delta {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 0.78rem; font-weight: 600;
@@ -1108,7 +1119,7 @@ NAV_HTML = """
     </div>
     <div class="nav-meta" style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
       <span style="font-size:0.65rem; color:var(--stone-500); font-variant-numeric:tabular-nums;">v{{ version }}</span>
-      <a href="/log" id="nav-status-link" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
+      <a href="/log" id="nav-status-link" title="Open the poller log" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
         <span class="status-dot {{ status_cls }}" id="nav-status-dot"></span>
         <span id="nav-status-label">{{ status_label }}</span>
       </a>
@@ -1158,6 +1169,10 @@ window.escapeHTML = function(value) {
       if (age < 90)  return { cls: 'live',  label: 'Live · ' + age + 's ago' };
       if (age < 180) return { cls: 'live',  label: 'Live · ' + Math.round(age/60) + 'm ago' };
     }
+    if (s.ok === false) {
+      // The last poll attempt failed (sign-in, network, API) — that is an error, not staleness.
+      return { cls: 'dead', label: s.consecutive_errors > 1 ? 'Polling failed · ' + s.consecutive_errors + '×' : 'Not connected' };
+    }
     if (s.timestamp) {
       const h = age / 3600;
       if (h < 1)  return { cls: 'stale', label: 'Stale · ' + Math.round(age/60) + 'm ago' };
@@ -1173,6 +1188,8 @@ window.escapeHTML = function(value) {
     const st = fmtNavStatus(s);
     dot.className = 'status-dot ' + st.cls;
     label.textContent = st.label;
+    const link = document.getElementById('nav-status-link');
+    if (link) link.title = (s.error ? s.error + ' — ' : '') + 'Open the poller log';
   }
   window.subscribeEnergyEvents(function(payload) {
     if (payload && payload.status) applyNavStatus(payload.status);
@@ -1190,6 +1207,24 @@ def _format_hour(h: str) -> str:
     if hour < 12:   return f"{hour} AM"
     if hour == 12:  return "12 PM"
     return f"{hour - 12} PM"
+
+
+def _friendly_time(value) -> str:
+    """'Today 4:31 PM', 'Yesterday 9:05 AM' or 'Oct 28, 4:31 PM' for a stored local timestamp."""
+    try:
+        moment = datetime.fromisoformat(str(value)[:19])
+    except (TypeError, ValueError):
+        return str(value)
+    clock = moment.strftime("%I:%M %p").lstrip("0")
+    days = (energy.reporting_now().date() - moment.date()).days
+    if days == 0:
+        return f"today {clock}"
+    if days == 1:
+        return f"yesterday {clock}"
+    return f"{moment.strftime('%b')} {moment.day}, {clock}"
+
+
+app.jinja_env.filters["friendly_time"] = _friendly_time
 
 
 def _status(last_ts: str):
@@ -1538,6 +1573,23 @@ DASH_HTML = """
   })();
   </script>
 
+  {% if first_run %}
+  <section class="card first-run" aria-labelledby="first-run-title">
+    <h1 id="first-run-title">Waiting for your first reading</h1>
+    <p class="card-meta">Nothing has been recorded yet, so there is no usage, cost or trend to show.
+      This page fills in by itself about a minute after the first successful poll.</p>
+    {% if poller_problem %}<p class="first-run-problem" role="status"><strong>Poller:</strong> {{ poller_problem }}</p>{% endif %}
+    <ol>
+      <li><strong>Connect your Emporia account.</strong> Sign in once; only tokens are kept after that.
+        <a class="btn-primary" href="/settings#account">Open account settings</a></li>
+      <li><strong>Keep the poller running.</strong> It records every circuit once a minute. The status in the top bar turns green when readings arrive.</li>
+      <li><strong>Optional:</strong> bring in older history from Emporia CSV exports. <a href="/import">Import CSV files</a></li>
+    </ol>
+  </section>
+  <div hidden>
+  {% else %}
+  <h1 class="visually-hidden">Energy dashboard</h1>
+  {% endif %}
   <!-- ── Now Panel ─────────────────────────────────────────────────────── -->
   <div class="now-panel">
     <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
@@ -1866,8 +1918,9 @@ DASH_HTML = """
   })();
   </script>
 
+  {% if first_run %}</div>{% endif %}
   <div style="margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--border); font-size:0.75rem; color:var(--text-light);">
-    Energy Monitor &bull; Updated: {{ last_updated }} &bull; ${{ "%.4f"|format(rate) }}/kWh
+    Energy Monitor &bull; {% if first_run %}No readings yet{% else %}Last reading {{ last_updated|friendly_time }}{% endif %} &bull; ${{ "%.4f"|format(rate) }}/kWh
   </div>
 </div>
 
@@ -1997,8 +2050,17 @@ if (document.getElementById('todayRowChart')) {
 }
 
 
-// Auto-refresh the page every 60 s so "right now" stays current
-setTimeout(() => location.reload(), 60000);
+// Reload every 60 s so charts and cards stay current (live fields also update via SSE).
+// Skip a reload while the tab is hidden or the keyboard focus is on a control, so
+// keyboard and screen-reader users are not thrown back to the top mid-task.
+(function scheduleReload(deferrals) {
+  setTimeout(() => {
+    const active = document.activeElement;
+    const busy = document.hidden || (active && active !== document.body && deferrals < 5);
+    if (busy) scheduleReload(document.hidden ? deferrals : deferrals + 1);
+    else location.reload();
+  }, 60000);
+})(0);
 </script>
 """
 
@@ -3782,9 +3844,13 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
 @app.route("/")
 def index():
     com, dashboard = _get_cached_dashboard()
+    first_run = com["last_updated"] == "N/A"
+    poller = energy.read_poller_status() if first_run else {}
     return _render(
         DASH_HTML,
         active_page="dashboard",
+        first_run=first_run,
+        poller_problem=None if poller.get("ok") else poller.get("error"),
         freshness=_reading_fresh(dashboard["main_now"]),
         delta_yd=_delta_badge(dashboard["ctx"]["vs_yesterday_pct"], "yesterday", invert=True),
         delta_wk=_delta_badge(dashboard["ctx"]["vs_last_week_pct"], "last week", invert=True),
@@ -4953,7 +5019,7 @@ SETTINGS_HTML = """
         </div>
 
         <!-- Account credentials -->
-        <div class="card" style="margin-bottom:1rem;">
+        <div class="card" id="account" style="margin-bottom:1rem; scroll-margin-top:72px;">
           <h3 style="font-size:1rem; margin-bottom:0.5rem;">Account Credentials</h3>
           <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
             {% if has_tokens %}<span style="color:var(--green);">&#10003; Authenticated</span> — tokens cached in <code>keys.json</code>. Re-enter only if your password changed or tokens expired.
@@ -4961,12 +5027,13 @@ SETTINGS_HTML = """
           </p>
           <form style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
             <label style="font-size:0.82rem; font-weight:600;">Email
-              <input type="email" id="credEmail" value="{{ saved_email }}"
+              <input type="email" id="credEmail" value="{{ saved_email }}" autocomplete="username"
                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
             <label style="font-size:0.82rem; font-weight:600;">Password
-              <input type="password" id="credPwd" placeholder="••••••••"
+              <input type="password" id="credPwd" autocomplete="current-password"
+                     placeholder="{{ 'Leave blank to keep current sign-in' if has_tokens else 'Emporia password' }}"
                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
