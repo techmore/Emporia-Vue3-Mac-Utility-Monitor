@@ -109,7 +109,7 @@ class AqaraTrendsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('32.0<span class="unit">°F</span>', html)
         self.assertIn('Verified room', html)
-        self.assertIn('href="/aqara" class="active">Aqara', html)
+        self.assertIn('href="/aqara" class="active" aria-current="page">Aqara', html)
         self.assertIn('value="4h" selected', html)
         self.assertIn('Explore history', html)
         self.assertIn('aqara-sensor-grid', web.AQARA_HTML)
