@@ -2417,6 +2417,18 @@ def get_month_comparison(device_gid: str | None = None):
     )
 
     results = c.fetchall()
+
+    # Like-for-like baseline: last month over the same elapsed span as this month so far,
+    # so two days of this month are not compared against a whole previous month.
+    same_period_end = min(last_month_start + (now - this_month_start), this_month_start)
+    c.execute(
+        """SELECT SUM(usage_kwh) AS total_kwh, SUM(cost_cents) AS total_cents
+           FROM readings
+           WHERE timestamp >= ? AND timestamp < ?
+             AND channel_name = 'Main' AND device_gid = ?""",
+        (last_month_start.isoformat(), same_period_end.isoformat(), resolved_gid),
+    )
+    same_period = dict(c.fetchone())
     conn.close()
 
     months = {row["month"]: dict(row) for row in results}
@@ -2427,6 +2439,10 @@ def get_month_comparison(device_gid: str | None = None):
     return {
         "this_month": months.get(this_month_key),
         "last_month": months.get(last_month_key),
+        "last_month_same_period": (
+            {**same_period, "through": same_period_end.isoformat()}
+            if same_period["total_kwh"] is not None else None
+        ),
     }
 
 
@@ -2517,8 +2533,10 @@ def get_intraday_comparison(device_gid: str | None = None) -> dict:
 
     today_key = today_start.date().isoformat()
     yesterday_key = yesterday_start.date().isoformat()
-    today = [0.0] * 24
-    yesterday = [0.0] * 24
+    # Unrecorded hours (gaps, and the rest of today) stay None so charts show them as
+    # gaps rather than as zero usage.
+    today: list[float | None] = [None] * 24
+    yesterday: list[float | None] = [None] * 24
     for row in rows:
         hour = row["hour_num"]
         if row["day_key"] == today_key:
@@ -2872,6 +2890,9 @@ def get_now_vs_context(window_minutes: int = 60, device_gid: str | None = None) 
     }
 
 
+TREND_THRESHOLD_PCT = 5.0
+
+
 def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
     """
     Return daily totals for the last `days_back` days plus a simple
@@ -2891,33 +2912,47 @@ def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
             "worst_day": None,
         }
 
-    since = (reporting_now() - timedelta(days=days_back)).isoformat()
+    now = reporting_now()
+    # Start at midnight so the oldest bar is a whole day, not the tail of one.
+    since = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
     c.execute(
         """SELECT strftime('%Y-%m-%d', timestamp) as day,
                   SUM(usage_kwh) as total_kwh,
-                  SUM(cost_cents) as total_cents
+                  SUM(cost_cents) as total_cents,
+                  COUNT(DISTINCT strftime('%H', timestamp)) as hours_recorded
            FROM readings
            WHERE channel_name = 'Main' AND timestamp >= ? AND device_gid = ?
            GROUP BY day
            ORDER BY day""",
-        (since, resolved_gid),
+        (since.isoformat(), resolved_gid),
     )
     daily = [dict(r) for r in c.fetchall()]
     conn.close()
 
-    if len(daily) < 2:
+    # Today, and days with missing hours, are partial: they stay in `daily` for charts but
+    # never become the "best day" or drag the slope and average down.
+    today_key = now.strftime("%Y-%m-%d")
+    for row in daily:
+        row["partial"] = row["day"] == today_key or row["hours_recorded"] < 23
+    complete = [d for d in daily if not d["partial"]]
+
+    if len(complete) < 2:
         return {
             "daily": daily,
             "slope": None,
             "avg_kwh": None,
             "best_day": None,
             "worst_day": None,
+            "complete_days": len(complete),
+            "change_pct": None,
+            "direction": None,
         }
 
-    # Simple least-squares slope over the day index
-    n = len(daily)
-    xs = list(range(n))
-    ys = [d["total_kwh"] for d in daily]
+    # Simple least-squares slope over calendar-day position (gaps keep their spacing)
+    n = len(complete)
+    first = datetime.strptime(complete[0]["day"], "%Y-%m-%d")
+    xs = [(datetime.strptime(d["day"], "%Y-%m-%d") - first).days for d in complete]
+    ys = [d["total_kwh"] for d in complete]
     x_mean = sum(xs) / n
     y_mean = sum(ys) / n
     denom = sum((x - x_mean) ** 2 for x in xs)
@@ -2928,8 +2963,15 @@ def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
     )
 
     avg_kwh = y_mean
-    best_day = min(daily, key=lambda d: d["total_kwh"])
-    worst_day = max(daily, key=lambda d: d["total_kwh"])
+    best_day = min(complete, key=lambda d: d["total_kwh"])
+    worst_day = max(complete, key=lambda d: d["total_kwh"])
+    # Total fitted change across the window relative to the average day. A trend is only
+    # called rising/falling past 5%, so day-to-day noise reads as steady.
+    span = xs[-1] - xs[0]
+    change_pct = slope * span / avg_kwh * 100 if avg_kwh else None
+    direction = None if change_pct is None else (
+        "rising" if change_pct > TREND_THRESHOLD_PCT
+        else "falling" if change_pct < -TREND_THRESHOLD_PCT else "steady")
 
     return {
         "daily": daily,
@@ -2937,6 +2979,9 @@ def get_trend(days_back: int = 14, device_gid: str | None = None) -> dict:
         "avg_kwh": round(avg_kwh, 3),
         "best_day": best_day,
         "worst_day": worst_day,
+        "complete_days": n,
+        "change_pct": None if change_pct is None else round(change_pct, 1),
+        "direction": direction,
     }
 
 

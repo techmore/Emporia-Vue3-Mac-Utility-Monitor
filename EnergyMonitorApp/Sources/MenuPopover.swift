@@ -357,9 +357,32 @@ struct MonitorPopover: View {
     private func energy(_ value: Double?) -> String {
         value.map { String(format: "%.2f kWh", $0) } ?? "No data"
     }
+    /// Stored timestamps are naive collector-local "yyyy-MM-ddTHH:mm:ss" (or "yyyy-MM-dd HH:00").
+    private static func parseStamp(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let text = value.replacingOccurrences(of: "T", with: " ")
+        for format in ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: String(text.prefix(format.count))) { return date }
+        }
+        return nil
+    }
+
     private func timeLabel(_ value: String?) -> String {
         guard let value = value else { return "No readings yet" }
-        return "Recorded " + String(value.replacingOccurrences(of: "T", with: " ").prefix(19))
+        guard let date = Self.parseStamp(value) else { return "Last reading " + value }
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDateInToday(date) { return "Last reading today, " + time }
+        if Calendar.current.isDateInYesterday(date) { return "Last reading yesterday, " + time }
+        return "Last reading " + date.formatted(.dateTime.month(.abbreviated).day()) + ", " + time
+    }
+
+    /// Chart axis ends: "4 PM" for hourly buckets, "Nov 1" for daily ones.
+    private func periodLabel(_ value: String?, hourly: Bool) -> String {
+        guard let value = value, let date = Self.parseStamp(value) else { return value ?? "" }
+        return hourly ? date.formatted(.dateTime.weekday(.abbreviated).hour())
+                      : date.formatted(.dateTime.month(.abbreviated).day())
     }
 
     var body: some View {
@@ -423,7 +446,9 @@ struct MonitorPopover: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.hero, in: RoundedRectangle(cornerRadius: 10))
             if !monitor.online {
-                Label(monitor.summaryError ?? "Poller offline or stale — showing last recorded values",
+                Label(monitor.summaryError ?? (monitor.summary?.lastReading == nil
+                        ? "No readings yet. Open Settings to connect your Emporia account."
+                        : "Poller offline or stale — showing last recorded values"),
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(Theme.red)
             }
@@ -433,15 +458,19 @@ struct MonitorPopover: View {
                 statCard("MONTH TO DATE", monitor.summary?.monthCost.map { String(format: "$%.2f", $0) } ?? "—",
                          (monitor.summary?.monthDaysRecorded).map { "\($0) day\($0 == 1 ? "" : "s") recorded" } ?? "No data")
             }
-            if let slots = monitor.summary?.breakerSlots, !slots.isEmpty {
+            if let slots = monitor.summary?.breakerSlots, !slots.isEmpty, monitor.summary?.lastReading != nil {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 5),
                                     GridItem(.flexible(), spacing: 5)], spacing: 3) {
                     ForEach(slots.sorted { $0.slot < $1.slot }) { slot in breakerCard(slot) }
                 }
             } else {
-                Text("Waiting for panel readings…").font(.subheadline).foregroundStyle(Theme.textLight)
+                Text(monitor.summary?.lastReading == nil ? "Circuits appear here after the first reading."
+                                                          : "Waiting for panel readings…")
+                    .font(.subheadline).foregroundStyle(Theme.textLight)
             }
-            Text(timeLabel(monitor.summary?.lastReading)).font(.caption2).foregroundStyle(Theme.textLight)
+            if monitor.summary?.lastReading != nil {
+                Text(timeLabel(monitor.summary?.lastReading)).font(.caption2).foregroundStyle(Theme.textLight)
+            }
         }
     }
 
@@ -538,16 +567,17 @@ struct MonitorPopover: View {
                 }
                 MiniEnergyChart(series: window.series).frame(height: 75)
                 HStack {
-                    Text(window.series.first?.period ?? "")
+                    Text(periodLabel(window.series.first?.period, hourly: window.days == 1))
                     Spacer()
-                    Text(window.series.last?.period ?? "")
+                    Text(periodLabel(window.series.last?.period, hourly: window.days == 1))
                 }.font(.caption2).foregroundStyle(Theme.textLight)
                 if let change = window.changePct {
-                    Text(String(format: "%@ %.1f%% vs previous %d days", change > 0 ? "↑" : change < 0 ? "↓" : "→", abs(change), window.days)).font(.caption)
+                    Text(String(format: "%@ %.1f%% vs previous %@", change > 0 ? "↑" : change < 0 ? "↓" : "→", abs(change),
+                                window.days == 1 ? "day" : "\(window.days) days")).font(.caption)
                 } else {
                     Text("Collecting history for a trend").font(.caption).foregroundStyle(Theme.textLight)
                 }
-                Text("\(window.readings) readings · gaps are unrecorded periods").font(.caption2).foregroundStyle(Theme.textLight)
+                Text("\(window.readings.formatted()) readings · gaps are unrecorded periods").font(.caption2).foregroundStyle(Theme.textLight)
             } else {
                 Text(monitor.historyError ?? "Loading history…").font(.subheadline).foregroundStyle(Theme.textLight)
             }

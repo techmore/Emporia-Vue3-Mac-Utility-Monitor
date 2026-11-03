@@ -253,11 +253,19 @@ BASE_CSS = """
 .kasa-controls-grid label { display:grid; gap:4px; margin:12px 0; }
 .kasa-controls-grid input, .kasa-controls-grid select { width:100%; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
 .kasa-actions { display:flex; gap:8px; margin:12px 0; }
-.power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px; }
-.power-heatmap th { font-size: 0.7rem; padding: 3px; }
-.power-heatmap tbody th { position: sticky; left: 0; background: var(--olive-950); min-width: 140px; text-align: left; }
+.power-heatmap { border-collapse: separate; border-spacing: 2px; table-layout: fixed; min-width: 1900px;
+  background: var(--olive-950); border-radius: 10px; padding: 6px; }
+.power-heatmap th { font-size: 0.7rem; padding: 3px; color: var(--olive-200); font-weight: 500; }
+.power-heatmap tbody th { position: sticky; left: 0; z-index: 1; background: var(--olive-950); color: var(--olive-50);
+  min-width: 140px; padding-right: 10px; text-align: left; white-space: nowrap; }
 .power-heatmap .heat-cell { padding: 0; height: 20px; min-width: 8px; border-radius: 2px; }
-.heat-missing { background: var(--stone-200); opacity: 0.15; }
+.power-heatmap .heat-cell:focus-visible { outline: 2px solid var(--olive-50); outline-offset: 0; }
+.heat-missing { background: repeating-linear-gradient(135deg, transparent 0 3px, rgba(247,248,244,0.18) 3px 4px); }
+.heat-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0.5rem 0 0.75rem;
+  font-size: 0.75rem; color: var(--text-light); }
+.heat-legend .heat-scale { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: 4px;
+  background: var(--olive-950); }
+.heat-legend .heat-cell { display: inline-block; width: 14px; height: 12px; border-radius: 2px; }
 .heat-1 { background: var(--olive-900); }
 .heat-2 { background: var(--olive-700); }
 .heat-3 { background: var(--olive-500); }
@@ -379,13 +387,20 @@ nav.topnav a {
   color: var(--stone-600);
   text-decoration: none;
   font-size: 0.875rem; font-weight: 500;
-  padding: 0.4rem 0.75rem;
+  padding: 0.4rem 0.55rem;
   border-radius: 6px;
   transition: background 0.15s, color 0.15s;
 }
 nav.topnav a:hover { background: var(--olive-100); color: var(--olive-800); }
 nav.topnav a.active { background: var(--olive-600); color: #fff; }
-nav.topnav .nav-links { display: flex; gap: 4px; }
+nav.topnav .nav-links { display: flex; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+nav.topnav .nav-links::-webkit-scrollbar { display: none; }
+nav.topnav .nav-meta { flex-shrink: 0; margin-left: 12px; }
+@media (max-width: 1500px) { nav.topnav .nav-version { display: none; } }
+nav.topnav .nav-links a, #nav-status-link { white-space: nowrap; }
+@media (max-width: 1280px) and (min-width: 721px) {
+  nav.topnav a { padding: 0.4rem 0.5rem; font-size: 0.82rem; }
+}
 nav.topnav .brand {
   font-family: 'Instrument Serif', serif;
   font-size: 1.1rem; font-weight: 700;
@@ -441,6 +456,17 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .section-block { display:flex; flex-direction:column; gap:14px; }
 
 /* ── Delta badges ── */
+.visually-hidden { position:absolute !important; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.first-run { max-width: 44rem; margin: 2rem auto 0; padding: 1.75rem 2rem; }
+.first-run h1 { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 2rem; color: var(--text); margin-bottom: 0.4rem; }
+.first-run ol { margin: 1.25rem 0 0 1.25rem; display: grid; gap: 0.9rem; font-size: 0.92rem; line-height: 1.5; }
+.first-run ol a { margin-left: 0.25rem; color: var(--olive-800); }
+.first-run ol a.btn-primary { color: var(--accent-fg); margin-left: 0; }
+.btn-primary { background: var(--accent); color: var(--accent-fg); border: none; border-radius: 6px;
+  padding: 0.5rem 1.25rem; font-size: 0.9rem; cursor: pointer; font-family: inherit; }
+.first-run .btn-primary { display: inline-block; margin: 0.5rem 0 0; text-decoration: none; }
+.first-run-problem { margin-top: 0.9rem; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.85rem;
+  background: oklch(52% 0.18 25 / 0.10); color: var(--text); border-left: 3px solid var(--red); }
 .delta {
   display: inline-flex; align-items: center; gap: 3px;
   font-size: 0.78rem; font-weight: 600;
@@ -451,6 +477,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .delta.down { background: oklch(52% 0.14 145 / 0.12); color: var(--green); }
 .delta.flat { background: var(--olive-100); color: var(--text-light); }
 .delta.nodata { background: var(--olive-100); color: var(--text-light); font-style: italic; }
+.now-panel .delta.flat, .now-panel .delta.nodata { background: rgba(247,248,244,0.08); color: var(--olive-300); }
 
 /* ── Now panel ── */
 .now-panel {
@@ -529,7 +556,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 }
 .banner-chart-row {
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
+  grid-template-columns: 84px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
 }
@@ -539,9 +566,9 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   letter-spacing: 0.08em;
   color: var(--olive-300);
 }
-.banner-chart-row canvas {
-  width: 100%;
-}
+.banner-chart-canvas { position: relative; height: 26px; min-width: 0; overflow: hidden; }
+.banner-chart-canvas.with-axis { height: 40px; }
+.banner-chart-row canvas { display: block; }
 .legend-swatch {
   width: 10px;
   height: 10px;
@@ -738,7 +765,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   font-size: 0.7rem; color: var(--olive-400); margin-top: 2px;
 }
 .breaker-bars {
-  width: 44px; flex-shrink: 0;
+  width: 52px; flex-shrink: 0;
   display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
   align-items: flex-end; height: 32px;
 }
@@ -779,11 +806,14 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 .breaker { position: relative; }
 .breaker-amps { font-size: 0.6rem; color: var(--olive-500); margin-top: 1px; }
 .breaker-bar-labels {
-  width: 44px; flex-shrink: 0;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
-  font-size: 0.5rem; color: var(--olive-500); text-transform: uppercase;
-  letter-spacing: 0.06em; margin-top: 2px;
+  width: 52px; flex-shrink: 0;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px; text-align: center;
+  font-size: 0.56rem; color: var(--olive-400); margin-top: 2px;
 }
+.breaker-safe.unknown { background: transparent; border: 1px dashed var(--olive-700); }
+.breaker-safe.unknown::after { display: none; }
+.panel-rating-hint { margin-top: 0.75rem; font-size: 0.75rem; color: var(--olive-300); }
+.panel-rating-hint a { color: var(--olive-100); }
 
 /* ── Breaker safety zones ── */
 .breaker-load-row {
@@ -801,7 +831,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
   content: ''; position: absolute; top: 0; left: 80%; width: 1px; height: 100%;
   background: rgba(255,255,255,0.35);
 }
-.breaker-load-text { font-size: 0.58rem; white-space: nowrap; min-width: 28px; text-align: right; }
+.breaker-load-text { font-size: 0.62rem; white-space: nowrap; min-width: 28px; text-align: right; color: var(--olive-300); }
 
 /* safety zone colours */
 .load-normal   { color: #4ade80; }
@@ -1070,7 +1100,7 @@ nav.topnav .status-dot.dead  { background: var(--red);   }
 """
 
 NAV_HTML = """
-<nav class="topnav">
+<nav class="topnav" aria-label="Main">
   <div class="inner">
     <div style="display:flex; align-items:center; gap:0.25rem;">
       <a href="/" class="brand" style="display:flex; align-items:center; gap:0.5rem; text-decoration:none;">
@@ -1079,21 +1109,21 @@ NAV_HTML = """
       </a>
     </div>
     <div class="nav-links">
-      <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}">Dashboard</a>
-      <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}">Reports</a>
-      <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}">Trends</a>
-      <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}">House · Lab</a>
-      <a href="/home-3d" class="{{ 'active' if active_page == 'home-3d' else '' }}">Home 3D</a>
-      <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}">Radon</a>
-      <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}">Aqara</a>
-      <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}">HVAC</a>
-      <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}">Kasa</a>
-      <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}">Guide</a>
-      <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}">Settings</a>
+      <a href="/" class="{{ 'active' if active_page == 'dashboard' else '' }}"{% if active_page == 'dashboard' %} aria-current="page"{% endif %}>Dashboard</a>
+      <a href="/reports" class="{{ 'active' if active_page == 'reports' else '' }}"{% if active_page == 'reports' %} aria-current="page"{% endif %}>Reports</a>
+      <a href="/trends" class="{{ 'active' if active_page == 'trends' else '' }}"{% if active_page == 'trends' %} aria-current="page"{% endif %}>Trends</a>
+      <a href="/house" class="{{ 'active' if active_page == 'house' else '' }}"{% if active_page == 'house' %} aria-current="page"{% endif %}>House · Lab</a>
+      <a href="/home-3d" class="{{ 'active' if active_page == 'home-3d' else '' }}"{% if active_page == 'home-3d' %} aria-current="page"{% endif %}>Home 3D</a>
+      <a href="/radon" class="{{ 'active' if active_page == 'radon' else '' }}"{% if active_page == 'radon' %} aria-current="page"{% endif %}>Radon</a>
+      <a href="/aqara" class="{{ 'active' if active_page == 'aqara' else '' }}"{% if active_page == 'aqara' %} aria-current="page"{% endif %}>Aqara</a>
+      <a href="/mitsubishi" class="{{ 'active' if active_page == 'mitsubishi' else '' }}"{% if active_page == 'mitsubishi' %} aria-current="page"{% endif %}>HVAC</a>
+      <a href="/kasa" class="{{ 'active' if active_page == 'kasa' else '' }}"{% if active_page == 'kasa' %} aria-current="page"{% endif %}>Kasa</a>
+      <a href="/guide" class="{{ 'active' if active_page == 'guide' else '' }}"{% if active_page == 'guide' %} aria-current="page"{% endif %}>Guide</a>
+      <a href="/settings" class="{{ 'active' if active_page == 'settings' else '' }}"{% if active_page == 'settings' %} aria-current="page"{% endif %}>Settings</a>
     </div>
-    <div style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
-      <span style="font-size:0.65rem; color:var(--stone-400); font-variant-numeric:tabular-nums;">v{{ version }}</span>
-      <a href="/log" id="nav-status-link" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
+    <div class="nav-meta" style="font-size:0.8rem; color: var(--stone-500); display:flex; align-items:center; gap:10px;">
+      <span class="nav-version" style="font-size:0.65rem; color:var(--stone-500); font-variant-numeric:tabular-nums;">v{{ version }}</span>
+      <a href="/log" id="nav-status-link" title="Open the poller log · v{{ version }}" data-version="{{ version }}" style="display:flex; align-items:center; gap:4px; text-decoration:none; color:inherit;">
         <span class="status-dot {{ status_cls }}" id="nav-status-dot"></span>
         <span id="nav-status-label">{{ status_label }}</span>
       </a>
@@ -1143,6 +1173,10 @@ window.escapeHTML = function(value) {
       if (age < 90)  return { cls: 'live',  label: 'Live · ' + age + 's ago' };
       if (age < 180) return { cls: 'live',  label: 'Live · ' + Math.round(age/60) + 'm ago' };
     }
+    if (s.ok === false) {
+      // The last poll attempt failed (sign-in, network, API) — that is an error, not staleness.
+      return { cls: 'dead', label: s.consecutive_errors > 1 ? 'Polling failed · ' + s.consecutive_errors + '×' : 'Not connected' };
+    }
     if (s.timestamp) {
       const h = age / 3600;
       if (h < 1)  return { cls: 'stale', label: 'Stale · ' + Math.round(age/60) + 'm ago' };
@@ -1158,6 +1192,8 @@ window.escapeHTML = function(value) {
     const st = fmtNavStatus(s);
     dot.className = 'status-dot ' + st.cls;
     label.textContent = st.label;
+    const link = document.getElementById('nav-status-link');
+    if (link) link.title = (s.error ? s.error + ' — ' : '') + 'Open the poller log · v' + (link.dataset.version || '');
   }
   window.subscribeEnergyEvents(function(payload) {
     if (payload && payload.status) applyNavStatus(payload.status);
@@ -1175,6 +1211,35 @@ def _format_hour(h: str) -> str:
     if hour < 12:   return f"{hour} AM"
     if hour == 12:  return "12 PM"
     return f"{hour - 12} PM"
+
+
+def _circuit_display(name, label=None) -> str:
+    """Saved label, else the channel name; bare CT numbers (Emporia's unnamed channels) get words."""
+    if label:
+        return label
+    text = str(name or "").strip()
+    return f"Circuit {text} (unnamed)" if text.isdigit() else (name or "—")
+
+
+app.jinja_env.filters["circuit_label"] = _circuit_display
+
+
+def _friendly_time(value) -> str:
+    """'Today 4:31 PM', 'Yesterday 9:05 AM' or 'Oct 28, 4:31 PM' for a stored local timestamp."""
+    try:
+        moment = datetime.fromisoformat(str(value)[:19])
+    except (TypeError, ValueError):
+        return str(value)
+    clock = moment.strftime("%I:%M %p").lstrip("0")
+    days = (energy.reporting_now().date() - moment.date()).days
+    if days == 0:
+        return f"today {clock}"
+    if days == 1:
+        return f"yesterday {clock}"
+    return f"{moment.strftime('%b')} {moment.day}, {clock}"
+
+
+app.jinja_env.filters["friendly_time"] = _friendly_time
 
 
 def _status(last_ts: str):
@@ -1221,10 +1286,15 @@ def _build_live_dashboard_payload() -> dict:
     }
 
 
+DELTA_NEUTRAL_PCT = 2.0  # smaller changes are noise, not good or bad news
+
+
 def _delta_badge(pct, label: str, invert: bool = False) -> str:
     """Return an HTML delta badge. invert=True means lower is better."""
     if pct is None:
         return '<span class="delta nodata">no prior data</span>'
+    if abs(pct) < DELTA_NEUTRAL_PCT:
+        return f'<span class="delta flat">→ {abs(pct):.1f}% vs {label}</span>'
     arrow = "↑" if pct > 0 else "↓"
     if invert:
         cls = "up" if pct > 0 else ("flat" if pct == 0 else "down")
@@ -1278,8 +1348,17 @@ WORKSPACE_NAV_HTML = """
 """
 
 
+PAGE_TITLES = {
+    "dashboard": "Dashboard", "reports": "Reports", "trends": "Trends", "house": "House Lab",
+    "home-3d": "Home 3D", "radon": "Radon", "aqara": "Aqara", "mitsubishi": "HVAC", "kasa": "Kasa",
+    "guide": "Guide", "settings": "Settings",
+}
+
+
 def _render(template: str, **ctx):
     ctx["mobile_path"] = request.path if has_request_context() else ""
+    ctx.setdefault("page_title", WORKSPACE_PAGES.get(ctx["mobile_path"])
+                   or PAGE_TITLES.get(ctx.get("active_page", "")))
     if has_request_context() and request.path in WORKSPACE_PAGES:
         ctx.update(workspace_pages=WORKSPACE_PAGES, workspace_path=request.path)
         template = ('<div class="page"><div class="section-head"><h2>Settings Workspace</h2>'
@@ -1288,7 +1367,7 @@ def _render(template: str, **ctx):
     return render_template_string(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<title>Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
+        '<title>{% if page_title %}{{ page_title }} · {% endif %}Energy Monitor</title><style>' + BASE_CSS + '</style></head><body>'
         + NAV_HTML + '{% include "mobile_navigation.html" %}' + template
         + '{% include "circuit_overlay.html" %}'
         '<script src="/static/actions.js" defer></script></body></html>',
@@ -1323,7 +1402,8 @@ PANEL_FRAGMENT_HTML = """
       <div class="mc-leg">{{ m.label }}</div>
       <div class="mc-w">{{ "%.0f"|format(m.watts) if m.watts is not none else "—" }} <span style="font-size:1rem;color:var(--olive-400)">W</span></div>
       {% if m.live_estimated %}<div class="mc-kwh" style="margin-top:2px;">live watts estimated from slot layout</div>{% endif %}
-      <div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>
+      {% if m.live_estimated and not m.kwh_24h %}<div class="mc-kwh">24h energy not measured per leg</div>
+      {% else %}<div class="mc-kwh">{{ "%.2f"|format(m.kwh_24h) }} kWh (24h) &bull; ${{ "%.2f"|format(m.cost_24h) }}</div>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -1348,7 +1428,7 @@ PANEL_FRAGMENT_HTML = """
           {{ "%.0f"|format(b.watts) if b.watts is not none else "—" }} W
           {% if b.amps %}&bull; {{ b.poles }}P/{{ b.amps }}A{% endif %}
         </div>
-        {% if b.load_label %}
+        {% if b.load_label and b.load_label != 'Rating not set' %}
         <div class="breaker-load-row">
           <div class="breaker-load-bar-wrap">
             <div class="breaker-load-bar-fill {{ b.fill_cls }}" style="width:{{ b.load_bar_w }}%"></div>
@@ -1362,11 +1442,11 @@ PANEL_FRAGMENT_HTML = """
           <div class="breaker-bar-wrap" title="Relative share of current panel load">
             <div class="breaker-bar" style="height:{{ b.bar_pct }}%"></div>
           </div>
-          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}" title="{{ 'Estimated load vs configured rating; 80% reference' if b.rating_known else 'Set breaker rating in Panel Layout' }}">
+          <div class="breaker-bar-wrap breaker-safe {{ b.safe_cls }}{{ '' if b.rating_known else ' unknown' }}" title="{{ 'Estimated load vs configured rating; 80% reference' if b.rating_known else 'Breaker rating not set — add it in the Panel Editor' }}">
             <div class="breaker-bar" style="height:{{ b.safe_bar_pct }}%"></div>
           </div>
         </div>
-        <div class="breaker-bar-labels"><span>Load</span><span>Rating</span></div>
+        <div class="breaker-bar-labels" aria-hidden="true"><span>Load</span><span>Limit</span></div>
       </div>
       {% if b.note %}<div class="breaker-note-tip">{{ b.note }}</div>{% endif %}
     </a>
@@ -1391,6 +1471,11 @@ PANEL_FRAGMENT_HTML = """
       {% for b in breakers_right %}{{ render_breaker_shared(b) }}{% endfor %}
     </div>
   </div>
+  {% set unrated = (breakers_left + breakers_right)|selectattr('channel_name')|rejectattr('rating_known')|list %}
+  {% if unrated %}
+  <p class="panel-rating-hint">{{ unrated|length }} breaker{{ '' if unrated|length == 1 else 's' }} without a rating, so the
+    Limit bar is empty.{% if edit_href %} <a href="{{ edit_href }}">Add ratings in the Panel Editor</a>{% endif %}</p>
+  {% endif %}
   {% if edit_href %}
   <div style="text-align:right; margin-top:0.75rem;">
     <a href="{{ edit_href }}" style="font-size:0.75rem; color:var(--olive-400); text-decoration:none;">
@@ -1518,6 +1603,23 @@ DASH_HTML = """
   })();
   </script>
 
+  {% if first_run %}
+  <section class="card first-run" aria-labelledby="first-run-title">
+    <h1 id="first-run-title">Waiting for your first reading</h1>
+    <p class="card-meta">Nothing has been recorded yet, so there is no usage, cost or trend to show.
+      This page fills in by itself about a minute after the first successful poll.</p>
+    {% if poller_problem %}<p class="first-run-problem" role="status"><strong>Poller:</strong> {{ poller_problem }}</p>{% endif %}
+    <ol>
+      <li><strong>Connect your Emporia account.</strong> Sign in once; only tokens are kept after that.
+        <a class="btn-primary" href="/settings#account">Open account settings</a></li>
+      <li><strong>Keep the poller running.</strong> It records every circuit once a minute. The status in the top bar turns green when readings arrive.</li>
+      <li><strong>Optional:</strong> bring in older history from Emporia CSV exports. <a href="/import">Import CSV files</a></li>
+    </ol>
+  </section>
+  <div hidden>
+  {% else %}
+  <h1 class="visually-hidden">Energy dashboard</h1>
+  {% endif %}
   <!-- ── Now Panel ─────────────────────────────────────────────────────── -->
   <div class="now-panel">
     <div style="display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
@@ -1619,18 +1721,21 @@ DASH_HTML = """
       <div class="banner-chart-head">
         <div class="banner-chart-title">Today vs Yesterday</div>
         <div class="banner-chart-legend">
-          <span><span class="legend-swatch" style="background:var(--chart1);"></span>Today</span>
+          <span><span class="legend-swatch" style="background:var(--olive-300);"></span>Today</span>
           <span><span class="legend-swatch" style="background:var(--chart2);"></span>Yesterday</span>
+          <span>kWh per hour</span>
         </div>
       </div>
       <div class="banner-chart-rows">
         <div class="banner-chart-row">
           <div class="banner-chart-row-label">Today</div>
-          <canvas id="todayRowChart" height="26"></canvas>
+          <div class="banner-chart-canvas"><canvas id="todayRowChart" role="img"
+            aria-label="Hourly energy today so far; hours without readings are gaps"></canvas></div>
         </div>
         <div class="banner-chart-row">
           <div class="banner-chart-row-label">Yesterday</div>
-          <canvas id="yesterdayRowChart" height="26"></canvas>
+          <div class="banner-chart-canvas with-axis"><canvas id="yesterdayRowChart" role="img"
+            aria-label="Hourly energy yesterday"></canvas></div>
         </div>
       </div>
     </div>
@@ -1696,11 +1801,10 @@ DASH_HTML = """
               <div class="card-meta">{{ "%.1f"|format(month_comparison.this_month.total_kwh or 0) if month_comparison.this_month else '0' }} kWh &bull; {{ delta_month|safe }}</div>
             </div>
             <div class="card">
-              <div class="card-label">7-Day Trend</div>
+              <div class="card-label">14-Day Trend</div>
               <div class="card-value" style="font-size:1.4rem; color:{{ trend_color }};">{{ trend_dir }}</div>
               <div class="card-meta">
-                {{ "%.2f"|format(trend_avg) }} kWh/day avg
-                {% if slope %}· {{ "%.3f"|format(slope|abs) }} kWh/day {% if slope > 0 %}more{% else %}less{% endif %}{% endif %}
+                {% if trend_change_pct is not none %}{{ "%.1f"|format(trend_avg) }} kWh/day avg · {{ '%+.1f'|format(trend_change_pct) }}% over complete days{% else %}Needs two complete days of readings{% endif %}
               </div>
             </div>
           </div>
@@ -1844,8 +1948,9 @@ DASH_HTML = """
   })();
   </script>
 
+  {% if first_run %}</div>{% endif %}
   <div style="margin-top:2.5rem; padding-top:1rem; border-top:1px solid var(--border); font-size:0.75rem; color:var(--text-light);">
-    Energy Monitor &bull; Updated: {{ last_updated }} &bull; ${{ "%.4f"|format(rate) }}/kWh
+    Energy Monitor &bull; {% if first_run %}No readings yet{% else %}Last reading {{ last_updated|friendly_time }}{% endif %} &bull; ${{ "%.4f"|format(rate) }}/kWh
   </div>
 </div>
 
@@ -1878,10 +1983,12 @@ function oliveChart(id, labels, data, color) {
   });
 }
 
-function thinRowChart(id, labels, data, color) {
+function thinRowChart(id, labels, data, color, showAxis, yMax) {
+  // Drawn on the dark banner, so ticks and hour guides use the light end of the palette.
   const s = getComputedStyle(document.documentElement);
-  const textLight = s.getPropertyValue('--olive-600').trim() || '#666';
-  const borderCol = s.getPropertyValue('--olive-200').trim() || '#ddd';
+  const textLight = s.getPropertyValue('--olive-300').trim() || '#ccc';
+  const borderCol = s.getPropertyValue('--olive-800').trim() || '#444';
+  const axisHours = ['12a', '6a', '12p', '6p'];
   new Chart(document.getElementById(id), {
     type: 'bar',
     data: {
@@ -1904,25 +2011,29 @@ function thinRowChart(id, labels, data, color) {
       scales: {
         x: {
           ticks: {
+            display: !!showAxis,
             color: textLight,
             font: { size: 10 },
             maxRotation: 0,
             autoSkip: false,
             callback: (_value, index) => {
               const label = labels[index];
-              return ['12a', '12p'].includes(label) ? label : '';
+              return axisHours.includes(label) ? label : '';
             },
           },
           grid: {
+            drawTicks: false,
             color: (_ctx) => {
               const i = _ctx.index;
               const label = labels[i];
-              return ['12a', '12p'].includes(label) ? borderCol : 'transparent';
+              return axisHours.includes(label) ? borderCol : 'transparent';
             }
           },
+          border: { display: false },
         },
         y: {
           beginAtZero: true,
+          max: yMax || undefined,
           display: false,
           grid: { display: false }
         }
@@ -1946,25 +2057,40 @@ if (document.getElementById('hourlyChart')) {
 }
 
 if (document.getElementById('todayRowChart')) {
+  const rootStyle = getComputedStyle(document.documentElement);
+  // One shared scale so a taller bar always means more energy across both rows.
+  const sharedMax = Math.max(0.001, ...intradayComparison.today.concat(intradayComparison.yesterday)
+    .filter(v => v != null));
   thinRowChart(
     'todayRowChart',
     intradayComparison.labels,
     intradayComparison.today,
-    'oklch(35% 0.045 110)'
+    rootStyle.getPropertyValue('--olive-300').trim() || '#c4c9b0',
+    false,
+    sharedMax
   );
-}
-if (document.getElementById('yesterdayRowChart')) {
   thinRowChart(
     'yesterdayRowChart',
     intradayComparison.labels,
     intradayComparison.yesterday,
-    'oklch(55% 0.06 210)'
+    rootStyle.getPropertyValue('--chart2').trim() || '#5ba4b5',
+    true,
+    sharedMax
   );
 }
 
 
-// Auto-refresh the page every 60 s so "right now" stays current
-setTimeout(() => location.reload(), 60000);
+// Reload every 60 s so charts and cards stay current (live fields also update via SSE).
+// Skip a reload while the tab is hidden or the keyboard focus is on a control, so
+// keyboard and screen-reader users are not thrown back to the top mid-task.
+(function scheduleReload(deferrals) {
+  setTimeout(() => {
+    const active = document.activeElement;
+    const busy = document.hidden || (active && active !== document.body && deferrals < 5);
+    if (busy) scheduleReload(document.hidden ? deferrals : deferrals + 1);
+    else location.reload();
+  }, 60000);
+})(0);
 </script>
 """
 
@@ -2116,7 +2242,7 @@ REPORTS_HTML = """
       <table style="width:100%; margin-top:10px;">
         <thead><tr><th>Circuit</th><th>Recent week</th><th>Previous week</th><th>Change</th><th>Capture</th></tr></thead>
         <tbody>{% for row in circuit_week_comparison %}
-          <tr><td>{{ row.channel_name }}</td>
+          <tr><td>{{ row.channel_name|circuit_label }}</td>
             <td>{{ "%.2f"|format(row.current_kwh) }} kWh</td>
             <td>{{ "%.2f"|format(row.previous_kwh) }} kWh</td>
             <td>{% if row.change_pct is not none %}{{ "%+.1f"|format(row.change_pct) }}%{% elif row.comparable %}No positive baseline{% else %}Insufficient capture{% endif %}</td>
@@ -2151,7 +2277,7 @@ REPORTS_HTML = """
             <div style="font-size:0.74rem; color:var(--text-light);">${{ "%.2f"|format((month_comparison.this_month.total_cents or 0) / 100) }}</div>
           </div>
           <div>
-            <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase;">Last Month</div>
+            <div style="font-size:0.65rem; color:var(--text-light); text-transform:uppercase;">Last Month (full)</div>
             <div style="font-size:1.15rem; font-weight:700;">{{ "%.1f"|format(last_kwh) }} <span style="font-size:0.72rem; font-weight:400;">kWh</span></div>
             <div style="font-size:0.74rem; color:var(--text-light);">${{ "%.2f"|format((month_comparison.last_month.total_cents or 0) / 100) }}</div>
           </div>
@@ -2537,7 +2663,7 @@ CIRCUITS_HTML = """
 CIRCUIT_HTML = """
 <div class="page">
   <a class="back-link" href="/circuits">&#8592; All Circuits</a>
-  <h1 style="font-size:2rem; margin-bottom:1rem;">{{ circuit_name }}</h1>
+  <h1 style="font-size:2rem; margin-bottom:1rem;">{{ circuit_name|circuit_label }}</h1>
 
   <div class="periods" style="display:flex; gap:8px; margin-bottom:1.5rem; flex-wrap:wrap;">
     {% for p, label in [('hour','Hour'),('day','Day'),('week','Week'),('month','Month'),('year','Year')] %}
@@ -2647,14 +2773,18 @@ TRENDS_HTML = """
   <section class="card" style="margin-bottom:1.5rem;">
     <h2>Weekly Power Heatmap</h2>
     <p class="card-meta">Last seven complete days · hourly recorded kWh · brighter means more energy.
-      Blank cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
+      Hatched cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
       Sample counts do not prove coverage; imports may represent longer intervals.</p>
     {% if heatmap.circuits %}
+    <div class="heat-legend" aria-hidden="true">
+      <span>Less</span><span class="heat-scale"><span class="heat-cell heat-1"></span><span class="heat-cell heat-2"></span><span class="heat-cell heat-3"></span><span class="heat-cell heat-4"></span><span class="heat-cell heat-5"></span></span><span>More energy</span>
+      <span class="heat-scale"><span class="heat-cell heat-missing"></span></span><span>No recorded data (not zero)</span>
+    </div>
     <div style="overflow-x:auto;">
       <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
         <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
         <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ hour[-2:] if hour[-2:] in ['00','06','12','18'] else '' }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
+        <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
         {% for cell in circuit.cells %}<td class="heat-cell {{ 'heat-' ~ cell.level if cell else 'heat-missing' }}"
           tabindex="0" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
           title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }}{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
@@ -2669,16 +2799,20 @@ TRENDS_HTML = """
       two matching weekdays with 57 or more distinct recorded minutes. Hourly imports alone cannot qualify.
       This is a repeat-pattern baseline, not a weather-adjusted forecast. Missing hours remain unknown.</p>
     {% if pattern.circuits %}
+    <div class="heat-legend" aria-hidden="true">
+      <span>Less</span><span class="heat-scale"><span class="heat-cell heat-1"></span><span class="heat-cell heat-2"></span><span class="heat-cell heat-3"></span><span class="heat-cell heat-4"></span><span class="heat-cell heat-5"></span></span><span>More energy</span>
+      <span class="heat-scale"><span class="heat-cell heat-missing"></span></span><span>No recorded data (not zero)</span>
+    </div>
     <div style="overflow-x:auto;">
       <table class="power-heatmap" aria-label="Typical weekly circuit energy">
-        <thead><tr><th>Circuit</th>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th colspan="24">{{ day }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for circuit in pattern.circuits %}<tr><th scope="row">{{ circuit.name }}</th>
+        <thead><tr><th scope="col">Circuit</th>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for circuit in pattern.circuits %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
         {% for cell in circuit.cells %}<td tabindex="0" class="heat-cell {{ 'heat-' ~ ([5, (cell.kwh / pattern_max * 5)|int + 1]|min) if cell else 'heat-missing' }}"
           title="{{ circuit.name }} · {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][loop.index0 // 24] }} {{ '%02d'|format(loop.index0 % 24) }}:00{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.weeks }} qualifying weeks · observed range {{ '%.3f'|format(cell.low) }}–{{ '%.3f'|format(cell.high) }} kWh{% else %} · Insufficient repeated history{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
       </table>
     </div>
     <table><thead><tr><th>Circuit</th><th>Supported hours</th><th>Typical week</th><th>Usage cost</th></tr></thead><tbody>
-      {% for circuit in pattern.circuits %}<tr><td>{{ circuit.name }}</td><td>{{ circuit.supported }}/168</td>
+      {% for circuit in pattern.circuits %}<tr><td>{{ circuit.name|circuit_label }}</td><td>{{ circuit.supported }}/168</td>
       {% if circuit.weekly_kwh is not none %}<td>{{ '%.2f'|format(circuit.weekly_kwh) }} kWh</td><td>${{ '%.2f'|format(circuit.weekly_kwh * rate) }}</td>
       {% else %}<td colspan="2">Collecting repeated history — no complete-week estimate</td>{% endif %}</tr>{% endfor %}
     </tbody></table>
@@ -2703,35 +2837,36 @@ TRENDS_HTML = """
 
   {% if trend.slope is not none %}
   <div class="trend-banner" style="margin-bottom:1.5rem;">
-    <span class="trend-icon">{{ '📈' if trend.slope > 0.1 else ('📉' if trend.slope < -0.1 else '➡️') }}</span>
+    <span class="trend-icon" aria-hidden="true">{{ '📈' if trend.direction == 'rising' else ('📉' if trend.direction == 'falling' else '➡️') }}</span>
     <span>
-      Usage is <strong>{{ 'rising' if trend.slope > 0.1 else ('falling' if trend.slope < -0.1 else 'stable') }}</strong>
-      &mdash; {{ '%+.2f'|format(trend.slope) }} kWh/day.
+      Usage is <strong>{{ trend.direction }}</strong>
+      &mdash; {{ '%+.1f'|format(trend.change_pct) }}% across {{ trend.complete_days }} complete days ({{ '%+.2f'|format(trend.slope) }} kWh/day).
       Daily average: <strong>{{ "%.1f"|format(trend.avg_kwh) }} kWh</strong>
-      (${{ "%.2f"|format(trend.avg_kwh * rate) }}/day).
+      (${{ "%.2f"|format(trend.avg_kwh * rate) }}/day). Today and days with missing hours are left out.
     </span>
   </div>
 
   <div class="grid-4" style="margin-bottom:1.5rem;">
     <div class="card">
-      <div class="card-label">14-Day Avg</div>
+      <div class="card-label">Daily Avg · {{ trend.complete_days }} complete days</div>
       <div class="card-value">{{ "%.1f"|format(trend.avg_kwh) }}<span class="unit">kWh/day</span></div>
       <div class="card-meta">${{ "%.2f"|format(trend.avg_kwh * rate) }}/day</div>
     </div>
     <div class="card">
       <div class="card-label">Trend</div>
-      <div class="card-value" style="font-size:1.4rem; color:{{ 'var(--red)' if trend.slope > 0.1 else ('var(--green)' if trend.slope < -0.1 else 'var(--text-light)') }}">
+      <div class="card-value" style="font-size:1.4rem; color:{{ 'var(--red)' if trend.direction == 'rising' else ('var(--green)' if trend.direction == 'falling' else 'var(--text-light)') }}">
         {{ '%+.2f'|format(trend.slope) }}<span class="unit">kWh/day</span>
       </div>
+      <div class="card-meta">{{ trend.direction|capitalize }} · {{ '%+.1f'|format(trend.change_pct) }}% over the window</div>
     </div>
     <div class="card">
       <div class="card-label">Best Day</div>
-      <div class="card-value" style="font-size:1.2rem;">{{ trend.best_day.day[-5:] }}</div>
+      <div class="card-value" style="font-size:1.2rem;">{{ trend.best_day.day[5:7]|int }}/{{ trend.best_day.day[8:]|int }}</div>
       <div class="card-meta" style="color:var(--green);">{{ "%.1f"|format(trend.best_day.total_kwh) }} kWh</div>
     </div>
     <div class="card">
       <div class="card-label">Peak Day</div>
-      <div class="card-value" style="font-size:1.2rem;">{{ trend.worst_day.day[-5:] }}</div>
+      <div class="card-value" style="font-size:1.2rem;">{{ trend.worst_day.day[5:7]|int }}/{{ trend.worst_day.day[8:]|int }}</div>
       <div class="card-meta" style="color:var(--red);">{{ "%.1f"|format(trend.worst_day.total_kwh) }} kWh</div>
     </div>
   </div>
@@ -2739,8 +2874,8 @@ TRENDS_HTML = """
 
   <div class="grid-2">
     <div class="chart-box">
-      <h3>Daily Usage — 14 Days</h3>
-      <canvas id="trendChart" height="200"></canvas>
+      <h3>Daily Usage — 14 Days <span style="font-weight:400;">· kWh per day · lighter bars are partial days</span></h3>
+      <canvas id="trendChart" height="200" role="img" aria-label="Daily whole-home energy for the last 14 days; partial days are lighter"></canvas>
     </div>
     <div class="chart-box">
       <h3>Hourly Pattern — 7 Days</h3>
@@ -2751,7 +2886,7 @@ TRENDS_HTML = """
   <div id="month-comparison" class="section">
     <div class="section-head">
       <h2>Month Comparison</h2>
-      <span class="section-sub">This month against the previous full month</span>
+      <span class="section-sub">Month to date against the same days of last month</span>
     </div>
   <div class="grid-3">
     <div class="card">
@@ -2760,16 +2895,16 @@ TRENDS_HTML = """
       <div class="card-meta">${{ "%.2f"|format((mc.this_month.total_cents or 0)/100) }}</div>
     </div>
     <div class="card">
-      <div class="card-label">Last Month</div>
-      <div class="card-value">{{ "%.1f"|format(mc.last_month.total_kwh or 0) }}<span class="unit">kWh</span></div>
-      <div class="card-meta">${{ "%.2f"|format((mc.last_month.total_cents or 0)/100) }}</div>
+      <div class="card-label">Last Month · Same Days</div>
+      <div class="card-value">{{ "%.1f"|format(mc.last_month_same_period.total_kwh or 0) if mc.last_month_same_period else '—' }}<span class="unit">kWh</span></div>
+      <div class="card-meta">{% if mc.last_month_same_period %}${{ "%.2f"|format((mc.last_month_same_period.total_cents or 0)/100) }} · {% endif %}full month {{ "%.1f"|format(mc.last_month.total_kwh or 0) if mc.last_month else '—' }} kWh</div>
     </div>
-    {% if mc.this_month and mc.last_month %}
+    {% if mc.this_month and mc.last_month_same_period and mc.last_month_same_period.total_kwh %}
     <div class="card">
       <div class="card-label">Change</div>
-      {% set ch = ((mc.this_month.total_kwh or 0)-(mc.last_month.total_kwh or 0))/(mc.last_month.total_kwh or 1)*100 %}
-      <div class="card-value" style="font-size:1.8rem; color:{{ 'var(--green)' if ch<0 else 'var(--red)' }}">{{ '%+.1f'|format(ch) }}%</div>
-      <div class="card-meta">vs last month</div>
+      {% set ch = ((mc.this_month.total_kwh or 0)-mc.last_month_same_period.total_kwh)/mc.last_month_same_period.total_kwh*100 %}
+      <div class="card-value" style="font-size:1.8rem; color:{{ 'var(--text-light)' if ch|abs < 2 else ('var(--green)' if ch<0 else 'var(--red)') }}">{{ '%+.1f'|format(ch) }}%</div>
+      <div class="card-meta">vs the same days last month</div>
     </div>
     {% endif %}
   </div>
@@ -2920,13 +3055,13 @@ const s = getComputedStyle(document.documentElement);
 const textLight = s.getPropertyValue('--olive-600').trim();
 const gridCol   = s.getPropertyValue('--olive-200').trim();
 
-function mkChart(id, labels, data, color) {
+function mkChart(id, labels, data, color, notes) {
   new Chart(document.getElementById(id), {
     type:'bar',
     data:{ labels, datasets:[{ data, backgroundColor:color, borderRadius:3 }] },
     options:{
       responsive:true,
-      plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw == null ? "no data" : c.raw.toFixed(2) + " kWh"}`}}},
+      plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>` ${c.raw == null ? "no data" : c.raw.toFixed(2) + " kWh"}${notes && notes[c.dataIndex] ? " · " + notes[c.dataIndex] : ""}`}}},
       scales:{
         x:{ticks:{color:textLight, font:{size:10}, maxRotation:45}, grid:{color:gridCol}},
         y:{beginAtZero:true, ticks:{color:textLight, font:{size:10}}, grid:{color:gridCol}}
@@ -2935,10 +3070,12 @@ function mkChart(id, labels, data, color) {
   });
 }
 
+const shortDay = d => { const [, m, day] = d.split('-'); return `${+m}/${+day}`; };
 mkChart('trendChart',
-  trendData.map(d=>d.day.slice(5)),
+  trendData.map(d=>shortDay(d.day)),
   trendData.map(d=>d.total_kwh),
-  'oklch(35% 0.045 110)');
+  trendData.map(d=>d.partial ? 'oklch(72% 0.03 110)' : 'oklch(35% 0.045 110)'),
+  trendData.map(d=>d.partial ? 'partial day' : ''));
 
 mkChart('hourlyChart',
   hourlyData.map(d=>d.hour.slice(11,16)),
@@ -3552,7 +3689,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         summary_row = summary_24_map.get(name, {})
         top_circuits.append({
             **row,
-            "display_name": name,
+            "display_name": _circuit_display(name),
             "watts": watts,
             "pct": (row["kwh"] / (ctx["current_kwh"] or 1)) * 100,
             "kwh_24h": summary_row.get("total_kwh", 0),
@@ -3614,7 +3751,7 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         dash_breakers.append({
             "slot": slot,
             "channel_name": name,
-            "label": row.get("label") or name or "—",
+            "label": _circuit_display(name, row.get("label")),
             "note": row.get("note"),
             "amps": configured_amps,
             "poles": poles,
@@ -3643,17 +3780,18 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
     for row in peak_usage["peak_hours"]:
         row["hour_label"] = _format_hour(row["hour"])
     month_comparison = energy.get_month_comparison(active_device_gid)
-    if month_comparison["this_month"] and month_comparison["last_month"]:
+    baseline = month_comparison.get("last_month_same_period")
+    if month_comparison["this_month"] and baseline and baseline.get("total_kwh"):
         month_change = (
-            (month_comparison["this_month"]["total_kwh"] or 0)
-            - (month_comparison["last_month"]["total_kwh"] or 0)
-        ) / (month_comparison["last_month"]["total_kwh"] or 1) * 100
-        delta_month = _delta_badge(month_change, "last month", invert=True)
+            (month_comparison["this_month"]["total_kwh"] or 0) - baseline["total_kwh"]
+        ) / baseline["total_kwh"] * 100
+        through = datetime.fromisoformat(baseline["through"]) - timedelta(seconds=1)
+        delta_month = _delta_badge(month_change, f"{through:%b} 1–{through.day}", invert=True)
     else:
         delta_month = _delta_badge(None, "last month")
 
     standby = [
-        {"name": name, "watts": _watts_estimate(kwh)}
+        {"name": _circuit_display(name), "watts": _watts_estimate(kwh)}
         for name, kwh in latest_map.items()
         if name not in _MAINS_NAMES and name not in _SKIP_NAMES
         and 1 <= (_watts_estimate(kwh) or 0) <= 50
@@ -3714,8 +3852,11 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
         "leg_b": leg_rows[1] if len(leg_rows) > 1 and legs_fresh else None,
         "service_mode": service_mode,
         "slope": slope,
-        "trend_dir": "↑ rising" if slope > 0.05 else ("↓ falling" if slope < -0.05 else "→ steady"),
-        "trend_color": "#f87171" if slope > 0.05 else ("#81c784" if slope < -0.05 else "var(--text-light)"),
+        "trend_dir": {"rising": "↑ rising", "falling": "↓ falling", "steady": "→ steady"}.get(
+            (trend or {}).get("direction"), "Collecting history"),
+        "trend_color": {"rising": "var(--red)", "falling": "var(--green)"}.get(
+            (trend or {}).get("direction"), "var(--text-light)"),
+        "trend_change_pct": (trend or {}).get("change_pct"),
         "trend_avg": (trend or {}).get("avg_kwh") or 0,
         "delta_month": delta_month,
         "panel_fragment": _render_panel_fragment(
@@ -3733,9 +3874,13 @@ def _build_dashboard_context(panel_label: str, active_device_gid: str | None = N
 @app.route("/")
 def index():
     com, dashboard = _get_cached_dashboard()
+    first_run = com["last_updated"] == "N/A"
+    poller = energy.read_poller_status() if first_run else {}
     return _render(
         DASH_HTML,
         active_page="dashboard",
+        first_run=first_run,
+        poller_problem=None if poller.get("ok") else poller.get("error"),
         freshness=_reading_fresh(dashboard["main_now"]),
         delta_yd=_delta_badge(dashboard["ctx"]["vs_yesterday_pct"], "yesterday", invert=True),
         delta_wk=_delta_badge(dashboard["ctx"]["vs_last_week_pct"], "last week", invert=True),
@@ -3797,7 +3942,7 @@ def reports_page():
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest = energy.get_latest()
     standby = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row)}
+        {"name": _circuit_display(row["channel_name"]), "watts": _watts_estimate(row)}
         for row in latest
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
@@ -3822,7 +3967,7 @@ def reports_page():
         safe_pct = amps_now / (amps * 0.8) * 100 if amps else 0
         if safe_pct >= 80:
             safety_breakers.append({
-                "label": panel_row.get("label") or name,
+                "label": _circuit_display(name, panel_row.get("label")),
                 "safe_pct": safe_pct,
             })
     safety_breakers.sort(key=lambda x: x["safe_pct"], reverse=True)
@@ -4033,7 +4178,7 @@ def circuits_page():
         breakers.append({
             "slot":         slot,
             "channel_name": name,
-            "label":        row.get("label") or name or "—",
+            "label":        _circuit_display(name, row.get("label")),
             "note":         row.get("note"),
             "amps":         configured_amps,
             "poles":        poles,
@@ -4071,7 +4216,7 @@ def circuits_page():
                             if r.get("channel_name") == name and r.get("label")), None)
         usage_rows.append({
             "channel_name": name,
-            "display_name": saved_label or name,
+            "display_name": _circuit_display(name, saved_label),
             "day_kwh":   dk, "day_cost":   dc / 100,
             "week_kwh":  wk, "week_cost":  wc / 100,
             "month_kwh": mk, "month_cost": mc / 100,
@@ -4184,6 +4329,7 @@ def circuit_detail(circuit_name, period="day"):
     return _render(
         CIRCUIT_HTML,
         active_page="circuits",
+        page_title=_circuit_display(circuit_name),
         circuit_name=circuit_name,
         circuit_url=circuit_url,
         period=period,
@@ -4214,7 +4360,7 @@ def trends_page():
     hourly_solar = (hourly_generation_offset(
         [cell['kwh'] for cell in main['cells']], generation, energy.RATE_CENTS, export_rate,
     ) if main and main['weekly_kwh'] is not None else None)
-    trend = energy.get_trend(14)
+    trend = energy.get_trend(14, com["active_device_gid"])
     mc = energy.get_month_comparison(com["active_device_gid"])
     summary_24 = energy.get_summary(24, com["active_device_gid"])
     total_24h = energy.get_main_total(24, com["active_device_gid"]) or {
@@ -4233,7 +4379,7 @@ def trends_page():
         biggest_circuit["pct"] = biggest_circuit["total_kwh"] / total_kwh_24 * 100
     latest_rows = energy.get_latest(com["active_device_gid"])
     standby_circuits = [
-        {"name": row["channel_name"], "watts": _watts_estimate(row)}
+        {"name": _circuit_display(row["channel_name"]), "watts": _watts_estimate(row)}
         for row in latest_rows
         if row["channel_name"] not in _MAINS_NAMES
         and row["channel_name"] not in _SKIP_NAMES
@@ -4241,7 +4387,7 @@ def trends_page():
     ]
     standby_circuits.sort(key=lambda x: (x["watts"] is not None, x["watts"] or 0), reverse=True)
     top_live_circuits = [
-        {"channel_name": row["channel_name"], "display_name": row["channel_name"], "watts": _watts_estimate(row)}
+        {"channel_name": row["channel_name"], "display_name": _circuit_display(row["channel_name"]), "watts": _watts_estimate(row)}
         for row in latest_rows
         if row["channel_name"] not in _MAINS_NAMES and row["channel_name"] not in _SKIP_NAMES
     ]
@@ -4265,7 +4411,7 @@ def trends_page():
         safe_pct = amps_now / safe_limit_amps * 100 if safe_limit_amps else 0
         if safe_pct >= 80:
             safety_breakers.append({
-                "label": row.get("label") or name,
+                "label": _circuit_display(name, row.get("label")),
                 "safe_cls": "danger" if safe_pct >= 100 else "warn",
                 "load_label": f"{amps_now:.1f}/{configured_amps}A",
             })
@@ -4282,7 +4428,7 @@ def trends_page():
         hourly_solar=hourly_solar,
         trend_json=_fill_gaps(trend["daily"], "day"),
         hourly_json=_fill_gaps(energy.get_hourly_data(7, com["active_device_gid"]), "hour", hourly=True),
-        mc={"this_month": mc["this_month"], "last_month": mc["last_month"]},
+        mc=mc,
         rate=RATE,
         total_24h=total_24h,
         biggest_circuit=biggest_circuit,
@@ -4643,7 +4789,7 @@ def _build_menu_summary_payload() -> dict:
             ),
             "slot_state": "monitored" if name else "unmonitored" if _panel_slot_reserved(row) else "empty",
             "channel_name": name,
-            "display_name": row.get("label") or name or "—",
+            "display_name": _circuit_display(name, row.get("label")),
             "amps": row.get("amps"),
             "poles": row.get("poles") or 1,
             "watts": breaker_watts,
@@ -4674,7 +4820,7 @@ def _build_menu_summary_payload() -> dict:
     circuits = [
         {
             "channel_name": row["channel_name"],
-            "display_name": labels.get(row["channel_name"]) or row["channel_name"],
+            "display_name": _circuit_display(row["channel_name"], labels.get(row["channel_name"])),
             "watts": _watts_estimate(row) if online and _reading_fresh(row, 180) and row["usage_kwh"] is not None else None,
         }
         for row in latest if row["channel_name"] not in energy.META_CHANNELS
@@ -4904,7 +5050,7 @@ SETTINGS_HTML = """
         </div>
 
         <!-- Account credentials -->
-        <div class="card" style="margin-bottom:1rem;">
+        <div class="card" id="account" style="margin-bottom:1rem; scroll-margin-top:72px;">
           <h3 style="font-size:1rem; margin-bottom:0.5rem;">Account Credentials</h3>
           <p style="font-size:0.82rem; color:var(--text-light); margin-bottom:1rem;">
             {% if has_tokens %}<span style="color:var(--green);">&#10003; Authenticated</span> — tokens cached in <code>keys.json</code>. Re-enter only if your password changed or tokens expired.
@@ -4912,12 +5058,13 @@ SETTINGS_HTML = """
           </p>
           <form style="display:flex; flex-direction:column; gap:10px; max-width:400px;">
             <label style="font-size:0.82rem; font-weight:600;">Email
-              <input type="email" id="credEmail" value="{{ saved_email }}"
+              <input type="email" id="credEmail" value="{{ saved_email }}" autocomplete="username"
                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
             <label style="font-size:0.82rem; font-weight:600;">Password
-              <input type="password" id="credPwd" placeholder="••••••••"
+              <input type="password" id="credPwd" autocomplete="current-password"
+                     placeholder="{{ 'Leave blank to keep current sign-in' if has_tokens else 'Emporia password' }}"
                      style="display:block; width:100%; margin-top:4px; padding:8px 10px; border-radius:8px;
                             border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:0.9rem; font-family:inherit;">
             </label>
