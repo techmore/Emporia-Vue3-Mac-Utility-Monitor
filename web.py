@@ -2772,6 +2772,7 @@ TRENDS_HTML = """
 
   <section class="card" style="margin-bottom:1.5rem;">
     <h2>Weekly Power Heatmap</h2>
+    <p class="visually-hidden" id="heatmap-keys">Use the arrow keys to move between hours and circuits.</p>
     <p class="card-meta">Last seven complete days · hourly recorded kWh · brighter means more energy.
       Hatched cells mean missing data, not zero. Costs use the current usage rate; fixed charges excluded.
       Sample counts do not prove coverage; imports may represent longer intervals.</p>
@@ -2781,12 +2782,12 @@ TRENDS_HTML = """
       <span class="heat-scale"><span class="heat-cell heat-missing"></span></span><span>No recorded data (not zero)</span>
     </div>
     <div style="overflow-x:auto;">
-      <table class="power-heatmap" aria-label="Circuit hourly recorded energy heatmap">
+      <table class="power-heatmap" role="grid" aria-label="Circuit hourly recorded energy heatmap" aria-describedby="heatmap-keys">
         <thead><tr><th scope="col">Circuit</th>{% for day in heatmap.days %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr>
         <tr><th></th>{% for hour in heatmap.hours %}<th scope="col" title="{{ hour }}">{{ hour[-2:] if hour[-2:] in ['00','06','12','18'] else '' }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for circuit in heatmap.circuits %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
+        <tbody>{% for circuit in heatmap.circuits %}{% set first_row = loop.first %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
         {% for cell in circuit.cells %}<td class="heat-cell {{ 'heat-' ~ cell.level if cell else 'heat-missing' }}"
-          tabindex="0" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
+          tabindex="{{ 0 if loop.first and first_row else -1 }}" aria-label="{{ circuit.name }} {{ heatmap.hours[loop.index0] }}: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh' if cell else 'no data' }}"
           title="{{ circuit.name }} · {{ heatmap.hours[loop.index0] }}{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.samples }} samples{% else %} · No recorded data{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
       </table>
     </div>
@@ -2804,10 +2805,11 @@ TRENDS_HTML = """
       <span class="heat-scale"><span class="heat-cell heat-missing"></span></span><span>No recorded data (not zero)</span>
     </div>
     <div style="overflow-x:auto;">
-      <table class="power-heatmap" aria-label="Typical weekly circuit energy">
+      <table class="power-heatmap" role="grid" aria-label="Typical weekly circuit energy" aria-describedby="heatmap-keys">
         <thead><tr><th scope="col">Circuit</th>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th colspan="24" scope="colgroup">{{ day }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for circuit in pattern.circuits %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
-        {% for cell in circuit.cells %}<td tabindex="0" class="heat-cell {{ 'heat-' ~ ([5, (cell.kwh / pattern_max * 5)|int + 1]|min) if cell else 'heat-missing' }}"
+        <tbody>{% for circuit in pattern.circuits %}{% set first_row = loop.first %}<tr><th scope="row">{{ circuit.name|circuit_label }}</th>
+        {% for cell in circuit.cells %}<td tabindex="{{ 0 if loop.first and first_row else -1 }}" class="heat-cell {{ 'heat-' ~ ([5, (cell.kwh / pattern_max * 5)|int + 1]|min) if cell else 'heat-missing' }}"
+          aria-label="{{ circuit.name }} {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][loop.index0 // 24] }} {{ '%02d'|format(loop.index0 % 24) }}:00: {{ ('%.3f'|format(cell.kwh)) ~ ' kWh typical' if cell else 'insufficient history' }}"
           title="{{ circuit.name }} · {{ ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][loop.index0 // 24] }} {{ '%02d'|format(loop.index0 % 24) }}:00{% if cell %} · {{ '%.3f'|format(cell.kwh) }} kWh · ${{ '%.3f'|format(cell.kwh * rate) }} · {{ cell.weeks }} qualifying weeks · observed range {{ '%.3f'|format(cell.low) }}–{{ '%.3f'|format(cell.high) }} kWh{% else %} · Insufficient repeated history{% endif %}"></td>{% endfor %}</tr>{% endfor %}</tbody>
       </table>
     </div>
@@ -3081,6 +3083,30 @@ mkChart('hourlyChart',
   hourlyData.map(d=>d.hour.slice(11,16)),
   hourlyData.map(d=>d.total_kwh),
   'oklch(42% 0.055 110)');
+
+// Each heatmap is one Tab stop (about 5,400 cells used to be). Arrow keys move
+// between cells; Home/End jump to the row's ends; the focused cell keeps the
+// stop, so Shift+Tab and Tab return to it.
+document.querySelectorAll('table.power-heatmap[role="grid"]').forEach(grid => {
+  const rows = [...grid.tBodies[0].rows].map(row => [...row.querySelectorAll('td.heat-cell')]);
+  grid.addEventListener('keydown', event => {
+    const cell = event.target.closest('td.heat-cell');
+    if (!cell) return;
+    const r = rows.findIndex(row => row.includes(cell));
+    const c = rows[r].indexOf(cell);
+    const move = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] }[event.key];
+    let next = null;
+    if (move) next = rows[r + move[0]]?.[c + move[1]];
+    else if (event.key === 'Home') next = rows[r][0];
+    else if (event.key === 'End') next = rows[r][rows[r].length - 1];
+    else return;
+    event.preventDefault();
+    if (!next) return;
+    cell.tabIndex = -1;
+    next.tabIndex = 0;
+    next.focus();
+  });
+});
 </script>
 """
 
